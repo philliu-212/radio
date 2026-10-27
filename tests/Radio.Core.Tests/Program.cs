@@ -36,11 +36,13 @@ var jsonResolver = Resolver(_ => Response("""
 Check((await jsonResolver.ResolveAsync(bcc, default)).Uri.AbsolutePath == "/correct", "BCC channel matched by name, not array order");
 
 var ufo = stations.Single(x => x.Id == "ufo-921");
-await ExpectFailure(Resolver(_ => Response("maintenance")), ufo, "Fail clearly when page layout changes");
+var direct = Resolver(_ => throw new Exception("Direct source should not fetch the station homepage."));
+Check((await direct.ResolveAsync(ufo, default)).Uri == ufo.EndpointUrl, "Reuse verified public UFO stream without fetching its homepage");
+await ExpectFailure(Resolver(_ => Response("maintenance")), best, "Fail clearly when page layout changes");
 var pop = stations.Single(x => x.Id == "pop-917");
 foreach (var invalid in new[] { "http://hitoradioweb-hichannel.cdn.hinet.net/test", "https://other.example/test", "https://user:pass@hitoradioweb-hichannel.cdn.hinet.net/test", "https://hitoradioweb-hichannel.cdn.hinet.net:444/test", "<html>error</html>" })
     await ExpectFailure(Resolver(_ => Response(invalid)), pop, "Reject unexpected URL");
-await ExpectFailure(Resolver(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)), ufo, "Respect official HTTP denial");
+await ExpectFailure(Resolver(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)), best, "Respect official HTTP denial");
 await ExpectFailure(Resolver(_ => Response("not-json")), bcc, "Handle changed API format");
 await ExpectFailure(Resolver(_ => Response("{}")), bcc, "Handle API object instead of array");
 await ExpectFailure(Resolver(_ => Response("[]")), bcc, "Handle missing BCC channel");

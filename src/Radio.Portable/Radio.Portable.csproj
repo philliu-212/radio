@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Radio</AssemblyName>
+    <ApplicationManifest>../Radio.Windows/app.manifest</ApplicationManifest>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
+    <Compile Include="../Radio.Windows/MainForm.cs" Link="MainForm.cs" />
+    <Compile Include="../Radio.Windows/MediaEngineAudioPlayer.cs" Link="MediaEngineAudioPlayer.cs" />
+    <Compile Include="../Radio.Windows/WindowsAudioPlayer.cs" Link="WindowsAudioPlayer.cs" />
+    <Compile Include="../Radio.Windows/SystemAudioPlayer.cs" Link="SystemAudioPlayer.cs" />
+    <Compile Include="../Radio.Windows/PlayerDiagnostics.cs" Link="PlayerDiagnostics.cs" />
+    <Compile Include="../Radio.Windows/ProbeForm.cs" Link="ProbeForm.cs" />
+    <Compile Include="../Radio.Windows/Native/MediaEngineInterop.cs" Link="Native/MediaEngineInterop.cs" />
+  </ItemGroup>
+  <!-- Pin real runtime references only; a global RuntimeFrameworkVersion also affects
+       the unrelated Windows SDK targeting pack in older SDKs. -->
+  <Target Name="PinPortableRuntimePackages" BeforeTargets="ProcessFrameworkReferences"
+          Condition="'$(PortableRuntimeVersion)' != ''">
+    <ItemGroup>
+      <FrameworkReference Update="@(FrameworkReference)"
+                          Condition="'%(FrameworkReference.Identity)' == 'Microsoft.NETCore.App' Or '%(FrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms'"
+                          RuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
+      <KnownAppHostPack Update="@(KnownAppHostPack)"
+                        Condition="'%(KnownAppHostPack.Identity)' == 'Microsoft.NETCore.App' And '%(KnownAppHostPack.TargetFramework)' == 'net8.0'"
+                        AppHostPackVersion="$(PortableRuntimeVersion)" />
+      <KnownFrameworkReference Update="@(KnownFrameworkReference)"
+          Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net8.0' And ('%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WPF')"
+          DefaultRuntimeFrameworkVersion="$(PortableRuntimeVersion)" LatestRuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
+      <KnownRuntimePack Update="@(KnownRuntimePack)"
+          Condition="'%(KnownRuntimePack.TargetFramework)' == 'net8.0' And '%(KnownRuntimePack.Identity)' == 'Microsoft.WindowsDesktop.App'"
+          LatestRuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
+    </ItemGroup>
+  </Target>
+</Project>

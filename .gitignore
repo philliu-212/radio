@@ -3,5 +3,6 @@
 .vs/
 artifacts/
 tools/
+dist/
 *.user
 *.suo

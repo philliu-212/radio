@@ -2,12 +2,6 @@ using Radio.Core;
 
 namespace Radio.Windows;
 
-internal interface IPlayerDiagnostics
-{
-    IReadOnlyList<int> ChildProcessIds { get; }
-    object Describe();
-}
-
 internal static class PlayerBackend
 {
     public static string Option(string[] args, string name, string fallback)
@@ -16,11 +10,13 @@ internal static class PlayerBackend
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : fallback;
     }
 
-    public static IAudioPlayer Create(string[] args) => Option(args, "--backend", "native") switch
+    public static IAudioPlayer Create(string[] args) => Option(args, "--backend", "system") switch
     {
+        "system" => new SystemAudioPlayer(),
         "native" => new WindowsAudioPlayer(),
+        "mediaengine" => new MediaEngineAudioPlayer(),
         "mpv" => new MpvAudioPlayer(FindMpv(Option(args, "--mpv-path", ""))),
-        _ => throw new ArgumentException("播放引擎必須是 native 或 mpv。")
+        _ => throw new ArgumentException("播放引擎必須是 system、native、mediaengine 或 mpv。")
     };
 
     private static string FindMpv(string explicitPath)

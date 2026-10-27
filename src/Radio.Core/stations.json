@@ -34,8 +34,8 @@
     "name": "飛碟電台",
     "frequency": "92.1",
     "pageUrl": "https://www.uforadio.com.tw/",
-    "resolver": "Html",
-    "match": "(https://stream\\.rcs\\.revma\\.com/[a-zA-Z0-9]+)",
+    "resolver": "Direct",
+    "endpointUrl": "https://stream.rcs.revma.com/em90w4aeewzuv",
     "streamHost": "stream.rcs.revma.com",
     "mediaType": "audio/aac"
   },

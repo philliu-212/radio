@@ -10,6 +10,7 @@ public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFact
 {
     public async Task<ResolvedStream> ResolveAsync(Station station, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var client = new HttpClient(handlerFactory?.Invoke() ?? new HttpClientHandler
         {
             AutomaticDecompression = DecompressionMethods.All,
@@ -25,6 +26,9 @@ public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFact
             string url;
             switch (station.Resolver)
             {
+                case ResolverKind.Direct:
+                    url = station.EndpointUrl?.AbsoluteUri ?? "";
+                    break;
                 case ResolverKind.Html:
                     var html = await client.GetStringAsync(station.PageUrl, cancellationToken);
                     var match = Regex.Match(html, station.Match!, RegexOptions.CultureInvariant,

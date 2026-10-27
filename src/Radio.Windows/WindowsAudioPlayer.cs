@@ -35,6 +35,7 @@ public sealed class WindowsAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     internal string VideoSize => _player is { } player
         ? $"{player.PlaybackSession.NaturalVideoWidth}x{player.PlaybackSession.NaturalVideoHeight}" : "0x0";
     public IReadOnlyList<int> ChildProcessIds => [];
+    public string DisplayName => "Windows 相容模式";
     public object Describe() => new { backend = "native", hlsAudioOnly = HlsAudioOnly, videoSize = VideoSize };
 
     public async Task PlayAsync(ResolvedStream stream, CancellationToken cancellationToken)

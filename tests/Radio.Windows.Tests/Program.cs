@@ -7,18 +7,21 @@ namespace Radio.Windows.Tests;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new TestForm());
+        var tests = new TestForm(args);
+        Application.Run(tests);
+        Environment.ExitCode = tests.ResultExitCode;
     }
 }
 
-internal sealed class TestForm : Form
+internal sealed class TestForm(string[] args) : Form
 {
+    public int ResultExitCode { get; private set; } = 1;
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
@@ -37,6 +40,13 @@ internal sealed class TestForm : Form
                 writer.Write("data"u8); writer.Write(bytes); writer.Write(new byte[bytes]);
             }
             var stream = new ResolvedStream(new Uri(path), new Uri("https://example.invalid/"), "audio/wav");
+            if (args.Contains("--system"))
+            {
+                await SystemPlayerChecks.RunAsync(stream);
+                Console.WriteLine("All offline Windows system audio checks passed.");
+                ResultExitCode = 0;
+                return;
+            }
             using var player = (MpvAudioPlayer)PlayerBackend.Create(["--backend", "mpv"]);
             player.IsMuted = true;
             for (var i = 0; i < 3; i++)
@@ -95,12 +105,13 @@ internal sealed class TestForm : Form
             player.Dispose();
             Check(finalIds.All(id => !Alive(id)), "Dispose terminates the owned child");
             Console.WriteLine("All offline mpv lifecycle checks passed.");
+            ResultExitCode = 0;
         }
         catch (Exception error)
         {
             Console.Error.WriteLine($"FAIL: {error.GetType().Name}: {error.Message}");
             Console.Error.WriteLine(error.StackTrace);
-            Environment.ExitCode = 1;
+            ResultExitCode = 1;
         }
         finally { Close(); }
     }

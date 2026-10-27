@@ -31,6 +31,7 @@ internal sealed class MpvAudioPlayer(string executable) : IAudioPlayer, IPlayerD
     }
     public TimeSpan Position => TimeSpan.FromSeconds(_session?.Position ?? 0);
     public IReadOnlyList<int> ChildProcessIds => _session is { } session ? [session.ProcessId] : [];
+    public string DisplayName => "mpv 純音訊";
     public object Describe() => new
     {
         backend = "mpv", version = _session?.Version, videoSelection = _session?.VideoSelection,

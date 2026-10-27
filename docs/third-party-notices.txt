@@ -1,0 +1,20 @@
+Radio Portable — dependency information
+
+This package does not include mpv or FFmpeg.
+Radio source code is separate from the third-party components below.
+
+Microsoft.Windows.SDK.NET.dll / WinRT.Runtime.dll
+Copyright Microsoft Corporation. All rights reserved.
+Provided by Microsoft.Windows.SDK.NET.Ref (10.0.19041.31).
+Package license: https://aka.ms/WinSDKLicenseURL
+Package: https://www.nuget.org/packages/Microsoft.Windows.SDK.NET.Ref/10.0.19041.31
+C#/WinRT source and license: https://github.com/microsoft/CsWinRT
+
+The Full package also contains Microsoft .NET runtime components.
+Their original license / third-party notice files are retained in the package,
+including any additional copies under THIRD-PARTY/ when available in the runtime packs.
+.NET source and license: https://github.com/dotnet/runtime
+Windows Desktop source and license: https://github.com/dotnet/winforms
+
+Windows media playback components are supplied by the operating system;
+their binaries are not included in this application package.

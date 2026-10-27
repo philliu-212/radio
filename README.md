@@ -2,7 +2,9 @@
 
 個人用、低資源優先的 Windows 網路廣播**驗證原型**。原生 WinForms 介面，直接播放官方音訊來源，不啟動瀏覽器、WebView 或音訊代理伺服器。
 
-提供 Windows 原生與可選的 mpv 純音訊播放引擎；mpv 的本機安裝、測試與授權注意事項見 [docs/mpv.md](docs/mpv.md)。
+預設使用 Windows 系統音訊：五台走純音訊模式，Hit FM 走相容路徑，不需要 mpv。保留 mpv 作為開發用比較選項；相關資料見 [docs/mpv.md](docs/mpv.md)。
+
+**可雙擊的 Lite／Full portable 包**見 [docs/portable.md](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。UI／dark mode 與縮小後優化會依 [分階段計畫](docs/roadmap.md)接續處理。
 
 ## 電台
 
@@ -17,7 +19,7 @@
 
 頻率是使用者識別用標籤，各地頻率不同；網路節目可能與地方 FM 訊號不同。96.3 對應中廣流行網，不是 Alian。
 
-## 執行
+## 開發執行
 
 需要 Windows 10 2004 以上（含媒體播放元件）、.NET 8 SDK 與網路。開發時沿用現有 SDK；正式發行前應更新至仍受支援且已修補的 SDK／runtime，並重新量測。
 
@@ -39,6 +41,7 @@ dotnet run --project src/Radio.Windows -c Release
 
 ```powershell
 dotnet run --project tests/Radio.Core.Tests -c Release
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
 dotnet build src/Radio.Windows -c Release
 powershell -NoProfile -File scripts/Smoke-Test.ps1
 ```
@@ -57,13 +60,16 @@ Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.
 
 新量測包含播放器程序與它擁有的播放子程序，不含共享 Windows 音訊服務或 GPU 記憶體；短測不代表長期穩定，也不代表已確認實際音訊可聽。沒有相同來源的瀏覽器基準前，不宣稱相對瀏覽器的節省比例。
 
-原生引擎實測與 KISS 影像軌問題見 [docs/experiments.md](docs/experiments.md)；[mpv 對照實驗](docs/mpv.md)中，KISS 的合計 private 記憶體約從 137 降至 51 MiB。原生引擎的影像開銷仍未消除，mpv 提供不啟用影像軌的另一條播放路徑。
+舊 Windows 相容路徑的實測與 KISS 影像軌問題見 [docs/experiments.md](docs/experiments.md)；當時的 [mpv 對照實驗](docs/mpv.md)中，KISS 的合計 private 記憶體約從 137 降至 51 MiB。相容路徑本身的影像開銷未消除，但不再是 KISS 的預設播放路徑。
+
+後續已新增 Windows Media Engine 純音訊路徑，最終 portable 包 KISS 的 private 約為 **26 MiB（Lite）／26 MiB（Full）**，不需 mpv。完整數據及與相容路徑的差異見 [portable 實測](docs/portable.md)。
 
 ## 分層與手機版
 
 ```text
 src/Radio.Core/       # 電台 JSON、官方來源解析、IStreamResolver / IAudioPlayer 契約
 src/Radio.Windows/    # WinForms、Windows 原生 MediaPlayer／HLS 引擎、線上實驗
+src/Radio.Portable/   # 不附 mpv 的獨立 portable 封裝入口
 tests/Radio.Core.Tests/
 tests/Radio.Windows.Tests/ # 本機 WAV／mpv 程序生命週期測試
 docs/                # 來源調查與實驗紀錄

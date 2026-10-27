@@ -1,7 +1,8 @@
 param(
     [switch]$Playback,
+    [switch]$ExpectLocalRuntime,
     [string]$ExecutablePath,
-    [ValidateSet('native', 'mpv')][string]$Backend = 'native'
+    [ValidateSet('system', 'native', 'mediaengine', 'mpv')][string]$Backend = 'system'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,7 +20,7 @@ $exe = if ($ExecutablePath) { $ExecutablePath } else {
     Join-Path $PSScriptRoot '..\src\Radio.Windows\bin\Release\net8.0-windows10.0.19041.0\Radio.Windows.exe'
 }
 if (!(Test-Path $exe)) { throw 'Build Radio.Windows in Release first.' }
-$process = Start-Process -FilePath $exe -ArgumentList '--backend', $Backend -PassThru
+$process = Start-Process -FilePath $exe -ArgumentList '--backend', $Backend -WorkingDirectory (Split-Path -Parent $exe) -PassThru
 
 function Wait-Until([scriptblock]$Condition, [string]$Message, [int]$Seconds = 10) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -47,6 +48,14 @@ function Find-Control($Root, $Type, [string]$Name = '') {
 try {
     Wait-Until { $process.Refresh(); $process.MainWindowHandle -ne [IntPtr]::Zero } 'Window did not open.'
     $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+    if ($ExpectLocalRuntime) {
+        $runtime = @($process.Modules | Where-Object { $_.ModuleName -eq 'coreclr.dll' })[0]
+        $directory = (Split-Path -Parent $exe).TrimEnd('\') + '\'
+        if ($null -eq $runtime -or !$runtime.FileName.StartsWith($directory, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The Full package did not load its own bundled runtime.'
+        }
+        Write-Output 'PASS: Full package uses its own local coreclr.dll.'
+    }
     $type = [System.Windows.Automation.ControlType]
     $list = Find-Control $window $type::List
     if ($null -eq $list) { throw 'Station list not found.' }

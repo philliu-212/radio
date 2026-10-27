@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace Radio.Core;
 
-public enum ResolverKind { Html, Form, BccJson }
+public enum ResolverKind { Html, Form, BccJson, Direct }
 
 public sealed record Station(
     string Id,

@@ -10,7 +10,12 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         if (args.Contains("--probe"))
         {
-            try { Application.Run(new ProbeForm(args)); }
+            try
+            {
+                var probe = new ProbeForm(args);
+                Application.Run(probe);
+                Environment.ExitCode = probe.ResultExitCode;
+            }
             catch (Exception error)
             {
                 Directory.CreateDirectory("artifacts");

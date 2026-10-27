@@ -7,6 +7,7 @@ namespace Radio.Windows;
 // A hidden WinForms message loop, using exactly the same playback adapter as the UI.
 internal sealed class ProbeForm(string[] args) : Form
 {
+    public int ResultExitCode { get; private set; } = 1;
     private static string Option(string[] args, string name, string fallback)
     {
         var index = Array.IndexOf(args, name);
@@ -102,17 +103,17 @@ internal sealed class ProbeForm(string[] args) : Form
             {
                 timestamp = DateTimeOffset.UtcNow, os = Environment.OSVersion.VersionString,
                 runtime = Environment.Version.ToString(), logicalProcessors = Environment.ProcessorCount,
-                backend = PlayerBackend.Option(args, "--backend", "native"),
+                backend = PlayerBackend.Option(args, "--backend", "system"),
                 muted = true, sampleSeconds = seconds, idle, results,
                 limitations = "App + owned playback child process metrics; shared Windows audio services/GPU allocations excluded. No browser baseline, audibility, long-run, sleep or network recovery test."
             }, new JsonSerializerOptions { WriteIndented = true }));
-            Environment.ExitCode = failures == 0 ? 0 : 2;
+            ResultExitCode = failures == 0 ? 0 : 2;
         }
         catch (Exception error)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, $"Probe failed: {error.GetType().Name} (0x{error.HResult:X8})");
-            Environment.ExitCode = 1;
+            ResultExitCode = 1;
         }
         finally { Close(); }
     }

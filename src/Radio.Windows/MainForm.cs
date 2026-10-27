@@ -19,7 +19,7 @@ internal sealed class MainForm : Form
     public MainForm(IAudioPlayer player)
     {
         _player = player;
-        Text = $"Radio — 輕量驗證版 ({(player is MpvAudioPlayer ? "mpv 純音訊" : "Windows 原生")})";
+        Text = $"Radio — 輕量驗證版 ({(player as IPlayerDiagnostics)?.DisplayName ?? "播放引擎"})";
         Font = new Font("Microsoft JhengHei UI", 10);
         ClientSize = new Size(530, 410);
         MinimumSize = new Size(460, 370);
