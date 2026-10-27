@@ -1,0 +1,97 @@
+param(
+    [switch]$Playback,
+    [string]$ExecutablePath,
+    [ValidateSet('native', 'mpv')][string]$Backend = 'native'
+)
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class RadioWindowTest {
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+}
+'@
+
+$exe = if ($ExecutablePath) { $ExecutablePath } else {
+    Join-Path $PSScriptRoot '..\src\Radio.Windows\bin\Release\net8.0-windows10.0.19041.0\Radio.Windows.exe'
+}
+if (!(Test-Path $exe)) { throw 'Build Radio.Windows in Release first.' }
+$process = Start-Process -FilePath $exe -ArgumentList '--backend', $Backend -PassThru
+
+function Wait-Until([scriptblock]$Condition, [string]$Message, [int]$Seconds = 10) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($clock.Elapsed.TotalSeconds -lt $Seconds) {
+        if (& $Condition) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw $Message
+}
+
+function Find-Control($Root, $Type, [string]$Name = '') {
+    $conditions = [Collections.Generic.List[System.Windows.Automation.Condition]]::new()
+    $conditions.Add([System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $Type))
+    if ($Name) {
+        $conditions.Add([System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, $Name))
+    }
+    $condition = if ($conditions.Count -eq 1) { $conditions[0] } else {
+        [System.Windows.Automation.AndCondition]::new($conditions.ToArray())
+    }
+    return $Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+try {
+    Wait-Until { $process.Refresh(); $process.MainWindowHandle -ne [IntPtr]::Zero } 'Window did not open.'
+    $window = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+    $type = [System.Windows.Automation.ControlType]
+    $list = Find-Control $window $type::List
+    if ($null -eq $list) { throw 'Station list not found.' }
+    $items = $list.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type::ListItem))
+    if ($items.Count -ne 6) { throw "Expected six stations, found $($items.Count)." }
+    Write-Output 'PASS: Native window contains six stations.'
+
+    # Always mute before a playback test; never change the system volume.
+    $mute = Find-Control $window $type::CheckBox
+    $toggle = $mute.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On) { $toggle.Toggle() }
+    Write-Output 'PASS: Mute control works.'
+
+    $playButton = Find-Control $window $type::Button (([string][char]0x64AD) + [char]0x653E)
+    $stopButton = Find-Control $window $type::Button (([string][char]0x505C) + [char]0x6B62)
+    if ($null -eq $playButton -or $null -eq $stopButton) { throw 'Expected play and stop buttons.' }
+    if ($Playback) {
+        $playButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Wait-Until {
+            $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type::Text))
+            @($texts | Where-Object { $_.Current.Name -match '\u76f4\u64ad\u64ad\u653e\u4e2d' }).Count -gt 0
+        } 'Muted UI playback did not start.' 40
+        Write-Output 'PASS: Muted playback starts from the UI.'
+    }
+    $stopButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Write-Output 'PASS: Stop button can be invoked.'
+
+    $windowPattern = $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+    $windowPattern.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized)
+    Wait-Until { ![RadioWindowTest]::IsWindowVisible($process.MainWindowHandle) } 'Minimize did not hide to tray.'
+    Write-Output 'PASS: Minimize hides the window to tray.'
+    $windowPattern.Close()
+    if (!$process.WaitForExit(10000)) { throw 'Window close did not exit.' }
+    if ($process.ExitCode -ne 0) { throw "Application exited with $($process.ExitCode)." }
+    Write-Output 'PASS: Window closes cleanly.'
+}
+finally {
+    if (!$process.HasExited) {
+        # Only terminate the instance created by this test, never another user instance.
+        & taskkill.exe /PID $process.Id /T /F | Out-Null
+        $process.WaitForExit()
+    }
+    $process.Dispose()
+}
