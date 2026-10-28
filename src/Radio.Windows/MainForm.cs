@@ -144,7 +144,7 @@ internal sealed class MainForm : Form
         _volume.InteractionCompleted += SavePreferences;
         _mute.CheckedChanged += (_, _) => { _player.IsMuted = _mute.Checked; _mute.Invalidate(); };
         _themeButton.Click += (_, _) => ToggleTheme();
-        _minimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        _minimize.Click += (_, _) => { WindowState = FormWindowState.Minimized; Hide(); };
         _close.Click += (_, _) => Close();
         _official.Click += (_, _) =>
         {
@@ -452,7 +452,9 @@ internal sealed class MainForm : Form
     }
     private void SuspendPresentation()
     {
-        _uiSuspended = true; CancelMetadata(); Hide();
+        // Native taskbar minimization must retain the taskbar button for restoration.
+        // Only the explicit "minimize to tray" button hides the window.
+        _uiSuspended = true; CancelMetadata();
     }
     private void ResumePresentation()
     {

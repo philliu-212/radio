@@ -303,7 +303,13 @@ internal sealed class StationListBox : ListBox
         var thumb = ScrollThumb;
         var track = ScrollbarTrackBounds;
         var fraction = (y - track.Top - _scrollGrabOffset) / (double)Math.Max(1, track.Height - thumb.Height);
-        TopIndex = Math.Clamp((int)Math.Round(fraction * Math.Max(0, Items.Count - VisibleRows)), 0, Math.Max(0, Items.Count - VisibleRows));
+        SetScrollPosition((int)Math.Round(fraction * Math.Max(0, Items.Count - VisibleRows)));
+    }
+    private void SetScrollPosition(int index)
+    {
+        var next = Math.Clamp(index, 0, Math.Max(0, Items.Count - VisibleRows));
+        if (next == TopIndex) return;
+        TopIndex = next;
         Invalidate();
     }
     protected override void OnMouseCaptureChanged(EventArgs e) { _draggingScrollbar = false; Invalidate(); base.OnMouseCaptureChanged(e); }
@@ -316,8 +322,8 @@ internal sealed class StationListBox : ListBox
             var notches = _wheelRemainder / 120; _wheelRemainder %= 120;
             var lines = SystemInformation.MouseWheelScrollLines;
             if (lines < 0) lines = VisibleRows;
-            TopIndex = Math.Clamp(TopIndex - notches * lines, 0, Math.Max(0, Items.Count - VisibleRows));
-            Invalidate(); m.Result = IntPtr.Zero; return;
+            SetScrollPosition(TopIndex - notches * lines);
+            m.Result = IntPtr.Zero; return;
         }
         if (m.Msg is 0x0201 or 0x0203 && point.X >= ItemContentWidth)
         {

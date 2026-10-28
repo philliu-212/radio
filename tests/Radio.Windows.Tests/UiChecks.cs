@@ -128,11 +128,26 @@ internal static class UiChecks
         list.TopIndex = 1;
         SendMessage(list.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
         Check(list.TopIndex == 0, "List mouse wheel still scrolls with native scrollbar hidden");
+        list.Update();
+        var boundaryInvalidations = 0;
+        void RecordBoundaryInvalidation(object? sender, InvalidateEventArgs e) => boundaryInvalidations++;
+        list.Invalidated += RecordBoundaryInvalidation;
+        for (var i = 0; i < 5; i++) SendMessage(list.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
+        Check(list.TopIndex == 0 && boundaryInvalidations == 0, "Repeated wheel scrolling above the first row does not repaint");
+        list.Invalidated -= RecordBoundaryInvalidation;
+        list.TopIndex = list.Items.Count - stationList.VisibleRows;
+        list.Update();
+        boundaryInvalidations = 0;
+        list.Invalidated += RecordBoundaryInvalidation;
+        for (var i = 0; i < 5; i++) SendMessage(list.Handle, 0x020A, new IntPtr(-120 << 16), IntPtr.Zero);
+        Check(list.TopIndex == 1 && boundaryInvalidations == 0, "Repeated wheel scrolling below the last row does not repaint");
+        list.Invalidated -= RecordBoundaryInvalidation;
+        list.TopIndex = 0;
         Capture(form, "artifacts/scrollbar-hidden.png");
         SendMouse(list, 0x0200, 60, list.ItemHeight / 2);
         Capture(form, "artifacts/scrollbar-hover.png");
         var count = form.PresentationUpdates;
-        form.WindowState = FormWindowState.Minimized;
+        Find<Button>(form, "MinimizeButton").PerformClick();
         await Task.Delay(50);
         count = form.PresentationUpdates;
         var calls = metadata.Calls;
@@ -146,6 +161,18 @@ internal static class UiChecks
         metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         var transportBounds = play.Bounds;
         Check(!Find<Label>(form, "MetadataTitle").Visible && !Find<Label>(form, "MetadataPerson").Visible, "Missing metadata hides both fields");
+        var playsBeforeMinimize = player.Plays;
+        var stopsBeforeMinimize = player.Stops;
+        SendMessage(form.Handle, 0x0112, new IntPtr(0xF020), IntPtr.Zero);
+        await Task.Delay(30);
+        Check(form.Visible && form.ShowInTaskbar && form.WindowState == FormWindowState.Minimized && form.IsBackgroundMode && !form.MetadataRunning,
+            "Native taskbar minimize keeps the window available on the taskbar while suspending presentation");
+        SendMessage(form.Handle, 0x0112, new IntPtr(0xF120), IntPtr.Zero);
+        await Task.Delay(30);
+        Check(form.Visible && form.WindowState == FormWindowState.Normal && !form.IsBackgroundMode && form.MetadataRunning &&
+            player.Plays == playsBeforeMinimize && player.Stops == stopsBeforeMinimize && play.Bounds == transportBounds,
+            "Native taskbar restore resumes presentation without hiding, resizing or restarting playback");
+        metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         form.ToggleTheme();
         Check(!form.IsDarkMode && play.Bounds == transportBounds, "Light theme does not rearrange controls");
         Capture(form, "artifacts/direction-c-light-playing.png");
