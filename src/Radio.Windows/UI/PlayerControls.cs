@@ -208,16 +208,54 @@ internal sealed class StationListBox : ListBox
     public StationListBox()
     {
         DrawMode = DrawMode.OwnerDrawFixed; IntegralHeight = false; BorderStyle = BorderStyle.None;
-        SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
+        // ListBox's native owner drawing does not use WinForms' double buffer.
+        // Paint rows and the overlay together so no intermediate cleared frame is visible.
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        using (var background = new SolidBrush(BackColor)) e.Graphics.FillRectangle(background, e.ClipRectangle);
+        for (var index = TopIndex; index < Items.Count; index++)
+        {
+            var bounds = GetItemRectangle(index);
+            if (bounds.Top >= ClientSize.Height) break;
+            if (!bounds.IntersectsWith(e.ClipRectangle)) continue;
+            var state = index == SelectedIndex ? DrawItemState.Selected : DrawItemState.None;
+            if (index == SelectedIndex && Focused && ShowFocusCues) state |= DrawItemState.Focus;
+            OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, bounds, index, state, ForeColor, BackColor));
+        }
+        DrawScrollbar(e.Graphics);
+    }
+    private void UpdateHover(int index, bool pointerInside)
+    {
+        var scrollbarWasVisible = ScrollbarVisible;
+        var previous = HoverIndex;
+        HoverIndex = index;
+        _pointerInside = pointerInside;
+        if (previous != index)
+        {
+            InvalidateRow(previous);
+            InvalidateRow(index);
+        }
+        if (scrollbarWasVisible != ScrollbarVisible)
+            Invalidate(new Rectangle(ItemContentWidth, 0, ClientSize.Width - ItemContentWidth, ClientSize.Height));
+    }
+    private void InvalidateRow(int index)
+    {
+        if (index < 0 || index >= Items.Count) return;
+        var bounds = GetItemRectangle(index);
+        bounds.Width = ItemContentWidth;
+        if (bounds.IntersectsWith(ClientRectangle)) Invalidate(bounds);
     }
     protected override void OnMouseMove(MouseEventArgs e)
     {
         var index = e.X < ItemContentWidth ? IndexFromPoint(e.Location) : -1;
-        if (HoverIndex != index || !_pointerInside) { HoverIndex = index; _pointerInside = true; Invalidate(); }
+        UpdateHover(index, true);
         base.OnMouseMove(e);
     }
-    protected override void OnMouseEnter(EventArgs e) { _pointerInside = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { _pointerInside = false; HoverIndex = -1; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseEnter(EventArgs e) { UpdateHover(HoverIndex, true); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { UpdateHover(-1, false); base.OnMouseLeave(e); }
     protected override void OnVisibleChanged(EventArgs e)
     {
         if (!Visible)
@@ -322,10 +360,7 @@ internal sealed class StationListBox : ListBox
         {
             // Native keyboard/wheel/LB_SETTOPINDEX still scroll, but no non-client column is reserved.
             if ((GetWindowLong(Handle, -16) & 0x00200000) != 0) ShowScrollBar(Handle, 1, false);
-            if (m.Msg == 0x000F) { using var graphics = CreateGraphics(); DrawScrollbar(graphics); }
-            else if (m.Msg is 0x0317 or 0x0318 && m.WParam != IntPtr.Zero)
-            { using var graphics = Graphics.FromHdc(m.WParam); DrawScrollbar(graphics); }
-            else if (m.Msg is 0x020A or 0x0115 or 0x0100 or 0x0197 or 0x0201) Invalidate();
+            if (m.Msg is 0x020A or 0x0115 or 0x0100 or 0x0197 or 0x0201) Invalidate();
         }
         finally { _hidingScrollbar = false; }
     }

@@ -85,6 +85,22 @@ internal static class UiChecks
         Check(!stationList.ScrollbarVisible, "Scrollbar is hidden when pointer leaves the list");
         SendMouse(list, 0x0200, 60, list.ItemHeight / 2);
         Check(stationList.ScrollbarVisible, "Scrollbar appears when pointer enters station list");
+        list.Update();
+        var hoverInvalidations = new List<Rectangle>();
+        void RecordInvalidation(object? sender, InvalidateEventArgs e) => hoverInvalidations.Add(e.InvalidRect);
+        list.Invalidated += RecordInvalidation;
+        SendMouse(list, 0x0200, 65, list.ItemHeight / 2);
+        Check(hoverInvalidations.Count == 0, "Moving within the same row does not repaint the list or scrollbar");
+        SendMouse(list, 0x0200, 65, list.ItemHeight * 3 / 2);
+        Check(hoverInvalidations.Count == 2 && hoverInvalidations.All(bounds => bounds.Width == stationList.ItemContentWidth && bounds.Height == list.ItemHeight),
+            "Crossing rows repaints only the previous and new hover rows, not the scrollbar");
+        list.Invalidated -= RecordInvalidation;
+        var drawnRows = 0;
+        void RecordDraw(object? sender, DrawItemEventArgs e) => drawnRows++;
+        list.DrawItem += RecordDraw;
+        list.Refresh();
+        list.DrawItem -= RecordDraw;
+        Check(drawnRows == stationList.VisibleRows, "Buffered painting still renders all visible owner-drawn station rows");
         Check(stationList.ScrollbarTrackBounds.Width == 2 && stationList.ScrollbarTrackBounds.Left - stationList.ItemContentWidth == 2 &&
             list.ClientSize.Width - stationList.ScrollbarTrackBounds.Right == 8,
             "Approved spacing is exactly item / 2 DIP / bar 2 DIP / 8 DIP / status card");

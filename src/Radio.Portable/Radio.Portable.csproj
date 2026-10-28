@@ -6,7 +6,7 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>Radio</AssemblyName>
     <ApplicationManifest>../Radio.Windows/app.manifest</ApplicationManifest>
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />

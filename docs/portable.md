@@ -1,6 +1,12 @@
 # Windows portable
 
-## 目前版本：Radio Mini v0.3.3（2026-10-28）
+## 目前版本：Radio Mini v0.3.4（2026-10-28）
+
+- 修正滑鼠在電台清單跨列移動時，整張清單與捲動條一起閃爍：列與 overlay scrollbar 統一雙緩衝繪製，hover 只更新前後兩列，同列移動不重畫。
+- 離線 UI 回歸通過，包含局部重畫、捲動條拖曳、鍵盤切台及 100%～200% DPI 訊息模擬；Lite／Full 已重新封裝。未重跑線上播放或人工長時間視覺驗收。
+- 雙擊根目錄 `Build-Portable.cmd` 重建，從新產生的 `dist/Radio-Portable-v0.3.4-*/Radio.exe` 啟動。`bin`／`obj` 是建置中間產出，不是交付入口；本機舊框架 `net8.0-windows` 的殘留已清除。
+
+## 前版：Radio Mini v0.3.3（2026-10-28）
 
 - 視窗定案為 554 × 233 DIP；間距為 item／2 DIP／bar 2 DIP／8 DIP／狀態區塊。左右區塊寬度、37 DIP 列高及字級不變。
 - 新增根目錄 `Build-Portable.cmd`，雙擊依序產生 Lite／Full；封裝資料夾與 ZIP 名稱含 `v0.3.3`，執行檔版本同步更新。
