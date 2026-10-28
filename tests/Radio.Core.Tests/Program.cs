@@ -1,8 +1,18 @@
 using System.Net;
 using Radio.Core;
 
+if (args.Contains("--metadata-best-live"))
+{
+    using var provider = new OfficialMetadataProvider();
+    var metadata = await provider.GetAsync("best-989", default);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(metadata));
+    Environment.ExitCode = metadata is null ? 1 : 0;
+    return;
+}
+
 var stations = StationCatalog.Load();
 Check(stations.Count == 6 && stations.Select(x => x.Id).Distinct().Count() == 6, "Six distinct stations");
+Check(stations.Select(x => x.Frequency).SequenceEqual(["91.7", "92.1", "96.3", "98.9", "99.9", "107.7"]), "Stations sorted by numeric FM frequency");
 Check(stations.Single(x => x.Frequency == "96.3").Id == "bcc-ilike", "96.3 is BCC, not Alian");
 Check(stations.Single(x => x.Id == "hit-north").Frequency == "107.7", "Hit FM is northern feed");
 

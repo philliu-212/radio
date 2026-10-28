@@ -131,6 +131,7 @@ internal sealed class MuteButton : CheckBox
 internal sealed class VolumeSlider : TrackBar
 {
     public PlayerTheme Theme { get; set; } = PlayerTheme.Dark;
+    public event Action? InteractionCompleted;
     public VolumeSlider()
     {
         AutoSize = false; Minimum = 0; Maximum = 100; TickStyle = TickStyle.None;
@@ -151,6 +152,40 @@ internal sealed class VolumeSlider : TrackBar
         if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -1, -1), Theme.Accent, BackColor);
     }
     protected override void OnValueChanged(EventArgs e) { base.OnValueChanged(e); Invalidate(); }
+    private bool _dragging;
+    private void SetValueFromMouse(int x)
+    {
+        SendMessage(Handle, 0x041A, IntPtr.Zero, out var channel);
+        var fraction = (x - channel.Left) / (double)Math.Max(1, channel.Right - channel.Left - 1);
+        Value = Math.Clamp((int)Math.Round(Minimum + fraction * (Maximum - Minimum)), Minimum, Maximum);
+    }
+    protected override void WndProc(ref Message m)
+    {
+        // The drawn track is vertically centered, unlike the native thumb's hit rectangle.
+        // Handle the entire visible control ourselves; leave native keyboard/wheel/UIA intact.
+        if (m.Msg == 0x0201)
+        {
+            Focus(); _dragging = true; Capture = true;
+            SetValueFromMouse(unchecked((short)m.LParam.ToInt64()));
+            m.Result = IntPtr.Zero; return;
+        }
+        if (m.Msg == 0x0200 && _dragging)
+        {
+            SetValueFromMouse(unchecked((short)m.LParam.ToInt64()));
+            m.Result = IntPtr.Zero; return;
+        }
+        if (m.Msg == 0x0202 && _dragging)
+        {
+            SetValueFromMouse(unchecked((short)m.LParam.ToInt64()));
+            _dragging = false; Capture = false;
+            OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, unchecked((short)m.LParam.ToInt64()), Height / 2, 0));
+            InteractionCompleted?.Invoke();
+            m.Result = IntPtr.Zero; return;
+        }
+        base.WndProc(ref m);
+        if (m.Msg is 0x020A or 0x0101) InteractionCompleted?.Invoke();
+    }
+    protected override void OnMouseCaptureChanged(EventArgs e) { _dragging = false; base.OnMouseCaptureChanged(e); }
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct NativeRect { public int Left, Top, Right, Bottom; }
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -159,7 +194,14 @@ internal sealed class VolumeSlider : TrackBar
 
 internal sealed class StationListBox : ListBox
 {
+    public event Action? SelectedStationClicked;
     public int HoverIndex { get; private set; } = -1;
+    public Color ScrollbarColor { get; set; } = PlayerTheme.Dark.Track;
+    internal int VisibleRows => Math.Max(1, ClientSize.Height / Math.Max(1, ItemHeight));
+    private bool _hidingScrollbar;
+    private bool _draggingScrollbar;
+    private int _scrollGrabOffset;
+    private int _wheelRemainder;
     public StationListBox()
     {
         DrawMode = DrawMode.OwnerDrawFixed; IntegralHeight = false; BorderStyle = BorderStyle.None;
@@ -172,4 +214,95 @@ internal sealed class StationListBox : ListBox
         base.OnMouseMove(e);
     }
     protected override void OnMouseLeave(EventArgs e) { HoverIndex = -1; Invalidate(); base.OnMouseLeave(e); }
+    protected override CreateParams CreateParams
+    {
+        get { var parameters = base.CreateParams; parameters.Style &= ~0x00200000; return parameters; }
+    }
+    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); FitFiveRows(); }
+    protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); FitFiveRows(); }
+    private void FitFiveRows()
+    {
+        var height = Math.Max(1, (int)Math.Round(37 * (FindForm()?.DeviceDpi ?? DeviceDpi) / 96d));
+        if (ItemHeight != height) ItemHeight = height;
+    }
+    private Rectangle ScrollThumb
+    {
+        get
+        {
+            var scale = (FindForm()?.DeviceDpi ?? DeviceDpi) / 96f;
+            var height = Math.Min(Height, Math.Max((int)(18 * scale), Height * VisibleRows / Math.Max(1, Items.Count)));
+            var range = Math.Max(1, Items.Count - VisibleRows);
+            return new Rectangle(Width - Math.Max(2, (int)(3 * scale)), (Height - height) * TopIndex / range,
+                Math.Max(2, (int)(3 * scale)), height);
+        }
+    }
+    private void DrawScrollbar(Graphics graphics)
+    {
+        if (Items.Count <= VisibleRows) return;
+        using var brush = new SolidBrush(ScrollbarColor);
+        using var path = RoundedShape.Create(ScrollThumb, Math.Max(1, ScrollThumb.Width / 2));
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.FillPath(brush, path);
+    }
+    private void ScrollToMouse(int y)
+    {
+        var thumb = ScrollThumb;
+        var fraction = (y - _scrollGrabOffset) / (double)Math.Max(1, Height - thumb.Height);
+        TopIndex = Math.Clamp((int)Math.Round(fraction * Math.Max(0, Items.Count - VisibleRows)), 0, Math.Max(0, Items.Count - VisibleRows));
+        Invalidate();
+    }
+    protected override void OnMouseCaptureChanged(EventArgs e) { _draggingScrollbar = false; base.OnMouseCaptureChanged(e); }
+    protected override void WndProc(ref Message m)
+    {
+        var point = new Point(unchecked((short)m.LParam.ToInt64()), unchecked((short)(m.LParam.ToInt64() >> 16)));
+        if (m.Msg == 0x020A)
+        {
+            _wheelRemainder += unchecked((short)(m.WParam.ToInt64() >> 16));
+            var notches = _wheelRemainder / 120; _wheelRemainder %= 120;
+            var lines = SystemInformation.MouseWheelScrollLines;
+            if (lines < 0) lines = VisibleRows;
+            TopIndex = Math.Clamp(TopIndex - notches * lines, 0, Math.Max(0, Items.Count - VisibleRows));
+            Invalidate(); m.Result = IntPtr.Zero; return;
+        }
+        if (m.Msg == 0x0201 && Items.Count > VisibleRows && point.X >= Width - Math.Max(8, (FindForm()?.DeviceDpi ?? DeviceDpi) * 8 / 96))
+        {
+            Focus(); _draggingScrollbar = true; Capture = true;
+            var thumb = ScrollThumb;
+            _scrollGrabOffset = thumb.Contains(point) ? point.Y - thumb.Y : thumb.Height / 2;
+            ScrollToMouse(point.Y); m.Result = IntPtr.Zero; return;
+        }
+        if (m.Msg == 0x0200 && _draggingScrollbar) { ScrollToMouse(point.Y); m.Result = IntPtr.Zero; return; }
+        if (m.Msg == 0x0202 && _draggingScrollbar)
+        {
+            ScrollToMouse(point.Y); _draggingScrollbar = false; Capture = false; m.Result = IntPtr.Zero; return;
+        }
+        if (m.Msg is 0x0201 or 0x0203)
+        {
+            var index = IndexFromPoint(point);
+            if (index >= 0)
+            {
+                Focus();
+                var same = SelectedIndex == index;
+                SelectedIndex = index;
+                if (same) SelectedStationClicked?.Invoke();
+                Invalidate();
+            }
+            m.Result = IntPtr.Zero; return;
+        }
+        base.WndProc(ref m);
+        if (!IsHandleCreated || _hidingScrollbar) return;
+        _hidingScrollbar = true;
+        try
+        {
+            // Native keyboard/wheel/LB_SETTOPINDEX still scroll, but no non-client column is reserved.
+            if ((GetWindowLong(Handle, -16) & 0x00200000) != 0) ShowScrollBar(Handle, 1, false);
+            if (m.Msg == 0x000F) { using var graphics = CreateGraphics(); DrawScrollbar(graphics); }
+            else if (m.Msg is 0x0317 or 0x0318 && m.WParam != IntPtr.Zero)
+            { using var graphics = Graphics.FromHdc(m.WParam); DrawScrollbar(graphics); }
+            else if (m.Msg is 0x020A or 0x0115 or 0x0100 or 0x0197 or 0x0201) Invalidate();
+        }
+        finally { _hidingScrollbar = false; }
+    }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr window, int index);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ShowScrollBar(IntPtr window, int bar, bool show);
 }

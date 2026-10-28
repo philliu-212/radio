@@ -48,6 +48,9 @@ internal sealed class MainForm : Form
     private bool _uiSuspended;
     private bool _uiDirty;
     private bool _metadataEnabled = true;
+    private bool _suppressSelectionPlayback;
+    private string? _lastSelectedStationId;
+    internal Task SelectionPlaybackTask { get; private set; } = Task.CompletedTask;
 
     internal int PresentationUpdates { get; private set; }
     internal bool IsBackgroundMode => _uiSuspended;
@@ -75,8 +78,8 @@ internal sealed class MainForm : Form
         MaximizeBox = false;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(550, 270);
-        MinimumSize = new Size(550, 270);
+        ClientSize = new Size(550, 233);
+        MinimumSize = new Size(550, 233);
         StartPosition = FormStartPosition.CenterScreen;
         DoubleBuffered = true;
 
@@ -91,6 +94,7 @@ internal sealed class MainForm : Form
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _stations.DataSource = StationCatalog.Load();
         _stations.DisplayMember = nameof(Station.DisplayName);
+        _lastSelectedStationId = (_stations.SelectedItem as Station)?.Id;
         body.Controls.Add(_stations, 0, 0);
         body.Controls.Add(BuildPlayerCard(), 2, 0);
         layout.Controls.Add(body, 0, 1);
@@ -114,15 +118,28 @@ internal sealed class MainForm : Form
         _tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "Radio Mini", ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowPlayer();
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
-        _stations.SelectedIndexChanged += (_, _) => RefreshPresentation();
+        _stations.SelectedIndexChanged += (_, _) =>
+        {
+            var changed = SelectedStationId != _lastSelectedStationId;
+            _lastSelectedStationId = SelectedStationId;
+            RefreshPresentation();
+            if (changed && !_suppressSelectionPlayback && Visible && !_closing && _stations.SelectedItem is Station)
+                SelectionPlaybackTask = PlaySelectedAsync();
+        };
+        _stations.SelectedStationClicked += () =>
+        {
+            if (!_active && !_closing) SelectionPlaybackTask = PlaySelectedAsync();
+        };
         _stations.DrawItem += DrawStation;
         _stations.KeyDown += async (_, e) =>
         {
             if (e.KeyCode is Keys.Enter or Keys.Space) { e.SuppressKeyPress = true; await PlaySelectedAsync(); }
         };
+        if (_persistPreferences && ThemeSettings.Load().Volume is { } savedVolume) _player.Volume = savedVolume / 100d;
         _volume.Value = (int)Math.Round(_player.Volume * 100);
         _mute.Checked = _player.IsMuted;
         _volume.ValueChanged += (_, _) => { _player.Volume = _volume.Value / 100d; _tips.SetToolTip(_volume, $"音量 {_volume.Value}%"); };
+        _volume.InteractionCompleted += SavePreferences;
         _mute.CheckedChanged += (_, _) => { _player.IsMuted = _mute.Checked; _mute.Invalidate(); };
         _themeButton.Click += (_, _) => ToggleTheme();
         _minimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
@@ -201,7 +218,7 @@ internal sealed class MainForm : Form
     {
         _card.Padding = new Padding(9, 8, 9, 8);
         var table = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, RowCount = 7, ColumnCount = 1 };
-        table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+        table.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         table.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
         table.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         table.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -241,13 +258,18 @@ internal sealed class MainForm : Form
     {
         _darkMode = !_darkMode; _theme = _darkMode ? PlayerTheme.Dark : PlayerTheme.Light;
         ApplyTheme();
-        if (_persistPreferences) ThemeSettings.Save(_darkMode);
+        SavePreferences();
+    }
+    private void SavePreferences()
+    {
+        if (_persistPreferences) ThemeSettings.Save(_darkMode, _volume.Value);
     }
     private void ApplyTheme()
     {
         BackColor = _theme.Canvas; ForeColor = _theme.Text;
         _card.BackColor = _theme.Surface;
         _stations.BackColor = _theme.Canvas; _stations.ForeColor = _theme.Text;
+        _stations.ScrollbarColor = _theme.Track;
         _title.ForeColor = _theme.Text; _frequency.ForeColor = _theme.Text; _fm.ForeColor = _theme.Muted;
         _metadataTitle.ForeColor = _theme.Text; _metadataPerson.ForeColor = _theme.Muted;
         _mute.Theme = _theme; _mute.BackColor = _theme.Surface;
@@ -443,9 +465,14 @@ internal sealed class MainForm : Form
     }
     internal void SelectForProbe(string id)
     {
-        for (var i = 0; i < _stations.Items.Count; i++)
-            if (_stations.Items[i] is Station station && station.Id == id) { _stations.SelectedIndex = i; return; }
-        throw new ArgumentException("Unknown station.", nameof(id));
+        _suppressSelectionPlayback = true;
+        try
+        {
+            for (var i = 0; i < _stations.Items.Count; i++)
+                if (_stations.Items[i] is Station station && station.Id == id) { _stations.SelectedIndex = i; return; }
+            throw new ArgumentException("Unknown station.", nameof(id));
+        }
+        finally { _suppressSelectionPlayback = false; }
     }
     internal Task PlayForProbeAsync(string id) { SelectForProbe(id); return PlaySelectedAsync(); }
 
@@ -465,7 +492,6 @@ internal sealed class MainForm : Form
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0 || WindowState == FormWindowState.Minimized) return;
         using var path = RoundedShape.Create(ClientRectangle, ScaleDip(13));
         var previous = Region; Region = new Region(path); previous?.Dispose();
-        _stations.ItemHeight = ScaleDip(37);
     }
     protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateWindowShape(); }
     protected override void OnDpiChanged(DpiChangedEventArgs e)
@@ -492,6 +518,7 @@ internal sealed class MainForm : Form
     {
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
+        SavePreferences();
         _playRequest?.Cancel(); _playRequest = null;
         CancelMetadata(); _player.StatusChanged -= UpdateStatus;
         _player.Dispose(); _metadataProvider.Dispose();

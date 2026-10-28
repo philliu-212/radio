@@ -4,9 +4,13 @@
 
 2026-10-28 更新：Direction C 已接上中廣節目／DJ、Hit FM DJ 與可用時的 KISS 預告歌曲，皆為可取消的額外文字查詢。中廣已在實際 portable UI 取得並顯示 `趙少康時間`／`趙少康`；實作與背景查詢規則見 [ui-direction-c.md](ui-direction-c.md)。不宣稱 KISS 的拒絕／穩定性問題已解決。
 
+同日再次調查修正：先前漏查好事 989 的官方 [schedule989.htm](http://www.bestradio.com.tw/schedule989.htm)。實際取得平日 `09:00~12:00` 的 `989陽光列車`／`亭君`，可依台灣時間提供「節目表／DJ」。這不是即時 on-air API，故明確標示「節目表」，不保證臨時代班或特殊節目與表格相同；歌名仍沒有可靠即時來源。新版已加入這項支援。
+
+可明確選用線上驗證（預設 Core 測試仍為離線）：`dotnet run --project tests/Radio.Core.Tests -c Release -- --metadata-best-live`，只查官方節目表並輸出解析結果，不播放音訊。
+
 | 電台 | 已驗證取得的內容 | 歌曲資訊結論 |
 | --- | --- | --- |
-| 好事989 | 官網有六台中對應的 HLS 音訊入口；首頁及 `javascript/main.js` 未找到即時歌曲查詢 | 尚未找到可靠即時歌名來源 |
+| 好事989 | 官網有 HLS 音訊入口；官方 `schedule989.htm` 有週間／週六／週日時段、節目與部分 DJ | 可顯示依官方節目表推定的節目／DJ；尚未找到可靠即時歌名來源 |
 | KISS Radio | 官方 JSON 回傳時間、歌手、歌名，語意為「即將播放」 | 可以取得預告歌曲，但未證實與當下音訊同步；重測遇到 403，不能承諾穩定可用 |
 | POP Radio | 首頁歌曲條目是排行榜；直播頁 AJAX 取得的是播放網址 | 尚未找到可靠即時歌名來源 |
 | 飛碟 | Revma 音訊支援 ICY metadata 協定，但此次三個抽樣 metadata block 均空白 | 尚未驗證有歌名，不能判定永遠沒有 |
@@ -49,7 +53,7 @@ StreamTitle=' - 文茜的異想世界-週二5PM-3(週五4AM重播)';
 
 ### 好事、POP、Hit FM
 
-- 好事：<http://www.bestradio.com.tw/>，檢視首頁與 `/javascript/main.js`，未辨認出歌曲 endpoint。
+- 好事：<http://www.bestradio.com.tw/>，首頁與 `/javascript/main.js` 未辨認出歌曲 endpoint。另已確認 `/schedule989.htm` 的 `board-all` 表格、`board-line`／`board-line2`／`board-line3` 日期欄、`DJ-time`／`Program`／`DJ` 欄位；缺主持人不從連結或節目名猜測。此官方頁僅驗證 HTTP，HTTPS 測試逾時；內容一律當作非可信文字解析，不執行腳本。官方 App 介紹只宣告直播、互動及新歌預告，未找到可核對的即時歌名 API；不把第三方播放清單當成官方當下歌名。
 - POP：<https://www.pop917.com/home.aspx>、<https://www.pop917.com/liveStream.aspx?id=1>、`/js/function.js`。歌曲條目屬排行榜；直播頁 `ajax.aspx` 的 `getLIVEURL` 是音訊來源解析，不是歌名。
 - Hit FM：<https://www.hitoradio.com/newweb/nowonaircount_new.php?block=0&area=6> 呼叫 `/newweb/onair_n_ajax_cname.php`，抽樣 `value2` 為 `不累DJ - Bibi趙之璧`，`value1` 為 DJ 圖片 HTML。
 - <https://www.hitoradio.com/newweb/search.php> 是人工歌曲詢問表單，不是已驗證的即時歌曲 API；未提交表單。

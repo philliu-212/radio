@@ -1,6 +1,19 @@
 # Windows portable
 
-## 目前版本：Radio Mini / Direction C（2026-10-28）
+## 目前版本：Radio Mini v0.3.1（2026-10-28）
+
+- Full：`dist/Radio-Portable-Full-win-x64-20261028-104214/Radio.exe`，ZIP **72.43 MiB**，解壓 **181.24 MiB**。
+- Lite：`dist/Radio-Portable-Lite-win-x64-20261028-104242/Radio.exe`，ZIP **5.75 MiB**，解壓 **21.33 MiB**；需要 .NET 8 Desktop Runtime x64。
+- 新增音量保存、滑桿直接點擊／拖曳、點選即開播／切台、每頁五台與細 overlay scrollbar；六台按 **91.7、92.1、96.3、98.9、99.9、107.7** 排列。列高維持原本 37 DIP，不將五列拉長；整體從 550 × 270 縮為 **550 × 233 DIP**，保持左右欄寬／字級／配色。
+- 好事 989 可依官方節目表顯示節目／已提供的 DJ，標示「節目表」以區別即時播出確認。已實際取得平日 `989陽光列車／亭君`；仍不承諾歌名或臨時代班能即時取得。
+- 音量與主題寫入同資料夾 `radio.settings.json`，相容舊版只有主題的設定；唯讀資料夾僅當次有效。操作完成與退出時保存，不在每次拖曳位置變化時寫檔。
+- Core、原生 silent WAV 及離線 UI 測試通過；涵蓋滑鼠點擊／拖曳／滾輪、音量事件與輸出值、直接切台只啟動一次、overlay 點擊不切台、Home／End、DPI 訊息模擬下五列及滑桿命中區。
+- 新 ZIP 解壓啟動／最小化／還原／退出測試通過，Full 確認載入包內 runtime；兩包皆實測鼠點音量保存為 78、切主題不清音量、重開新程序恢復為 78。這些在獨立解壓測試目錄進行，不改使用者現有設定。
+- Lite 實際 UI 另經靜音驗證：直接選取中廣、再選飛碟，不按播放按鈕也會連線並收到 Playing 狀態。
+- 最終兩包六台各 5 秒靜音時鐘回歸測試通過；好事 989 的短版 MainForm 另測顯示／最小化／還原各 5 秒，時鐘持續前進，縮小時 metadata loop 停止、presentation update 增量為 0，還原後顯示「節目表：989陽光列車／DJ：亭君」。短測不代表長期／人工聽音驗收。
+- `dist/` 原則上只留最新版；執行中的舊版資料夾不強制關閉／刪除。更新本機資料夾時保留舊設定，發行 ZIP 不包含個人偏好。
+
+## 前版：Radio Mini / Direction C v0.3.0（2026-10-28）
 
 - Full：`dist/Radio-Portable-Full-win-x64-20261028-094226/Radio.exe`，ZIP **72.43 MiB**，解壓 **181.23 MiB**。
 - Lite：`dist/Radio-Portable-Lite-win-x64-20261028-094254/Radio.exe`，ZIP **5.74 MiB**，解壓 **21.32 MiB**；需要 .NET 8 Desktop Runtime x64。

@@ -17,7 +17,8 @@ internal static class UiChecks
         using var form = new MainForm(player, false, true, resolver, metadata);
         form.Show();
         await Task.Delay(100);
-        Check(form.ClientSize == new Size(550, 270), "Direction C: 550 x 270 DIP at 96 DPI");
+        Check(form.ClientSize == new Size(550, 233) && Find<ListBox>(form, "StationList").ItemHeight == 37,
+            "Five-row window is shorter (550 x 233 DIP) without stretching 37-DIP items");
         Check(player.Plays == 0 && form.LatestStatus.State == AudioState.Stopped, "Startup never auto-plays");
         Capture(form, "artifacts/direction-c-dark-idle.png");
         var list = Find<ListBox>(form, "StationList");
@@ -26,13 +27,14 @@ internal static class UiChecks
         var volume = Find<TrackBar>(form, "Volume");
         Check(list.Items.Count == 6, "Six catalog stations remain available");
         var listWidth = list.Width;
-        list.DataSource = StationCatalog.Load().Concat(StationCatalog.Load()).ToList();
-        list.SelectedIndex = 11;
+        Check(((StationListBox)list).VisibleRows == 5, "List shows exactly five full rows");
+        list.TopIndex = 1;
         await Task.Delay(30);
-        Check(list.TopIndex > 0 && list.Width == listWidth && Math.Abs(list.Font.SizeInPoints - 10) < .1, "Long list scrolls without changing column width or font");
-        list.DataSource = StationCatalog.Load();
+        Check(list.TopIndex > 0 && list.Width == listWidth && list.ClientSize.Width == list.Width && Math.Abs(list.Font.SizeInPoints - 10) < .1,
+            "Sixth station scrolls into view without reserving a scrollbar column or shrinking fonts");
+        list.TopIndex = 0;
         form.SelectForProbe("bcc-ilike");
-        Check(player.Plays == 0, "Selection alone does not open a source");
+        Check(player.Plays == 0, "Probe selection is silent; initial startup remains idle");
         var opening = form.PlayForProbeAsync("bcc-ilike");
         Check(form.LatestStatus.State == AudioState.Opening && form.PlayingStationId is null, "Connecting is not falsely shown as Playing");
         player.Emit(AudioState.Buffering);
@@ -40,13 +42,12 @@ internal static class UiChecks
         player.Emit(AudioState.Playing);
         await opening;
         Check(form.PlayingStationId == "bcc-ilike" && metadata.Calls == 1, "Actual Playing event starts visible metadata fetch");
-        form.SelectForProbe("hit-north");
-        Check(form.PlayingStationId == "bcc-ilike" && form.DisplayedStation == "中廣流行網" && player.Plays == 1,
-            "Selected and playing stations are separate; right card stays on actual source");
         var oldMetadata = metadata.Pending[0];
-        var next = form.PlayForProbeAsync("hit-north");
+        list.SelectedIndex = 5;
+        Check(player.Plays == 2 && form.LatestStatus.State == AudioState.Opening && form.PlayingStationId is null,
+            "Changing station immediately releases old playback and connects the new selection");
         player.Emit(AudioState.Playing);
-        await next;
+        await form.SelectionPlaybackTask;
         oldMetadata.SetResult(new(MetadataKind.Program, "STALE", "OLD", DateTimeOffset.UtcNow.AddSeconds(90)));
         metadata.Pending[1].SetResult(new(MetadataKind.Presenter, null, "測試主持人", DateTimeOffset.UtcNow.AddSeconds(90)));
         await Task.Delay(50);
@@ -58,6 +59,36 @@ internal static class UiChecks
         Check(!player.IsMuted && volume.Value == 63, "Unmute preserves slider value");
         volume.Focus(); SendMessage(volume.Handle, 0x0100, new IntPtr(0x27), IntPtr.Zero);
         Check(volume.Value > 63, "Native slider retains keyboard right-arrow behavior");
+        var volumeEvents = 0;
+        volume.ValueChanged += (_, _) => volumeEvents++;
+        SendMouse(volume, 0x0201, volume.Width * 3 / 4, volume.Height / 2);
+        Check(volume.Value is > 65 and < 90 && Math.Abs(player.Volume - volume.Value / 100d) < .001 && volumeEvents > 0,
+            "Clicking the drawn slider immediately seeks volume and fires ValueChanged");
+        SendMouse(volume, 0x0200, volume.Width + 30, volume.Height / 2);
+        SendMouse(volume, 0x0202, volume.Width + 30, volume.Height / 2);
+        Check(volume.Value == 100, "Dragging beyond slider edge clamps to 100 percent");
+        SendMouse(volume, 0x0201, -20, volume.Height / 2);
+        SendMouse(volume, 0x0202, -20, volume.Height / 2);
+        Check(volume.Value == 0, "Clicking slider left edge clamps to zero");
+        volume.Value = 40;
+        var committedVolume = -1;
+        ((VolumeSlider)volume).InteractionCompleted += () => committedVolume = volume.Value;
+        SendMessage(volume.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
+        Check(volume.Value != 40 && committedVolume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
+            "Wheel changes volume and commits the final value after native input processing");
+        var playsBeforeScroll = player.Plays;
+        list.TopIndex = 0;
+        SendMouse(list, 0x0201, list.Width - 1, list.Height - 2);
+        SendMouse(list, 0x0202, list.Width - 1, list.Height - 2);
+        Check(list.TopIndex == 1 && player.Plays == playsBeforeScroll && list.SelectedIndex == 5,
+            "Thin overlay scrollbar is clickable without selecting or retuning stations");
+        SendMouse(list, 0x0201, list.Width - 1, list.Height * 3 / 4);
+        SendMouse(list, 0x0200, list.Width - 1, 0);
+        SendMouse(list, 0x0202, list.Width - 1, 0);
+        Check(list.TopIndex == 0 && player.Plays == playsBeforeScroll, "Dragging overlay thumb scrolls without retuning");
+        list.TopIndex = 1;
+        SendMessage(list.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
+        Check(list.TopIndex == 0, "List mouse wheel still scrolls with native scrollbar hidden");
         var count = form.PresentationUpdates;
         form.WindowState = FormWindowState.Minimized;
         await Task.Delay(50);
@@ -106,13 +137,20 @@ internal static class UiChecks
         {
             SimulateDpi(form, dpi);
             await Task.Delay(50);
-            Check(form.DeviceDpi == dpi && list.ItemHeight == (int)Math.Round(37 * dpi / 96d), $"DPI {dpi}: list rows scale without smaller fonts");
+            Check(form.DeviceDpi == dpi && ((StationListBox)list).VisibleRows == 5 && list.ItemHeight == (int)Math.Round(37 * dpi / 96d),
+                $"DPI {dpi}: five visible rows keep original 37-DIP item height");
             Check(Math.Abs(Find<Label>(form, "NowPlayingTitle").Font.Size - 11 * dpi / 72f) < .1, $"DPI {dpi}: explicit label fonts scale with list typography");
+            Check(list.ClientSize.Width == list.Width, $"DPI {dpi}: overlay does not reserve a non-client scrollbar column");
+            SendMouse(volume, 0x0201, volume.Width * 3 / 4, volume.Height / 2);
+            SendMouse(volume, 0x0202, volume.Width * 3 / 4, volume.Height / 2);
+            Check(volume.Value is > 65 and < 90, $"DPI {dpi}: visible slider track hit testing stays aligned");
             CheckLayout(form);
             Capture(form, $"artifacts/direction-c-dpi-{dpi}.png");
         }
         form.Close();
         Check(player.Disposed && metadata.Disposed, "Window close releases playback, metadata and tray ownership");
+        CheckPreferences();
+        await CheckStationInputAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
@@ -129,6 +167,46 @@ internal static class UiChecks
         }
     }
     private static T Find<T>(Control root, string name) where T : Control => (T)root.Controls.Find(name, true).Single();
+    private static void SendMouse(Control control, int message, int x, int y) =>
+        SendMessage(control.Handle, message, message == 0x0202 ? IntPtr.Zero : new IntPtr(1), new IntPtr((x & 0xffff) | (y << 16)));
+    private static void CheckPreferences()
+    {
+        var folder = Path.GetFullPath($"artifacts/settings-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "radio.settings.json");
+        File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"light"}""");
+        Check(ThemeSettings.Load(path).Volume is null, "Legacy theme-only preferences keep default volume");
+        ThemeSettings.Save(false, 73, path);
+        Check(ThemeSettings.Load(path) is { Volume: 73, Theme: "light" }, "Volume persists with theme intact");
+        ThemeSettings.Save(true, path: path);
+        Check(ThemeSettings.Load(path) is { Volume: 73, Theme: "dark" }, "Changing theme does not reset persisted volume");
+        File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"dark","Volume":200}""");
+        Check(ThemeSettings.Load(path).Volume is null, "Invalid stored volume is ignored");
+    }
+    private static async Task CheckStationInputAsync()
+    {
+        var player = new FixturePlayer();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata());
+        form.Show();
+        await Task.Delay(30);
+        var list = Find<ListBox>(form, "StationList");
+        Check(player.Plays == 0, "Second window startup remains idle before clicking");
+        SendMouse(list, 0x0201, 60, list.ItemHeight / 2);
+        SendMouse(list, 0x0202, 60, list.ItemHeight / 2);
+        Check(player.Plays == 1, $"Clicking the initially selected station starts playback exactly once (plays={player.Plays}, selected={list.SelectedIndex}, top={list.TopIndex}, row={list.ItemHeight}, hit={list.IndexFromPoint(60, list.ItemHeight / 2)})");
+        player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
+        SendMouse(list, 0x0201, 60, list.ItemHeight * 3 / 2);
+        SendMouse(list, 0x0202, 60, list.ItemHeight * 3 / 2);
+        Check(player.Plays == 2 && form.SelectedStationId == "ufo-921", "Mouse station change immediately tunes exactly once");
+        player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
+        SendMessage(list.Handle, 0x0100, new IntPtr(0x23), IntPtr.Zero);
+        Check(list.SelectedIndex == 5 && list.TopIndex == 1 && player.Plays == 3, "Keyboard End scrolls to sixth station and tunes it");
+        player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
+        SendMessage(list.Handle, 0x0100, new IntPtr(0x24), IntPtr.Zero);
+        Check(list.SelectedIndex == 0 && list.TopIndex == 0 && player.Plays == 4, "Keyboard Home scrolls back without changing layout");
+        player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
+        form.Close();
+    }
     private static void Check(bool value, string name)
     {
         if (!value) throw new Exception(name);
@@ -147,7 +225,7 @@ internal static class UiChecks
     }
     private static void SimulateDpi(Form form, int dpi)
     {
-        var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + 550 * dpi / 96, Bottom = form.Top + 270 * dpi / 96 };
+        var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + 550 * dpi / 96, Bottom = form.Top + 233 * dpi / 96 };
         var ptr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeRect>());
         try { Marshal.StructureToPtr(rect, ptr, false); SendMessage(form.Handle, 0x02E0, new IntPtr(dpi | dpi << 16), ptr); }
         finally { Marshal.FreeHGlobal(ptr); }

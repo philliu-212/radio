@@ -27,8 +27,9 @@ public static class StationCatalog
             .GetManifestResourceStream("Radio.Core.stations.json")!;
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         options.Converters.Add(new JsonStringEnumConverter());
-        return JsonSerializer.Deserialize<Station[]>(stream, options)
+        var stations = JsonSerializer.Deserialize<Station[]>(stream, options)
             ?? throw new InvalidDataException("電台清單無法載入。");
+        return stations.OrderBy(station => decimal.Parse(station.Frequency, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
     }
 }
 

@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace Radio.Core;
 
-public enum MetadataKind { Song, UpcomingSong, Program, Presenter }
+public enum MetadataKind { Song, UpcomingSong, Program, Presenter, ScheduledProgram }
 
 public sealed record StationMetadata(MetadataKind Kind, string? Title, string? Person,
     DateTimeOffset ExpiresAt)
@@ -13,11 +13,12 @@ public sealed record StationMetadata(MetadataKind Kind, string? Title, string? P
     {
         MetadataKind.UpcomingSong => $"即將播放：{Title}",
         MetadataKind.Program => $"節目：{Title}",
+        MetadataKind.ScheduledProgram => $"節目表：{Title}",
         _ => Title
     };
     public string? SecondLine => Person is null ? null : Kind switch
     {
-        MetadataKind.Program or MetadataKind.Presenter => $"DJ：{Person}",
+        MetadataKind.Program or MetadataKind.Presenter or MetadataKind.ScheduledProgram => $"DJ：{Person}",
         _ => Person
     };
 }
@@ -32,6 +33,8 @@ public interface IStationMetadataProvider : IDisposable
 public sealed class OfficialMetadataProvider : IStationMetadataProvider
 {
     private readonly HttpClient _client;
+    private string? _bestSchedule;
+    private DateTimeOffset _bestScheduleFetched;
     public OfficialMetadataProvider(HttpMessageHandler? handler = null)
     {
         _client = handler is null ? new HttpClient() : new HttpClient(handler);
@@ -39,9 +42,25 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
         _client.MaxResponseContentBufferSize = 256 * 1024;
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("LightweightRadio/0.3");
     }
-    public bool Supports(string stationId) => stationId is "bcc-ilike" or "hit-north" or "kiss-999";
+    public bool Supports(string stationId) => stationId is "best-989" or "bcc-ilike" or "hit-north" or "kiss-999";
     public async Task<StationMetadata?> GetAsync(string stationId, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (stationId == "best-989")
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (_bestSchedule is null || now - _bestScheduleFetched >= TimeSpan.FromMinutes(15))
+            {
+                // Official schedule currently exposes HTTP, like the station's public homepage.
+                // Treat it strictly as untrusted text, never execute HTML/JS or infer a song.
+                using var schedule = await _client.GetAsync("http://www.bestradio.com.tw/schedule989.htm", cancellationToken);
+                if (!schedule.IsSuccessStatusCode) return null;
+                var html = await schedule.Content.ReadAsStringAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _bestSchedule = html; _bestScheduleFetched = DateTimeOffset.UtcNow;
+            }
+            return BestRadioSchedule.Parse(_bestSchedule, DateTimeOffset.UtcNow);
+        }
         var url = stationId switch
         {
             "bcc-ilike" => "https://www.bcc.com.tw/webapi/BCCRadioWebAPI/ChannelInfoBat",
