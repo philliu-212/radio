@@ -198,7 +198,7 @@ internal sealed class StationListBox : ListBox
     public int HoverIndex { get; private set; } = -1;
     public Color ScrollbarColor { get; set; } = PlayerTheme.Dark.Track;
     internal int VisibleRows => Math.Max(1, ClientSize.Height / Math.Max(1, ItemHeight));
-    internal int ItemContentWidth => Math.Max(0, ClientSize.Width - Dip(8));
+    internal int ItemContentWidth => Math.Max(0, ClientSize.Width - Dip(12));
     internal bool ScrollbarVisible => Items.Count > VisibleRows && (_pointerInside || _draggingScrollbar);
     private bool _hidingScrollbar;
     private bool _draggingScrollbar;
@@ -239,7 +239,7 @@ internal sealed class StationListBox : ListBox
         if (ItemHeight != height) ItemHeight = height;
     }
     private int Dip(int value) => (int)Math.Round(value * (FindForm()?.DeviceDpi ?? DeviceDpi) / 96d);
-    internal Rectangle ScrollbarTrackBounds => new(ItemContentWidth + Dip(3), Dip(8), Math.Max(1, Dip(2)),
+    internal Rectangle ScrollbarTrackBounds => new(ItemContentWidth + Dip(2), Dip(8), Math.Max(1, Dip(2)),
         Math.Max(0, Math.Min(ClientSize.Height, VisibleRows * ItemHeight) - Dip(16)));
     internal Rectangle ScrollThumb
     {

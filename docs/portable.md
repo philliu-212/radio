@@ -1,6 +1,12 @@
 # Windows portable
 
-## 目前版本：Radio Mini v0.3.2（2026-10-28，僅 scrollbar 調整）
+## 目前版本：Radio Mini v0.3.3（2026-10-28）
+
+- 視窗定案為 554 × 233 DIP；間距為 item／2 DIP／bar 2 DIP／8 DIP／狀態區塊。左右區塊寬度、37 DIP 列高及字級不變。
+- 新增根目錄 `Build-Portable.cmd`，雙擊依序產生 Lite／Full；封裝資料夾與 ZIP 名稱含 `v0.3.3`，執行檔版本同步更新。
+- 離線 UI 與 100%～200% DPI 訊息模擬測試通過；不代表真實多螢幕或線上播放驗收。
+
+## 前版：Radio Mini v0.3.2（2026-10-28，僅 scrollbar 調整）
 
 - Full：`dist/Radio-Portable-Full-win-x64-20261028-110443/Radio.exe`；Lite：`dist/Radio-Portable-Lite-win-x64-20261028-110512/Radio.exe`。
 - 單一修正：游標離開清單隱藏 scrollbar，拖曳中保持可見；thumb 改為 2 DIP、與 item 相隔 3 DIP，使用既有欄間空隙，上下內縮避免超出圓角。item 寬度／37 DIP 列高、550 × 233 DIP 視窗與右側面板位置不變。
@@ -76,6 +82,8 @@
 
 ## 重新建置
 
+在專案根目錄雙擊 `Build-Portable.cmd`，會依序產生 Lite 與 Full，成功後開啟 `dist/`。需要 .NET 8 SDK；失敗時會停下並保留錯誤訊息。啟動器的 PowerShell 執行政策只套用於當次程序，不修改全機設定。
+
 ```powershell
 # Lite
 powershell -NoProfile -File scripts/Publish-Portable.ps1
@@ -84,7 +92,7 @@ powershell -NoProfile -File scripts/Publish-Portable.ps1
 powershell -NoProfile -File scripts/Publish-Portable.ps1 -SelfContained
 ```
 
-檔案輸出到新的 `dist/Radio-Portable-{Lite|Full}-win-x64-日期時間/` 及同名 ZIP；不覆寫或刪除舊包。`dist/` 不進 Git。若系統政策禁止 `.ps1`，不用為此調整全機政策，可由已信任的開發 PowerShell 工作階段執行腳本內容。
+檔案輸出到新的 `dist/Radio-Portable-v版號-{Lite|Full}-win-x64-日期時間/` 及同名 ZIP；不覆寫或刪除舊包。`dist/` 不進 Git。若系統政策禁止 `.ps1`，不用為此調整全機政策，可由已信任的開發 PowerShell 工作階段執行腳本內容。
 
 測試封裝需直接執行該包的 `Radio.exe`，而不是用 `dotnet run`，否則會量到開發環境而非真正交付的 runtime。
 

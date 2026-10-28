@@ -3,10 +3,13 @@ param([string]$ProjectRoot, [switch]$SelfContained)
 $ErrorActionPreference = 'Stop'
 if (!$ProjectRoot) { $ProjectRoot = Split-Path $PSScriptRoot -Parent }
 $mode = if ($SelfContained) { 'Full' } else { 'Lite' }
-$name = 'Radio-Portable-' + $mode + '-win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+$project = Join-Path $ProjectRoot 'src/Radio.Portable/Radio.Portable.csproj'
+[xml]$projectXml = Get-Content -Raw -LiteralPath $project
+$version = [string]($projectXml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a major.minor.patch Version in the portable project.' }
+$name = 'Radio-Portable-v' + $version + '-' + $mode + '-win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $output = Join-Path $ProjectRoot ('dist/' + $name)
 if (Test-Path $output) { throw 'Output already exists. No files have been replaced.' }
-$project = Join-Path $ProjectRoot 'src/Radio.Portable/Radio.Portable.csproj'
 $arguments = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained',
     $SelfContained.IsPresent.ToString().ToLowerInvariant(), '-o', $output,
     '-p:DebugType=None', '-p:DebugSymbols=false', '-p:PublishSingleFile=false', '--nologo')

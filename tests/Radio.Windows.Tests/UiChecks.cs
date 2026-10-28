@@ -17,8 +17,8 @@ internal static class UiChecks
         using var form = new MainForm(player, false, true, resolver, metadata);
         form.Show();
         await Task.Delay(100);
-        Check(form.ClientSize == new Size(550, 233) && Find<ListBox>(form, "StationList").ItemHeight == 37,
-            "Five-row window is shorter (550 x 233 DIP) without stretching 37-DIP items");
+        Check(form.ClientSize == new Size(554, 233) && Find<ListBox>(form, "StationList").ItemHeight == 37,
+            "Approved 554 x 233 DIP window keeps original 37-DIP items");
         Check(player.Plays == 0 && form.LatestStatus.State == AudioState.Stopped, "Startup never auto-plays");
         Capture(form, "artifacts/direction-c-dark-idle.png");
         var list = Find<ListBox>(form, "StationList");
@@ -79,14 +79,15 @@ internal static class UiChecks
         var playsBeforeScroll = player.Plays;
         var stationList = (StationListBox)list;
         var card = Find<Label>(form, "NowPlayingTitle").Parent!.Parent!;
-        Check(stationList.ItemContentWidth == 241 && card.PointToScreen(Point.Empty).X - form.Left == 258,
-            "Overlay uses the existing gap; station-card width and right-panel position are unchanged");
+        Check(stationList.ItemContentWidth == 241 && card.Width == 283 && card.PointToScreen(Point.Empty).X - form.Left == 262,
+            "Only gap grows by 4 DIP; item and status-card widths stay unchanged");
         SendMessage(list.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
         Check(!stationList.ScrollbarVisible, "Scrollbar is hidden when pointer leaves the list");
         SendMouse(list, 0x0200, 60, list.ItemHeight / 2);
         Check(stationList.ScrollbarVisible, "Scrollbar appears when pointer enters station list");
-        Check(stationList.ScrollbarTrackBounds.Width == 2 && stationList.ScrollbarTrackBounds.Left - stationList.ItemContentWidth == 3,
-            "Scrollbar is thinner (2 DIP) with a 3-DIP gap from rounded station items");
+        Check(stationList.ScrollbarTrackBounds.Width == 2 && stationList.ScrollbarTrackBounds.Left - stationList.ItemContentWidth == 2 &&
+            list.ClientSize.Width - stationList.ScrollbarTrackBounds.Right == 8,
+            "Approved spacing is exactly item / 2 DIP / bar 2 DIP / 8 DIP / status card");
         list.TopIndex = 0;
         var track = stationList.ScrollbarTrackBounds;
         Check(stationList.ScrollThumb.Top == track.Top && track.Top == 8, "Top thumb is inset inside first item's rounded ends");
@@ -170,6 +171,9 @@ internal static class UiChecks
             list.TopIndex = 0;
             Check(stationList.ScrollThumb.Top == scaledTrack.Top && scaledTrack.Left > stationList.ItemContentWidth &&
                 scaledTrack.Width == (int)Math.Round(2 * dpi / 96d), $"DPI {dpi}: thin scrollbar keeps its gap and top inset");
+            Check(scaledTrack.Left - stationList.ItemContentWidth == (int)Math.Round(2 * dpi / 96d) &&
+                Math.Abs(list.ClientSize.Width - scaledTrack.Right - 8 * dpi / 96d) <= 1,
+                $"DPI {dpi}: approved 2/2/8 spacing survives pixel rounding");
             list.TopIndex = 1;
             Check(stationList.ScrollThumb.Bottom == scaledTrack.Bottom && scaledTrack.Bottom <= 5 * list.ItemHeight - (int)Math.Round(8 * dpi / 96d),
                 $"DPI {dpi}: bottom thumb never overhangs rounded items");
@@ -258,7 +262,7 @@ internal static class UiChecks
     }
     private static void SimulateDpi(Form form, int dpi)
     {
-        var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + 550 * dpi / 96, Bottom = form.Top + 233 * dpi / 96 };
+        var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + 554 * dpi / 96, Bottom = form.Top + 233 * dpi / 96 };
         var ptr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeRect>());
         try { Marshal.StructureToPtr(rect, ptr, false); SendMessage(form.Handle, 0x02E0, new IntPtr(dpi | dpi << 16), ptr); }
         finally { Marshal.FreeHGlobal(ptr); }

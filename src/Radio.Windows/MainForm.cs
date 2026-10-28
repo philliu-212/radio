@@ -78,8 +78,8 @@ internal sealed class MainForm : Form
         MaximizeBox = false;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(550, 233);
-        MinimumSize = new Size(550, 233);
+        ClientSize = new Size(554, 233);
+        MinimumSize = new Size(554, 233);
         StartPosition = FormStartPosition.CenterScreen;
         DoubleBuffered = true;
 
@@ -89,14 +89,14 @@ internal sealed class MainForm : Form
         layout.Controls.Add(BuildHeader(), 0, 0);
         var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12));
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _stations.DataSource = StationCatalog.Load();
         _stations.DisplayMember = nameof(Station.DisplayName);
         _lastSelectedStationId = (_stations.SelectedItem as Station)?.Id;
         body.Controls.Add(_stations, 0, 0);
-        // Reuse the existing inter-column gap for the overlay, without narrowing station cards.
+        // Only widen the gap: item -> 2 DIP -> 2-DIP scrollbar -> 8 DIP -> status card.
         body.SetColumnSpan(_stations, 2);
         body.Controls.Add(BuildPlayerCard(), 2, 0);
         layout.Controls.Add(body, 0, 1);
