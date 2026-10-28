@@ -4,7 +4,7 @@
 
 - Full：`dist/Radio-Portable-Full-win-x64-20261028-094226/Radio.exe`，ZIP **72.43 MiB**，解壓 **181.23 MiB**。
 - Lite：`dist/Radio-Portable-Lite-win-x64-20261028-094254/Radio.exe`，ZIP **5.74 MiB**，解壓 **21.32 MiB**；需要 .NET 8 Desktop Runtime x64。
-- 兩者均為 550 × 270 DIP 的橫向 Direction C UI，無新增大型依賴。操作與限制見 [ui-direction-c.md](ui-direction-c.md)。2026-10-27 第一階段包保留不覆寫。
+- 兩者均為 550 × 270 DIP 的橫向 Direction C UI，無新增大型依賴。操作與限制見 [ui-direction-c.md](ui-direction-c.md)。`dist/` 僅保留最新版兩包與對應 ZIP；2026-10-27 舊包已依使用者要求清除，原始碼保留於 Git 歷史。重建仍需相應 SDK／runtime，Git 並未保存發行執行檔。
 - 最終兩包六台各 10 秒靜音時鐘短測全數通過；兩個 ZIP 均另行解壓測啟動、靜音開播、切換停止按鈕、最小化、還原與退出。Full 確認載入包內 `coreclr.dll`。
 
 實際包的 MainForm，以中廣流行網量測每階段 10 秒（音訊時鐘均前進約 10 秒）：
