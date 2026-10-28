@@ -6,7 +6,7 @@
 
 - [x] 自寫 Windows Media Foundation 純音訊控制層，不附帶 mpv／FFmpeg。
 - [x] KISS 確認 audio-only、沒有啟用影像軌。
-- [x] 獨立 portable 專案，不攜帶 mpv 程式碼；為保留 Hit FM，包含 Windows API 投影與相容路徑。
+- [x] 不攜帶 mpv；為保留 Hit FM，包含 Windows API 投影與相容路徑。v0.3.6 已將獨立 portable 專案合併回唯一的 `Radio.Windows`，以 `Release.cmd` 封裝。
 - [x] 解壓縮完整資料夾後可雙擊 Radio.exe，不必安裝 App 或 SDK。
 - [x] 完成 Lite／Full 六台短測與解壓包 UI 驗證；Full 確認使用包內 runtime。
 

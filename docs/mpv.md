@@ -1,27 +1,14 @@
-# mpv 播放引擎實驗
+# mpv 播放引擎實驗（歷史封存）
 
-## 安裝與執行
-
-mpv 是可選的本機播放引擎。Windows 原生引擎仍可單獨執行，不需要 mpv。
-
-`scripts/Install-Mpv.ps1` 只下載／解壓至被 Git 忽略的 `tools/mpv/`，不執行安裝器、註冊檔案關聯、更新 PATH 或更動系統設定。
-
-```powershell
-powershell -NoProfile -File scripts/Install-Mpv.ps1
-dotnet run --project src/Radio.Windows -c Release -- --backend mpv
-```
-
-若 PowerShell 執行政策不允許 `.ps1`，可以依 `scripts/mpv-package.json` 手動下載、核對 SHA-256 並解壓至 `tools/mpv/`；不需要變更全機執行政策。亦可透過 `--mpv-path C:\trusted-path\mpv.exe` 指定自行安裝且信任的執行檔。
-
-原生引擎：`--backend native`（目前預設）。不會因缺少 mpv 而暗中下載、改用其他播放器或開啟瀏覽器。
+v0.3.6 已移除 mpv 後端、下載腳本及本機二進位。目前使用 Windows 系統音訊，以下只保留當時的比較數據與限制，不代表現行功能；若要重現，需使用 Git 歷史的舊版本。
 
 ## 取得來源與版本
 
 - mpv 官方安裝頁：[mpv.io/installation](https://mpv.io/installation/)。該頁明示一般 Windows 發行檔為**非官方第三方建置**。
 - 採用該頁列出的 `shinchiro/mpv-winbuild-cmake`，release `20261021`。
-- 檔名與 SHA-256 已固定在 `scripts/mpv-package.json`，以 GitHub release 的 asset digest 核對下載內容。此核對不是獨立數位簽章或安全稽核。
+- 當時以 GitHub release 的 asset digest 核對下載內容；原下載設定可在 Git 歷史查看。此核對不是獨立數位簽章或安全稽核。
 - 實測版本：`mpv v0.41.0-1227-ge471496c5`，FFmpeg `N-127893-g9a861e968`。
-- 保留原封包在 `tools/`；沒有把第三方二進位檔加入 Git，也沒有重新發布安裝包。
+- 當時未把第三方二進位檔加入 Git，也沒有重新發布安裝包；本機封包現已移除。
 - 此建置的 `mpv.exe` 約 **115.50 MiB**，下載封包約 **32.45 MiB**；執行記憶體較省不等於部署檔案較小。
 - 將來若要分發播放器與 mpv／FFmpeg 等二進位，必須先確認該建置的 GPL／第三方授權、通知及對應原始碼提供義務；不可直接當成無附帶條件的單一 exe 發行。
 
@@ -36,18 +23,9 @@ dotnet run --project src/Radio.Windows -c Release -- --backend mpv
 - 帶簽章的串流 URL 透過 IPC 傳入，不放進程序命令列，不開 mpv log、不解析終端輸出。設定與報告不保存這些 URL。
 - 網址依然由 `Radio.Core` 的官方來源解析器取得；不會重新引入 TWeFM 代理。
 
-## 測試
+## 當時的測試方法
 
-```powershell
-# 產生本機靜音 WAV；測試本身不連電台、不播放可聽聲音。
-dotnet run --project tests/Radio.Windows.Tests -c Release
-
-# 原生介面測試，可切換引擎。
-powershell -NoProfile -File scripts/Smoke-Test.ps1 -Backend mpv -Playback
-
-# 線上短測；報告包含主程式與它擁有的 mpv 子程序。
-dotnet src/Radio.Windows/bin/Release/net8.0-windows10.0.19041.0/Radio.Windows.dll --probe --backend mpv --station kiss-999,ufo-921 --seconds 60 --output artifacts/mpv-60s.json
-```
+使用本機靜音 WAV 做生命週期測試，另經 UI 與線上短測。現行測試已改為只驗證 Windows 系統音訊，不再提供 mpv 執行命令。
 
 私有記憶體、CPU 使用量會加總主程式與已知播放子程序；working set 的加總可能重複計算共享頁面，所以比較時同時列出兩者，不只挑較小的數字。共享音訊服務與 GPU 記憶體仍不在統計內。所有短測與 A/B 比較皆不等於長期穩定保證，且先後測試無法完全排除網路時段差異。
 

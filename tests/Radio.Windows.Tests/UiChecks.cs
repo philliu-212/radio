@@ -17,6 +17,11 @@ internal static class UiChecks
         using var form = new MainForm(player, false, true, resolver, metadata);
         form.Show();
         await Task.Delay(100);
+        var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
+        Check(form.Text == $"Radio Mini v{expectedVersion}" && Find<Label>(form, "AppTitle").Text == form.Text,
+            "Visible app title and taskbar title show the actual app assembly version");
+        try { PlayerBackend.Create(["--backend", "mpv"]); throw new Exception("Removed backend was accepted."); }
+        catch (ArgumentException) { Check(true, "Removed backend is rejected rather than launching an external player"); }
         Check(form.ClientSize == new Size(554, 233) && Find<ListBox>(form, "StationList").ItemHeight == 37,
             "Approved 554 x 233 DIP window keeps original 37-DIP items");
         Check(player.Plays == 0 && form.LatestStatus.State == AudioState.Stopped, "Startup never auto-plays");

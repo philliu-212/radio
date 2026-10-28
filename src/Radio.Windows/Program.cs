@@ -34,6 +34,12 @@ internal static class Program
                 MessageBox.Show(error.Message, "Radio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 Environment.ExitCode = 1;
             }
+            catch (Exception error) when (error is DllNotFoundException or System.Runtime.InteropServices.COMException)
+            {
+                MessageBox.Show($"Windows 媒體元件無法使用（0x{error.HResult:X8}）。請確認已安裝 Windows Media Feature Pack。",
+                    "Radio", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Environment.ExitCode = 1;
+            }
         }
     }
 }

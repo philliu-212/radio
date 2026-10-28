@@ -1,6 +1,14 @@
 # Windows portable
 
-## 目前版本：Radio Mini v0.3.5（2026-10-28）
+## 目前版本：Radio Mini v0.3.6（2026-10-28）
+
+- 只保留 `src/Radio.Windows` 一個執行專案，刪除重複的 `src/Radio.Portable`；開發與發行使用同一份程式、同一版號。
+- 平常雙擊 `Run.cmd` 建置／執行（Debug）；交付時雙擊 `Release.cmd` 才產生 `dist/` 的 Lite／Full 與 ZIP。發行的中間產出位於 `artifacts/release-build/`，不改動開發的 `bin`。
+- 原 `Build-Portable.cmd`／`scripts/Publish-Portable.ps1` 已改名為 `Release.cmd`／`scripts/Publish-Release.ps1`。以下舊版紀錄的舊名稱僅為歷史，不再適用。
+- 左上標題、工作列標題、系統匣提示與右鍵選單顯示實際 assembly 版號。mpv 程式碼、安裝腳本、下載設定與本機二進位不再保留。
+- Core、離線 UI、本機靜音 WAV 與開發入口冒煙測試通過；同一專案的 Lite／Full 在獨立測試目錄完成 publish／啟動／系統匣／退出驗證，Full 確認載入包內 runtime。此驗證不新增 `dist/` 發行包。
+
+## 前版：Radio Mini v0.3.5（2026-10-28）
 
 - 修正滾輪到清單頂端／底端後繼續滾動仍重畫的問題；位置不變時不再設定 `TopIndex` 或要求重畫，拖曳捲動條亦共用此判斷。
 - 工作列最小化保留工作列圖示，可再次點擊還原；視窗右上角最小化按鈕仍縮到系統匣。兩種背景模式都停止 metadata／介面更新，不停止音訊。
@@ -94,14 +102,14 @@
 
 ## 重新建置
 
-在專案根目錄雙擊 `Build-Portable.cmd`，會依序產生 Lite 與 Full，成功後開啟 `dist/`。需要 .NET 8 SDK；失敗時會停下並保留錯誤訊息。啟動器的 PowerShell 執行政策只套用於當次程序，不修改全機設定。
+在專案根目錄雙擊 `Release.cmd`，會依序產生 Lite 與 Full，成功後開啟 `dist/`。需要 .NET 8 SDK；失敗時會停下並保留錯誤訊息。啟動器的 PowerShell 執行政策只套用於當次程序，不修改全機設定。開發執行請用 `Run.cmd`。
 
 ```powershell
 # Lite
-powershell -NoProfile -File scripts/Publish-Portable.ps1
+powershell -NoProfile -File scripts/Publish-Release.ps1
 
 # Full，不需另裝 .NET
-powershell -NoProfile -File scripts/Publish-Portable.ps1 -SelfContained
+powershell -NoProfile -File scripts/Publish-Release.ps1 -SelfContained
 ```
 
 檔案輸出到新的 `dist/Radio-Portable-v版號-{Lite|Full}-win-x64-日期時間/` 及同名 ZIP；不覆寫或刪除舊包。`dist/` 不進 Git。若系統政策禁止 `.ps1`，不用為此調整全機政策，可由已信任的開發 PowerShell 工作階段執行腳本內容。

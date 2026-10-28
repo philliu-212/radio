@@ -3,15 +3,16 @@ param([string]$ProjectRoot, [switch]$SelfContained)
 $ErrorActionPreference = 'Stop'
 if (!$ProjectRoot) { $ProjectRoot = Split-Path $PSScriptRoot -Parent }
 $mode = if ($SelfContained) { 'Full' } else { 'Lite' }
-$project = Join-Path $ProjectRoot 'src/Radio.Portable/Radio.Portable.csproj'
+$project = Join-Path $ProjectRoot 'src/Radio.Windows/Radio.Windows.csproj'
 [xml]$projectXml = Get-Content -Raw -LiteralPath $project
 $version = [string]($projectXml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
-if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a major.minor.patch Version in the portable project.' }
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a major.minor.patch Version in the app project.' }
 $name = 'Radio-Portable-v' + $version + '-' + $mode + '-win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $output = Join-Path $ProjectRoot ('dist/' + $name)
 if (Test-Path $output) { throw 'Output already exists. No files have been replaced.' }
 $arguments = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained',
     $SelfContained.IsPresent.ToString().ToLowerInvariant(), '-o', $output,
+    '--artifacts-path', (Join-Path $ProjectRoot ('artifacts/release-build/' + $mode)),
     '-p:DebugType=None', '-p:DebugSymbols=false', '-p:PublishSingleFile=false', '--nologo')
 if ($SelfContained) {
     $runtime = Get-Content -Raw (Join-Path $ProjectRoot 'scripts/runtime-package.json') | ConvertFrom-Json
@@ -23,7 +24,7 @@ $readme = if ($SelfContained) { 'docs/portable-full-readme.txt' } else { 'docs/p
 Copy-Item (Join-Path $ProjectRoot $readme) (Join-Path $output 'READ-ME.txt')
 Copy-Item (Join-Path $ProjectRoot 'docs/third-party-notices.txt') (Join-Path $output 'THIRD-PARTY-NOTICES.txt')
 if ($SelfContained) {
-    $assets = Get-Content -Raw (Join-Path $ProjectRoot 'src/Radio.Portable/obj/project.assets.json') | ConvertFrom-Json
+    $assets = Get-Content -Raw (Join-Path $ProjectRoot ('artifacts/release-build/' + $mode + '/obj/Radio.Windows/project.assets.json')) | ConvertFrom-Json
     $cache = @($assets.packageFolders.PSObject.Properties.Name)[0]
     foreach ($id in @('microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64')) {
         $packagePath = Join-Path $cache ($id + '/' + $runtime.version)

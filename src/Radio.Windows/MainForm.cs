@@ -60,6 +60,8 @@ internal sealed class MainForm : Form
     internal string? SelectedStationId => (_stations.SelectedItem as Station)?.Id;
     internal string DisplayedStation => _title.Text;
     internal bool MetadataRunning => _metadataRequest is not null;
+    internal static string AppVersion => typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+    private static string AppTitle => $"Radio Mini v{AppVersion}";
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null)
@@ -71,7 +73,7 @@ internal sealed class MainForm : Form
         _darkMode = darkOverride ?? ThemeSettings.LoadDarkMode();
         _theme = _darkMode ? PlayerTheme.Dark : PlayerTheme.Light;
         SuspendLayout();
-        Text = "Radio Mini";
+        Text = AppTitle;
         Font = OwnFont(10);
         _frequencyFont = OwnFont(8.5f, family: "Segoe UI");
         FormBorderStyle = FormBorderStyle.None;
@@ -116,8 +118,9 @@ internal sealed class MainForm : Form
         };
         menu.Items.Add(metadataOption);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(AppTitle).Enabled = false;
         menu.Items.Add("退出", null, (_, _) => Close());
-        _tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "Radio Mini", ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Icon = SystemIcons.Application, Text = AppTitle, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowPlayer();
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
         _stations.SelectedIndexChanged += (_, _) =>
@@ -209,7 +212,7 @@ internal sealed class MainForm : Form
         var logo = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
         logo.Paint += (_, e) => GlyphPainter.Draw(e.Graphics, PlayerGlyph.Radio,
             new Rectangle(0, (logo.Height - ScaleDip(13)) / 2, ScaleDip(13), ScaleDip(13)), _theme.Accent);
-        var brand = TextLabel("AppTitle"); brand.Text = "Radio Mini"; brand.Font = OwnFont(11, family: "Segoe UI");
+        var brand = TextLabel("AppTitle"); brand.Text = AppTitle; brand.Font = OwnFont(11, family: "Segoe UI");
         header.Controls.Add(logo, 0, 0); header.Controls.Add(brand, 1, 0);
         header.Controls.Add(_themeButton, 2, 0); header.Controls.Add(_minimize, 3, 0); header.Controls.Add(_close, 4, 0);
         header.MouseDown += DragWindow; logo.MouseDown += DragWindow; brand.MouseDown += DragWindow;
@@ -377,7 +380,7 @@ internal sealed class MainForm : Form
             _active = false; _playingStation = null; CancelMetadata(); _started?.TrySetResult();
         }
         _trayTransport.Text = _active ? "停止" : "播放";
-        _tray.Text = _active && _targetStation is { } station ? $"Radio Mini · {StationName(station)}" : "Radio Mini";
+        _tray.Text = _active && _targetStation is { } station ? $"{AppTitle} · {StationName(station)}" : AppTitle;
         RefreshPresentation();
     }
 

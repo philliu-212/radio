@@ -2,7 +2,7 @@ param(
     [switch]$Playback,
     [switch]$ExpectLocalRuntime,
     [string]$ExecutablePath,
-    [ValidateSet('system', 'native', 'mediaengine', 'mpv')][string]$Backend = 'system'
+    [ValidateSet('system', 'native', 'mediaengine')][string]$Backend = 'system'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,9 +18,10 @@ public static class RadioWindowTest {
 '@
 
 $exe = if ($ExecutablePath) { $ExecutablePath } else {
-    Join-Path $PSScriptRoot '..\src\Radio.Windows\bin\Release\net8.0-windows10.0.19041.0\Radio.Windows.exe'
+    Join-Path $PSScriptRoot '..\src\Radio.Windows\bin\Debug\net8.0-windows10.0.19041.0\Radio.exe'
 }
-if (!(Test-Path $exe)) { throw 'Build Radio.Windows in Release first.' }
+if (!(Test-Path $exe)) { throw 'Run Run.cmd first, or specify -ExecutablePath for a release package.' }
+$exe = (Resolve-Path -LiteralPath $exe).Path
 $process = Start-Process -FilePath $exe -ArgumentList '--backend', $Backend -WorkingDirectory (Split-Path -Parent $exe) -PassThru
 
 function Wait-Until([scriptblock]$Condition, [string]$Message, [int]$Seconds = 10) {

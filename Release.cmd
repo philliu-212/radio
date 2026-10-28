@@ -3,13 +3,13 @@ setlocal
 pushd "%~dp0"
 if errorlevel 1 goto :failed
 
-echo Building Lite package...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Publish-Portable.ps1"
+echo Creating Lite release...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Publish-Release.ps1"
 if errorlevel 1 goto :failed
 
 echo.
-echo Building Full package...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Publish-Portable.ps1" -SelfContained
+echo Creating Full release...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Publish-Release.ps1" -SelfContained
 if errorlevel 1 goto :failed
 
 echo.

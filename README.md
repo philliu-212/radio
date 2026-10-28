@@ -2,7 +2,7 @@
 
 個人用、低資源優先的 Windows 網路廣播**驗證原型**。原生 WinForms 介面，直接播放官方音訊來源，不啟動瀏覽器、WebView 或音訊代理伺服器。
 
-預設使用 Windows 系統音訊：五台走純音訊模式，Hit FM 走相容路徑，不需要 mpv。保留 mpv 作為開發用比較選項；相關資料見 [docs/mpv.md](docs/mpv.md)。
+使用 Windows 系統音訊：五台走純音訊模式，Hit FM 走相容路徑，不需要外部播放器。mpv 後端、安裝工具及二進位已移除；[舊實驗紀錄](docs/mpv.md)僅供歷史參考。
 
 **可雙擊的 Lite／Full portable 包**見 [docs/portable.md](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。現採使用者指定的 [Direction C 橫向 UI](docs/ui-direction-c.md)，支援深／淺色與展開時的官方節目／歌曲資訊。
 
@@ -21,13 +21,15 @@
 
 ## 開發執行
 
+雙擊根目錄 **`Run.cmd`**：建置並執行目前原始碼，不會產生發行包。只保留 `src/Radio.Windows` 一個程式專案，視窗左上角直接顯示版本（系統匣右鍵選單也可查看）。修改後需先關閉舊開發視窗再重開。
+
+要交付時才雙擊 **`Release.cmd`**：從同一專案產生 Lite／Full 資料夾與 ZIP 到 `dist/`，不啟動程式、不更新開發用 `bin`。`src/Radio.Portable` 已移除，`Build-Portable.cmd` 已改名。
+
 需要 Windows 10 2004 以上（含媒體播放元件）、.NET 8 SDK 與網路。開發時沿用現有 SDK；正式發行前應更新至仍受支援且已修補的 SDK／runtime，並重新量測。
 
 ```powershell
-dotnet run --project src/Radio.Windows -c Release
+dotnet run --project src/Radio.Windows
 ```
-
-已備妥本機 mpv 時可用 `dotnet run --project src/Radio.Windows -c Release -- --backend mpv` 切換；portable 包不含 mpv。
 
 - 啟動時不自動播放；點選電台直接開播／切台，頻率由小到大排列。清單每頁五台，可使用細捲動條、滾輪或鍵盤捲動。
 - 「停止」會釋放播放來源；再次播放重新取得來源，回到直播，不保留暫停期間內容。
@@ -43,7 +45,7 @@ dotnet run --project src/Radio.Windows -c Release
 dotnet run --project tests/Radio.Core.Tests -c Release
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --ui
-dotnet build src/Radio.Windows -c Release
+dotnet build src/Radio.Windows
 powershell -NoProfile -File scripts/Smoke-Test.ps1
 ```
 
@@ -53,7 +55,7 @@ UI 冒煙測試只操作自己啟動的測試視窗；加 `-Playback` 可測試�
 靜音線上實驗（會產生少量正常收聽流量）需以已編譯的程式執行，避免把 SDK／建置程序算入播放器：
 
 ```powershell
-$exe = '.\src\Radio.Windows\bin\Release\net8.0-windows10.0.19041.0\Radio.Windows.exe'
+$exe = '.\src\Radio.Windows\bin\Debug\net8.0-windows10.0.19041.0\Radio.exe'
 Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.json' -Wait
 ```
 
@@ -70,9 +72,8 @@ Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.
 ```text
 src/Radio.Core/       # 電台 JSON、官方來源解析、IStreamResolver / IAudioPlayer 契約
 src/Radio.Windows/    # WinForms、Windows 原生 MediaPlayer／HLS 引擎、線上實驗
-src/Radio.Portable/   # 不附 mpv 的獨立 portable 封裝入口
 tests/Radio.Core.Tests/
-tests/Radio.Windows.Tests/ # 本機 WAV／mpv 程序生命週期測試
+tests/Radio.Windows.Tests/ # 本機靜音 WAV／UI 回歸測試
 docs/                # 來源調查與實驗紀錄
 artifacts/           # 本機實驗產物（不進 Git）
 ```

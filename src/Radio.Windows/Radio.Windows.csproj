@@ -5,8 +5,28 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>Radio</AssemblyName>
+    <Version>0.3.6</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
   </ItemGroup>
+  <!-- Pin runtime packages for Full releases without changing the Windows SDK pack. -->
+  <Target Name="PinReleaseRuntimePackages" BeforeTargets="ProcessFrameworkReferences"
+          Condition="'$(PortableRuntimeVersion)' != ''">
+    <ItemGroup>
+      <FrameworkReference Update="@(FrameworkReference)"
+                          Condition="'%(FrameworkReference.Identity)' == 'Microsoft.NETCore.App' Or '%(FrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms'"
+                          RuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
+      <KnownAppHostPack Update="@(KnownAppHostPack)"
+                        Condition="'%(KnownAppHostPack.Identity)' == 'Microsoft.NETCore.App' And '%(KnownAppHostPack.TargetFramework)' == 'net8.0'"
+                        AppHostPackVersion="$(PortableRuntimeVersion)" />
+      <KnownFrameworkReference Update="@(KnownFrameworkReference)"
+          Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net8.0' And ('%(KnownFrameworkReference.Identity)' == 'Microsoft.NETCore.App' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WPF')"
+          DefaultRuntimeFrameworkVersion="$(PortableRuntimeVersion)" LatestRuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
+      <KnownRuntimePack Update="@(KnownRuntimePack)"
+          Condition="'%(KnownRuntimePack.TargetFramework)' == 'net8.0' And '%(KnownRuntimePack.Identity)' == 'Microsoft.WindowsDesktop.App'"
+          LatestRuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
+    </ItemGroup>
+  </Target>
 </Project>
