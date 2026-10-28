@@ -16,7 +16,9 @@ public sealed record Station(
     string? Match = null,
     Uri? EndpointUrl = null)
 {
-    public string DisplayName => $"FM {Frequency}　{Name}";
+    public bool HasFrequency => !string.IsNullOrWhiteSpace(Frequency);
+    public string FrequencyLabel => HasFrequency ? Frequency : "網路";
+    public string DisplayName => HasFrequency ? $"FM {Frequency}　{Name}" : $"網路　{Name}";
 }
 
 public static class StationCatalog
@@ -29,7 +31,9 @@ public static class StationCatalog
         options.Converters.Add(new JsonStringEnumConverter());
         var stations = JsonSerializer.Deserialize<Station[]>(stream, options)
             ?? throw new InvalidDataException("電台清單無法載入。");
-        return stations.OrderBy(station => decimal.Parse(station.Frequency, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+        return stations.OrderBy(station => station.HasFrequency
+            ? decimal.Parse(station.Frequency, System.Globalization.CultureInfo.InvariantCulture)
+            : decimal.MaxValue).ToArray();
     }
 }
 

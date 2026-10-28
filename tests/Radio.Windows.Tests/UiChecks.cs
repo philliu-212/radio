@@ -30,7 +30,7 @@ internal static class UiChecks
         var play = Find<Button>(form, "PlayButton");
         var mute = Find<CheckBox>(form, "Mute");
         var volume = Find<TrackBar>(form, "Volume");
-        Check(list.Items.Count == 6, "Six catalog stations remain available");
+        Check(list.Items.Count == 7, "Seven catalog stations remain available");
         var listWidth = list.Width;
         Check(((StationListBox)list).VisibleRows == 5, "List shows exactly five full rows");
         list.TopIndex = 1;
@@ -105,7 +105,9 @@ internal static class UiChecks
         list.DrawItem += RecordDraw;
         list.Refresh();
         list.DrawItem -= RecordDraw;
-        Check(drawnRows == stationList.VisibleRows, "Buffered painting still renders all visible owner-drawn station rows");
+        var visibleRows = Enumerable.Range(list.TopIndex, list.Items.Count - list.TopIndex)
+            .Count(index => list.GetItemRectangle(index).IntersectsWith(list.ClientRectangle));
+        Check(drawnRows == visibleRows, "Buffered painting renders all visible owner-drawn rows, including a partial bottom row");
         Check(stationList.ScrollbarTrackBounds.Width == 2 && stationList.ScrollbarTrackBounds.Left - stationList.ItemContentWidth == 2 &&
             list.ClientSize.Width - stationList.ScrollbarTrackBounds.Right == 8,
             "Approved spacing is exactly item / 2 DIP / bar 2 DIP / 8 DIP / status card");
@@ -114,7 +116,7 @@ internal static class UiChecks
         Check(stationList.ScrollThumb.Top == track.Top && track.Top == 8, "Top thumb is inset inside first item's rounded ends");
         SendMouse(list, 0x0201, track.Left, track.Bottom - 1);
         SendMouse(list, 0x0202, track.Left, track.Bottom - 1);
-        Check(list.TopIndex == 1 && player.Plays == playsBeforeScroll && list.SelectedIndex == 5,
+        Check(list.TopIndex == list.Items.Count - stationList.VisibleRows && player.Plays == playsBeforeScroll && list.SelectedIndex == 5,
             "Thin overlay scrollbar is clickable without selecting or retuning stations");
         Check(stationList.ScrollThumb.Bottom == track.Bottom && track.Bottom == 5 * list.ItemHeight - 8,
             "Bottom thumb stays inside last item's rounded ends");
@@ -145,7 +147,7 @@ internal static class UiChecks
         boundaryInvalidations = 0;
         list.Invalidated += RecordBoundaryInvalidation;
         for (var i = 0; i < 5; i++) SendMessage(list.Handle, 0x020A, new IntPtr(-120 << 16), IntPtr.Zero);
-        Check(list.TopIndex == 1 && boundaryInvalidations == 0, "Repeated wheel scrolling below the last row does not repaint");
+        Check(list.TopIndex == list.Items.Count - stationList.VisibleRows && boundaryInvalidations == 0, "Repeated wheel scrolling below the last row does not repaint");
         list.Invalidated -= RecordBoundaryInvalidation;
         list.TopIndex = 0;
         Capture(form, "artifacts/scrollbar-hidden.png");
@@ -222,7 +224,7 @@ internal static class UiChecks
             Check(scaledTrack.Left - stationList.ItemContentWidth == (int)Math.Round(2 * dpi / 96d) &&
                 Math.Abs(list.ClientSize.Width - scaledTrack.Right - 8 * dpi / 96d) <= 1,
                 $"DPI {dpi}: approved 2/2/8 spacing survives pixel rounding");
-            list.TopIndex = 1;
+            list.TopIndex = list.Items.Count - stationList.VisibleRows;
             Check(stationList.ScrollThumb.Bottom == scaledTrack.Bottom && scaledTrack.Bottom <= 5 * list.ItemHeight - (int)Math.Round(8 * dpi / 96d),
                 $"DPI {dpi}: bottom thumb never overhangs rounded items");
             list.TopIndex = 0;
@@ -285,7 +287,9 @@ internal static class UiChecks
         Check(player.Plays == 2 && form.SelectedStationId == "ufo-921", "Mouse station change immediately tunes exactly once");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x23), IntPtr.Zero);
-        Check(list.SelectedIndex == 5 && list.TopIndex == 1 && player.Plays == 3, "Keyboard End scrolls to sixth station and tunes it");
+        Check(list.SelectedIndex == 6 && list.TopIndex == 2 && player.Plays == 3 && form.SelectedStationId == "rfi-monde", "Keyboard End scrolls to RFI and tunes it");
+        Check(Find<Label>(form, "Frequency").Text == "網路" && Find<Label>(form, "FrequencyUnit").Text == "",
+            "RFI displays internet-only status without an FM unit");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x24), IntPtr.Zero);
         Check(list.SelectedIndex == 0 && list.TopIndex == 0 && player.Plays == 4, "Keyboard Home scrolls back without changing layout");

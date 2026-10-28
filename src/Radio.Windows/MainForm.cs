@@ -299,7 +299,7 @@ internal sealed class MainForm : Form
         var nameBounds = new Rectangle(bounds.X + ScaleDip(23), bounds.Y, bounds.Width - ScaleDip(61), bounds.Height);
         TextRenderer.DrawText(e.Graphics, StationName(station), Font, nameBounds, _theme.Text,
             TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
-        TextRenderer.DrawText(e.Graphics, station.Frequency, _frequencyFont,
+        TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
             new Rectangle(bounds.Right - ScaleDip(40), bounds.Y, ScaleDip(34), bounds.Height), _theme.Muted,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         if (selected && _stations.Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(bounds, -2, -2), _theme.Accent, background);
@@ -390,7 +390,8 @@ internal sealed class MainForm : Form
         PresentationUpdates++; _uiDirty = false;
         var station = DisplayedSource;
         _title.Text = station is null ? "選擇電台" : StationName(station);
-        _frequency.Text = station?.Frequency ?? "—";
+        _frequency.Text = station?.FrequencyLabel ?? "—";
+        _fm.Text = station is null || station.HasFrequency ? " FM" : "";
         _tips.SetToolTip(_title, _title.Text);
         _status.Text = _latestStatus.State switch
         {

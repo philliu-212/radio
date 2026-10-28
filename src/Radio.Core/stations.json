@@ -59,5 +59,15 @@
     "endpointUrl": "https://www.hitoradio.com/newweb/hichannel.php",
     "streamHost": "hitoradio-ott2b2.cdn.hinet.net",
     "mediaType": "application/vnd.apple.mpegurl"
+  },
+  {
+    "id": "rfi-monde",
+    "name": "RFI Monde（法語）",
+    "frequency": "",
+    "pageUrl": "https://www.rfi.fr/fr/direct-monde",
+    "resolver": "Direct",
+    "endpointUrl": "https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3",
+    "streamHost": "rfimonde64k.ice.infomaniak.ch",
+    "mediaType": "audio/mpeg"
   }
 ]

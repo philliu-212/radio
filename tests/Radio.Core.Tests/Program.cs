@@ -11,8 +11,8 @@ if (args.Contains("--metadata-best-live"))
 }
 
 var stations = StationCatalog.Load();
-Check(stations.Count == 6 && stations.Select(x => x.Id).Distinct().Count() == 6, "Six distinct stations");
-Check(stations.Select(x => x.Frequency).SequenceEqual(["91.7", "92.1", "96.3", "98.9", "99.9", "107.7"]), "Stations sorted by numeric FM frequency");
+Check(stations.Count == 7 && stations.Select(x => x.Id).Distinct().Count() == 7, "Seven distinct stations");
+Check(stations.Select(x => x.Frequency).SequenceEqual(["91.7", "92.1", "96.3", "98.9", "99.9", "107.7", ""]), "Stations sorted by numeric FM frequency, then internet-only stations");
 Check(stations.Single(x => x.Frequency == "96.3").Id == "bcc-ilike", "96.3 is BCC, not Alian");
 Check(stations.Single(x => x.Id == "hit-north").Frequency == "107.7", "Hit FM is northern feed");
 
@@ -48,6 +48,14 @@ Check((await jsonResolver.ResolveAsync(bcc, default)).Uri.AbsolutePath == "/corr
 var ufo = stations.Single(x => x.Id == "ufo-921");
 var direct = Resolver(_ => throw new Exception("Direct source should not fetch the station homepage."));
 Check((await direct.ResolveAsync(ufo, default)).Uri == ufo.EndpointUrl, "Reuse verified public UFO stream without fetching its homepage");
+var rfi = stations.Single(x => x.Id == "rfi-monde");
+var rfiStream = await direct.ResolveAsync(rfi, default);
+Check(rfiStream.Uri == new Uri("https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3") &&
+    rfiStream.MediaType == "audio/mpeg" && !rfiStream.IsHls && rfiStream.Referrer == rfi.PageUrl,
+    "RFI Monde uses the official MP3 live stream, not Afrique or a replay");
+Check(!rfi.HasFrequency && rfi.FrequencyLabel == "網路" && !rfi.DisplayName.Contains("FM"),
+    "Internet-only RFI does not invent an FM frequency");
+await ExpectFailure(direct, rfi with { EndpointUrl = new Uri("https://other.example/live.mp3") }, "Direct RFI source still enforces the expected host");
 await ExpectFailure(Resolver(_ => Response("maintenance")), best, "Fail clearly when page layout changes");
 var pop = stations.Single(x => x.Id == "pop-917");
 foreach (var invalid in new[] { "http://hitoradioweb-hichannel.cdn.hinet.net/test", "https://other.example/test", "https://user:pass@hitoradioweb-hichannel.cdn.hinet.net/test", "https://hitoradioweb-hichannel.cdn.hinet.net:444/test", "<html>error</html>" })
