@@ -4,7 +4,7 @@
 
 預設使用 Windows 系統音訊：五台走純音訊模式，Hit FM 走相容路徑，不需要 mpv。保留 mpv 作為開發用比較選項；相關資料見 [docs/mpv.md](docs/mpv.md)。
 
-**可雙擊的 Lite／Full portable 包**見 [docs/portable.md](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。UI／dark mode 與縮小後優化會依 [分階段計畫](docs/roadmap.md)接續處理。
+**可雙擊的 Lite／Full portable 包**見 [docs/portable.md](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。現採使用者指定的 [Direction C 橫向 UI](docs/ui-direction-c.md)，支援深／淺色與展開時的官方節目／歌曲資訊。
 
 ## 電台
 
@@ -27,13 +27,13 @@
 dotnet run --project src/Radio.Windows -c Release
 ```
 
-已備妥本機 mpv 時可用 `dotnet run --project src/Radio.Windows -c Release -- --backend mpv` 切換。視窗標題會顯示目前引擎。
+已備妥本機 mpv 時可用 `dotnet run --project src/Radio.Windows -c Release -- --backend mpv` 切換；portable 包不含 mpv。
 
-- 選台後按「播放」或雙擊，不會自動播放。
+- 點擊只選取電台，按播放圖示或在清單按 Enter／Space 才開播／切台，不會自動播放。
 - 「停止」會釋放播放來源；再次播放重新取得來源，回到直播，不保留暫停期間內容。
 - 可調整音量、靜音，縮小至系統匣繼續播放；關閉視窗會退出。
 - 來源解析或播放失敗時可手動重試，或開啟官方頁面。本原型不做應用程式層自動重連，不繞過地區／播放時限／存取限制。
-- 尚未加入我的最愛、設定持久化、開機自啟、錄音或時移。
+- 深／淺色偏好保存在程式同資料夾；尚未加入我的最愛、開機自啟、錄音或時移。
 
 ## 測試與量測
 
@@ -42,6 +42,7 @@ dotnet run --project src/Radio.Windows -c Release
 ```powershell
 dotnet run --project tests/Radio.Core.Tests -c Release
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --ui
 dotnet build src/Radio.Windows -c Release
 powershell -NoProfile -File scripts/Smoke-Test.ps1
 ```
@@ -62,7 +63,7 @@ Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.
 
 舊 Windows 相容路徑的實測與 KISS 影像軌問題見 [docs/experiments.md](docs/experiments.md)；當時的 [mpv 對照實驗](docs/mpv.md)中，KISS 的合計 private 記憶體約從 137 降至 51 MiB。相容路徑本身的影像開銷未消除，但不再是 KISS 的預設播放路徑。
 
-後續已新增 Windows Media Engine 純音訊路徑，最終 portable 包 KISS 的 private 約為 **26 MiB（Lite）／26 MiB（Full）**，不需 mpv。完整數據及與相容路徑的差異見 [portable 實測](docs/portable.md)。
+後續已新增 Windows Media Engine 純音訊路徑，第一階段 portable 包 KISS 的 private 約為 **26 MiB（Lite）／26 MiB（Full）**，不需 mpv。最新 Direction C 包的顯示／系統匣／還原對照與封裝大小見 [portable 實測](docs/portable.md)。
 
 ## 分層與手機版
 

@@ -3,9 +3,10 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>Radio</AssemblyName>
     <ApplicationManifest>../Radio.Windows/app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
@@ -16,6 +17,7 @@
     <Compile Include="../Radio.Windows/PlayerDiagnostics.cs" Link="PlayerDiagnostics.cs" />
     <Compile Include="../Radio.Windows/ProbeForm.cs" Link="ProbeForm.cs" />
     <Compile Include="../Radio.Windows/Native/MediaEngineInterop.cs" Link="Native/MediaEngineInterop.cs" />
+    <Compile Include="../Radio.Windows/UI/**/*.cs" Link="UI/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <!-- Pin real runtime references only; a global RuntimeFrameworkVersion also affects
        the unrelated Windows SDK targeting pack in older SDKs. -->

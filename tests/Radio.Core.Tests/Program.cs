@@ -56,6 +56,7 @@ try
     throw new Exception("Cancellation was ignored.");
 }
 catch (OperationCanceledException) { Console.WriteLine("PASS: Cancellation"); }
+await MetadataChecks.RunAsync();
 Console.WriteLine("All offline checks passed.");
 
 static void Check(bool condition, string name)

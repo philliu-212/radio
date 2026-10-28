@@ -69,12 +69,14 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     private void OnNativeEvent(int generation, uint eventId)
     {
         // Ignore time-update/progress callbacks: the UI has no constantly redrawn clock/animation.
-        if (eventId != 5 && eventId != 12 && eventId != 13 && eventId != 19 && eventId != 1005) return;
+        // BUFFERINGSTARTED (1005) describes source prefetch, not a playback stall.
+        // WAITING (12) explicitly means playback stopped because the next frame is unavailable.
+        if (eventId != 5 && eventId != 19 && PlaybackStateForEvent(eventId) is null) return;
         _context.Post(_ =>
         {
             if (_disposed || generation != _generation || _engine is null) return;
-            if (eventId == 13) Publish(AudioState.Playing, "直播播放中");
-            else if (eventId == 12 || eventId == 1005) Publish(AudioState.Buffering, "直播緩衝中…");
+            if (PlaybackStateForEvent(eventId) == AudioState.Playing) Publish(AudioState.Playing, "直播播放中");
+            else if (PlaybackStateForEvent(eventId) == AudioState.Buffering) Publish(AudioState.Buffering, "直播緩衝中…");
             else
             {
                 var message = "直播已結束，請重新播放。";
@@ -89,6 +91,13 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
             }
         }, null);
     }
+
+    internal static AudioState? PlaybackStateForEvent(uint eventId) => eventId switch
+    {
+        13 => AudioState.Playing,
+        12 => AudioState.Buffering,
+        _ => null
+    };
 
     public void Stop()
     {

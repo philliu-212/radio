@@ -13,6 +13,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class RadioWindowTest {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
 }
 '@
 
@@ -72,26 +73,32 @@ try {
     Write-Output 'PASS: Mute control works.'
 
     $playButton = Find-Control $window $type::Button (([string][char]0x64AD) + [char]0x653E)
-    $stopButton = Find-Control $window $type::Button (([string][char]0x505C) + [char]0x6B62)
-    if ($null -eq $playButton -or $null -eq $stopButton) { throw 'Expected play and stop buttons.' }
+    if ($null -eq $playButton) { throw 'Expected idle play button.' }
     if ($Playback) {
         $playButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         Wait-Until {
             $texts = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                 [System.Windows.Automation.PropertyCondition]::new(
                     [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $type::Text))
-            @($texts | Where-Object { $_.Current.Name -match '\u76f4\u64ad\u64ad\u653e\u4e2d' }).Count -gt 0
+            @($texts | Where-Object { $_.Current.Name -match '\u64ad\u653e\u4e2d' }).Count -gt 0
         } 'Muted UI playback did not start.' 40
         Write-Output 'PASS: Muted playback starts from the UI.'
+        $stopButton = Find-Control $window $type::Button (([string][char]0x505C) + [char]0x6B62)
+        if ($null -eq $stopButton) { throw 'Playing did not switch the transport button to Stop.' }
+        $stopButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Write-Output 'PASS: Live transport switches to Stop and can disconnect.'
     }
-    $stopButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-    Write-Output 'PASS: Stop button can be invoked.'
 
-    $windowPattern = $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
-    $windowPattern.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized)
+    $minimize = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'MinimizeButton'))
+    $minimize.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     Wait-Until { ![RadioWindowTest]::IsWindowVisible($process.MainWindowHandle) } 'Minimize did not hide to tray.'
     Write-Output 'PASS: Minimize hides the window to tray.'
-    $windowPattern.Close()
+    [RadioWindowTest]::ShowWindow($process.MainWindowHandle, 9) | Out-Null
+    Wait-Until { [RadioWindowTest]::IsWindowVisible($process.MainWindowHandle) } 'Window could not be restored.'
+    $close = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'CloseButton'))
+    $close.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     if (!$process.WaitForExit(10000)) { throw 'Window close did not exit.' }
     if ($process.ExitCode -ne 0) { throw "Application exited with $($process.ExitCode)." }
     Write-Output 'PASS: Window closes cleanly.'

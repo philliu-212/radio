@@ -1,4 +1,32 @@
-# 第一階段：Windows portable
+# Windows portable
+
+## 目前版本：Radio Mini / Direction C（2026-10-28）
+
+- Full：`dist/Radio-Portable-Full-win-x64-20261028-094226/Radio.exe`，ZIP **72.43 MiB**，解壓 **181.23 MiB**。
+- Lite：`dist/Radio-Portable-Lite-win-x64-20261028-094254/Radio.exe`，ZIP **5.74 MiB**，解壓 **21.32 MiB**；需要 .NET 8 Desktop Runtime x64。
+- 兩者均為 550 × 270 DIP 的橫向 Direction C UI，無新增大型依賴。操作與限制見 [ui-direction-c.md](ui-direction-c.md)。2026-10-27 第一階段包保留不覆寫。
+- 最終兩包六台各 10 秒靜音時鐘短測全數通過；兩個 ZIP 均另行解壓測啟動、靜音開播、切換停止按鈕、最小化、還原與退出。Full 確認載入包內 `coreclr.dll`。
+
+實際包的 MainForm，以中廣流行網量測每階段 10 秒（音訊時鐘均前進約 10 秒）：
+
+| 包／狀態 | private MiB | working set MiB | 全機 CPU % |
+| --- | ---: | ---: | ---: |
+| Lite 顯示 | 29.04 | 95.95 | 0.000 |
+| Lite 系統匣 | 28.96 | 96.81 | 0.013 |
+| Lite 還原 | 29.12 | 97.75 | 0.013 |
+| Full 顯示 | 28.67 | 95.31 | 0.026 |
+| Full 系統匣 | 28.96 | 96.32 | 0.026 |
+| Full 還原 | 28.92 | 96.73 | 0.000 |
+
+縮小時兩包額外 metadata loop 均停止、presentation update 增量均為 0；還原後重新取得官方節目 `趙少康時間`／DJ `趙少康`。這是當時官方 API 的內容，不是介面假資料。
+
+記憶體沒有因縮小而大幅下降，也未強制清空 working set 或 GC。CPU 數值為 12 邏輯處理器上的短時間程序取樣，0 是取樣解析度／四捨五入結果，不是絕無運算。數據不含共享音訊服務／GPU，亦不代表長期穩定與人工聽音已驗證。
+
+首次 UI profile 因既有 adapter 將來源 prefetch 當成播放停頓而失敗，修正事件對應後重測通過；失敗 JSON 保留。第一次解壓 Lite 開播 smoke 曾逾時，後續單獨重測通過；沒有因此加入自動重連，仍需長測確認網路穩定性。
+
+以下保留第一階段的封裝設計與歷史數據。
+
+## 第一階段：Windows portable（2026-10-27）
 
 ## 兩種封裝
 

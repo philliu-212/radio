@@ -23,6 +23,11 @@ internal sealed class ProbeForm(string[] args) : Form
         try
         {
             var seconds = Math.Clamp(int.Parse(Option(args, "--seconds", "15")), 5, 300);
+            if (args.Contains("--ui-profile"))
+            {
+                await ProfileUiAsync(path, seconds);
+                return;
+            }
             using var player = PlayerBackend.Create(args);
             player.IsMuted = true;
             var resolver = new OfficialStreamResolver();
@@ -116,6 +121,55 @@ internal sealed class ProbeForm(string[] args) : Form
             ResultExitCode = 1;
         }
         finally { Close(); }
+    }
+
+    private async Task ProfileUiAsync(string path, int seconds)
+    {
+        var player = PlayerBackend.Create(args);
+        player.IsMuted = true;
+        using var form = new MainForm(player, persistPreferences: false, darkOverride: true);
+        form.Show();
+        var stationId = Option(args, "--station", "bcc-ilike");
+        await form.PlayForProbeAsync(stationId);
+        if (form.LatestStatus.State != AudioState.Playing) throw new InvalidOperationException("UI playback did not start.");
+        await Task.Delay(3000);
+        var phases = new List<object>();
+        var passed = true;
+        foreach (var phase in new[] { "visible", "minimized", "restored" })
+        {
+            if (phase == "minimized") form.WindowState = FormWindowState.Minimized;
+            else if (phase == "restored") form.ShowPlayer();
+            await Task.Delay(500);
+            var updates = form.PresentationUpdates;
+            var position = player.Position;
+            var metrics = await MeasureAsync(player, seconds);
+            var advance = (player.Position - position).TotalSeconds;
+            var updateDelta = form.PresentationUpdates - updates;
+            var phasePassed = advance >= seconds * .9 && form.LatestStatus.State == AudioState.Playing &&
+                (phase != "minimized" || (form.IsBackgroundMode && !form.MetadataRunning && updateDelta == 0));
+            passed &= phasePassed;
+            phases.Add(new { phase, passed = phasePassed, metrics, clockAdvanceSeconds = Math.Round(advance, 2),
+                presentationUpdates = updateDelta, backgroundMode = form.IsBackgroundMode, metadataRunning = form.MetadataRunning });
+        }
+        // Screenshot contains only genuine current official metadata, not mock program/DJ content.
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        form.Refresh();
+        using (var bitmap = new Bitmap(form.Width, form.Height))
+        {
+            form.DrawToBitmap(bitmap, form.ClientRectangle);
+            bitmap.Save(Path.ChangeExtension(path, ".png"), System.Drawing.Imaging.ImageFormat.Png);
+        }
+        var metadataTitle = form.Controls.Find("MetadataTitle", true).Single().Text;
+        var metadataPerson = form.Controls.Find("MetadataPerson", true).Single().Text;
+        form.Close();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new
+        {
+            timestamp = DateTimeOffset.UtcNow, runtime = Environment.Version.ToString(), stationId,
+            muted = true, sampleSeconds = seconds, passed, phases, metadataTitle, metadataPerson,
+            limitations = "Short sequential actual-package UI samples; shared audio services/GPU excluded. No audible/long-run or real multi-monitor DPI acceptance test."
+        }, new JsonSerializerOptions { WriteIndented = true }));
+        ResultExitCode = passed ? 0 : 2;
     }
 
     private static bool IsProcessAlive(int id)

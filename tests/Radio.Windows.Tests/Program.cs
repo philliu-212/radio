@@ -28,6 +28,12 @@ internal sealed class TestForm(string[] args) : Form
         Hide();
         try
         {
+            if (args.Contains("--ui"))
+            {
+                await UiChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
             // Generate silence locally. These lifecycle tests never contact a radio station.
             var path = Path.GetFullPath("artifacts/playback-test.wav");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
