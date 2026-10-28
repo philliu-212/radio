@@ -96,6 +96,8 @@ internal sealed class MainForm : Form
         _stations.DisplayMember = nameof(Station.DisplayName);
         _lastSelectedStationId = (_stations.SelectedItem as Station)?.Id;
         body.Controls.Add(_stations, 0, 0);
+        // Reuse the existing inter-column gap for the overlay, without narrowing station cards.
+        body.SetColumnSpan(_stations, 2);
         body.Controls.Add(BuildPlayerCard(), 2, 0);
         layout.Controls.Add(body, 0, 1);
         Controls.Add(layout);
@@ -284,7 +286,7 @@ internal sealed class MainForm : Form
         var selected = (e.State & DrawItemState.Selected) != 0;
         var playing = _playingStation?.Id == station.Id && _active;
         using (var canvas = new SolidBrush(_theme.Canvas)) e.Graphics.FillRectangle(canvas, e.Bounds);
-        var bounds = new Rectangle(e.Bounds.X, e.Bounds.Y + ScaleDip(3), e.Bounds.Width, e.Bounds.Height - ScaleDip(6));
+        var bounds = new Rectangle(e.Bounds.X, e.Bounds.Y + ScaleDip(3), _stations.ItemContentWidth, e.Bounds.Height - ScaleDip(6));
         var background = selected ? _theme.Selection : playing ? _theme.Playing : e.Index == _stations.HoverIndex ? _theme.Hover : _theme.Row;
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         using var path = RoundedShape.Create(bounds, ScaleDip(5));

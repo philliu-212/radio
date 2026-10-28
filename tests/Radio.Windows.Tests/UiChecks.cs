@@ -77,18 +77,43 @@ internal static class UiChecks
         Check(volume.Value != 40 && committedVolume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
             "Wheel changes volume and commits the final value after native input processing");
         var playsBeforeScroll = player.Plays;
+        var stationList = (StationListBox)list;
+        var card = Find<Label>(form, "NowPlayingTitle").Parent!.Parent!;
+        Check(stationList.ItemContentWidth == 241 && card.PointToScreen(Point.Empty).X - form.Left == 258,
+            "Overlay uses the existing gap; station-card width and right-panel position are unchanged");
+        SendMessage(list.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
+        Check(!stationList.ScrollbarVisible, "Scrollbar is hidden when pointer leaves the list");
+        SendMouse(list, 0x0200, 60, list.ItemHeight / 2);
+        Check(stationList.ScrollbarVisible, "Scrollbar appears when pointer enters station list");
+        Check(stationList.ScrollbarTrackBounds.Width == 2 && stationList.ScrollbarTrackBounds.Left - stationList.ItemContentWidth == 3,
+            "Scrollbar is thinner (2 DIP) with a 3-DIP gap from rounded station items");
         list.TopIndex = 0;
-        SendMouse(list, 0x0201, list.Width - 1, list.Height - 2);
-        SendMouse(list, 0x0202, list.Width - 1, list.Height - 2);
+        var track = stationList.ScrollbarTrackBounds;
+        Check(stationList.ScrollThumb.Top == track.Top && track.Top == 8, "Top thumb is inset inside first item's rounded ends");
+        SendMouse(list, 0x0201, track.Left, track.Bottom - 1);
+        SendMouse(list, 0x0202, track.Left, track.Bottom - 1);
         Check(list.TopIndex == 1 && player.Plays == playsBeforeScroll && list.SelectedIndex == 5,
             "Thin overlay scrollbar is clickable without selecting or retuning stations");
-        SendMouse(list, 0x0201, list.Width - 1, list.Height * 3 / 4);
-        SendMouse(list, 0x0200, list.Width - 1, 0);
-        SendMouse(list, 0x0202, list.Width - 1, 0);
+        Check(stationList.ScrollThumb.Bottom == track.Bottom && track.Bottom == 5 * list.ItemHeight - 8,
+            "Bottom thumb stays inside last item's rounded ends");
+        Capture(form, "artifacts/scrollbar-bottom.png");
+        SendMouse(list, 0x0201, track.Left, stationList.ScrollThumb.Top + 10);
+        SendMessage(list.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
+        Check(stationList.ScrollbarVisible, "Pointer leaving during a drag keeps scrollbar visible");
+        SendMouse(list, 0x0200, -4, -30);
+        SendMouse(list, 0x0202, -4, -30);
         Check(list.TopIndex == 0 && player.Plays == playsBeforeScroll, "Dragging overlay thumb scrolls without retuning");
+        Check(!stationList.ScrollbarVisible, "Releasing drag outside hides the scrollbar");
+        SendMouse(list, 0x0201, track.Left, stationList.ScrollThumb.Top + 10);
+        SendMessage(list.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
+        list.Capture = false;
+        Check(!stationList.ScrollbarVisible, "Lost mouse capture does not leave a stuck scrollbar");
         list.TopIndex = 1;
         SendMessage(list.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
         Check(list.TopIndex == 0, "List mouse wheel still scrolls with native scrollbar hidden");
+        Capture(form, "artifacts/scrollbar-hidden.png");
+        SendMouse(list, 0x0200, 60, list.ItemHeight / 2);
+        Capture(form, "artifacts/scrollbar-hover.png");
         var count = form.PresentationUpdates;
         form.WindowState = FormWindowState.Minimized;
         await Task.Delay(50);
@@ -141,6 +166,14 @@ internal static class UiChecks
                 $"DPI {dpi}: five visible rows keep original 37-DIP item height");
             Check(Math.Abs(Find<Label>(form, "NowPlayingTitle").Font.Size - 11 * dpi / 72f) < .1, $"DPI {dpi}: explicit label fonts scale with list typography");
             Check(list.ClientSize.Width == list.Width, $"DPI {dpi}: overlay does not reserve a non-client scrollbar column");
+            var scaledTrack = stationList.ScrollbarTrackBounds;
+            list.TopIndex = 0;
+            Check(stationList.ScrollThumb.Top == scaledTrack.Top && scaledTrack.Left > stationList.ItemContentWidth &&
+                scaledTrack.Width == (int)Math.Round(2 * dpi / 96d), $"DPI {dpi}: thin scrollbar keeps its gap and top inset");
+            list.TopIndex = 1;
+            Check(stationList.ScrollThumb.Bottom == scaledTrack.Bottom && scaledTrack.Bottom <= 5 * list.ItemHeight - (int)Math.Round(8 * dpi / 96d),
+                $"DPI {dpi}: bottom thumb never overhangs rounded items");
+            list.TopIndex = 0;
             SendMouse(volume, 0x0201, volume.Width * 3 / 4, volume.Height / 2);
             SendMouse(volume, 0x0202, volume.Width * 3 / 4, volume.Height / 2);
             Check(volume.Value is > 65 and < 90, $"DPI {dpi}: visible slider track hit testing stays aligned");

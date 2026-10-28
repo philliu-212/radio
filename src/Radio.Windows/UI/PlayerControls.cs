@@ -198,8 +198,11 @@ internal sealed class StationListBox : ListBox
     public int HoverIndex { get; private set; } = -1;
     public Color ScrollbarColor { get; set; } = PlayerTheme.Dark.Track;
     internal int VisibleRows => Math.Max(1, ClientSize.Height / Math.Max(1, ItemHeight));
+    internal int ItemContentWidth => Math.Max(0, ClientSize.Width - Dip(8));
+    internal bool ScrollbarVisible => Items.Count > VisibleRows && (_pointerInside || _draggingScrollbar);
     private bool _hidingScrollbar;
     private bool _draggingScrollbar;
+    private bool _pointerInside;
     private int _scrollGrabOffset;
     private int _wheelRemainder;
     public StationListBox()
@@ -209,11 +212,21 @@ internal sealed class StationListBox : ListBox
     }
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        var index = IndexFromPoint(e.Location);
-        if (HoverIndex != index) { HoverIndex = index; Invalidate(); }
+        var index = e.X < ItemContentWidth ? IndexFromPoint(e.Location) : -1;
+        if (HoverIndex != index || !_pointerInside) { HoverIndex = index; _pointerInside = true; Invalidate(); }
         base.OnMouseMove(e);
     }
-    protected override void OnMouseLeave(EventArgs e) { HoverIndex = -1; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseEnter(EventArgs e) { _pointerInside = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _pointerInside = false; HoverIndex = -1; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        if (!Visible)
+        {
+            _pointerInside = false; HoverIndex = -1; _draggingScrollbar = false;
+            if (Capture) Capture = false;
+        }
+        base.OnVisibleChanged(e);
+    }
     protected override CreateParams CreateParams
     {
         get { var parameters = base.CreateParams; parameters.Style &= ~0x00200000; return parameters; }
@@ -225,20 +238,23 @@ internal sealed class StationListBox : ListBox
         var height = Math.Max(1, (int)Math.Round(37 * (FindForm()?.DeviceDpi ?? DeviceDpi) / 96d));
         if (ItemHeight != height) ItemHeight = height;
     }
-    private Rectangle ScrollThumb
+    private int Dip(int value) => (int)Math.Round(value * (FindForm()?.DeviceDpi ?? DeviceDpi) / 96d);
+    internal Rectangle ScrollbarTrackBounds => new(ItemContentWidth + Dip(3), Dip(8), Math.Max(1, Dip(2)),
+        Math.Max(0, Math.Min(ClientSize.Height, VisibleRows * ItemHeight) - Dip(16)));
+    internal Rectangle ScrollThumb
     {
         get
         {
-            var scale = (FindForm()?.DeviceDpi ?? DeviceDpi) / 96f;
-            var height = Math.Min(Height, Math.Max((int)(18 * scale), Height * VisibleRows / Math.Max(1, Items.Count)));
+            var track = ScrollbarTrackBounds;
+            var height = Math.Min(track.Height, Math.Max(Dip(18), track.Height * VisibleRows / Math.Max(1, Items.Count)));
             var range = Math.Max(1, Items.Count - VisibleRows);
-            return new Rectangle(Width - Math.Max(2, (int)(3 * scale)), (Height - height) * TopIndex / range,
-                Math.Max(2, (int)(3 * scale)), height);
+            return new Rectangle(track.X, track.Y + (track.Height - height) * Math.Clamp(TopIndex, 0, range) / range,
+                track.Width, height);
         }
     }
     private void DrawScrollbar(Graphics graphics)
     {
-        if (Items.Count <= VisibleRows) return;
+        if (!ScrollbarVisible || ScrollbarTrackBounds.Height == 0) return;
         using var brush = new SolidBrush(ScrollbarColor);
         using var path = RoundedShape.Create(ScrollThumb, Math.Max(1, ScrollThumb.Width / 2));
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -247,11 +263,12 @@ internal sealed class StationListBox : ListBox
     private void ScrollToMouse(int y)
     {
         var thumb = ScrollThumb;
-        var fraction = (y - _scrollGrabOffset) / (double)Math.Max(1, Height - thumb.Height);
+        var track = ScrollbarTrackBounds;
+        var fraction = (y - track.Top - _scrollGrabOffset) / (double)Math.Max(1, track.Height - thumb.Height);
         TopIndex = Math.Clamp((int)Math.Round(fraction * Math.Max(0, Items.Count - VisibleRows)), 0, Math.Max(0, Items.Count - VisibleRows));
         Invalidate();
     }
-    protected override void OnMouseCaptureChanged(EventArgs e) { _draggingScrollbar = false; base.OnMouseCaptureChanged(e); }
+    protected override void OnMouseCaptureChanged(EventArgs e) { _draggingScrollbar = false; Invalidate(); base.OnMouseCaptureChanged(e); }
     protected override void WndProc(ref Message m)
     {
         var point = new Point(unchecked((short)m.LParam.ToInt64()), unchecked((short)(m.LParam.ToInt64() >> 16)));
@@ -264,17 +281,26 @@ internal sealed class StationListBox : ListBox
             TopIndex = Math.Clamp(TopIndex - notches * lines, 0, Math.Max(0, Items.Count - VisibleRows));
             Invalidate(); m.Result = IntPtr.Zero; return;
         }
-        if (m.Msg == 0x0201 && Items.Count > VisibleRows && point.X >= Width - Math.Max(8, (FindForm()?.DeviceDpi ?? DeviceDpi) * 8 / 96))
+        if (m.Msg is 0x0201 or 0x0203 && point.X >= ItemContentWidth)
         {
-            Focus(); _draggingScrollbar = true; Capture = true;
-            var thumb = ScrollThumb;
-            _scrollGrabOffset = thumb.Contains(point) ? point.Y - thumb.Y : thumb.Height / 2;
-            ScrollToMouse(point.Y); m.Result = IntPtr.Zero; return;
+            _pointerInside = ClientRectangle.Contains(point);
+            if (Items.Count > VisibleRows && point.Y >= ScrollbarTrackBounds.Top && point.Y < ScrollbarTrackBounds.Bottom)
+            {
+                Focus(); _draggingScrollbar = true; Capture = true;
+                var thumb = ScrollThumb;
+                _scrollGrabOffset = point.Y >= thumb.Top && point.Y < thumb.Bottom ? point.Y - thumb.Y : thumb.Height / 2;
+                ScrollToMouse(point.Y);
+            }
+            m.Result = IntPtr.Zero; return;
         }
-        if (m.Msg == 0x0200 && _draggingScrollbar) { ScrollToMouse(point.Y); m.Result = IntPtr.Zero; return; }
+        if (m.Msg == 0x0200 && _draggingScrollbar)
+        {
+            _pointerInside = ClientRectangle.Contains(point); ScrollToMouse(point.Y); m.Result = IntPtr.Zero; return;
+        }
         if (m.Msg == 0x0202 && _draggingScrollbar)
         {
-            ScrollToMouse(point.Y); _draggingScrollbar = false; Capture = false; m.Result = IntPtr.Zero; return;
+            _pointerInside = ClientRectangle.Contains(point);
+            ScrollToMouse(point.Y); _draggingScrollbar = false; Capture = false; Invalidate(); m.Result = IntPtr.Zero; return;
         }
         if (m.Msg is 0x0201 or 0x0203)
         {

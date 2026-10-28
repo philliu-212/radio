@@ -1,6 +1,13 @@
 # Windows portable
 
-## 目前版本：Radio Mini v0.3.1（2026-10-28）
+## 目前版本：Radio Mini v0.3.2（2026-10-28，僅 scrollbar 調整）
+
+- Full：`dist/Radio-Portable-Full-win-x64-20261028-110443/Radio.exe`；Lite：`dist/Radio-Portable-Lite-win-x64-20261028-110512/Radio.exe`。
+- 單一修正：游標離開清單隱藏 scrollbar，拖曳中保持可見；thumb 改為 2 DIP、與 item 相隔 3 DIP，使用既有欄間空隙，上下內縮避免超出圓角。item 寬度／37 DIP 列高、550 × 233 DIP 視窗與右側面板位置不變。
+- 離線 UI 回歸及 100%～200% DPI 訊息模擬通過，包含 hover／離開、清單外放開、capture 丟失、頂底界限與不誤切台。兩個 ZIP 解壓啟動／最小化／還原／退出通過，Full 確認使用包內 runtime。
+- 本次不改播放、音量、metadata 或排序，未為純 UI 修正重跑線上六台測試；前版的線上驗證見下。真實多螢幕與人工視覺驗收仍待確認。
+
+## 前版：Radio Mini v0.3.1（2026-10-28）
 
 - Full：`dist/Radio-Portable-Full-win-x64-20261028-104214/Radio.exe`，ZIP **72.43 MiB**，解壓 **181.24 MiB**。
 - Lite：`dist/Radio-Portable-Lite-win-x64-20261028-104242/Radio.exe`，ZIP **5.75 MiB**，解壓 **21.33 MiB**；需要 .NET 8 Desktop Runtime x64。
