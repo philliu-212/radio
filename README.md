@@ -24,7 +24,7 @@
 
 開發與 agent 交付一律預設走 **Issue → 功能分支 → PR → 確認合併 → Release**，不直接推送 main。規範見 [AGENTS.md](AGENTS.md) 與 [開發流程](docs/development-workflow.md)；早期提交的補登紀錄見 [歷史 Issue 索引](docs/history-issues.md)。
 
-雙擊根目錄 **`Run.cmd`**：建置並執行目前原始碼，不會產生發行包。只保留 `src/Radio.Windows` 一個程式專案，視窗左上角直接顯示版本（系統匣右鍵選單也可查看）。修改後需先關閉舊開發視窗再重開。
+雙擊根目錄 **`Run.cmd`**：建置並執行目前原始碼，不會產生發行包。只保留 `src/Radio.Windows` 一個程式專案，版號以實際組件為準，亦可由系統匣選單查看。修改後需先關閉舊開發視窗再重開。
 
 要交付時才雙擊 **`Release.cmd`**：從同一專案產生 Lite／Full 資料夾與 ZIP 到 `dist/`，不啟動程式、不更新開發用 `bin`。`src/Radio.Portable` 已移除，`Build-Portable.cmd` 已改名。
 
