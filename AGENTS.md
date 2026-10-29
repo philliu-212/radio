@@ -11,7 +11,7 @@
 
 使用者要求的程式、修正、文件或建置變更，預設都走：
 
-**Issue → 功能分支 → 實作與測試 → PR → 使用者確認合併 → Release。**
+**Issue → 功能分支 → 實作與測試 → PR → 使用者確認合併 → 刪除分支 → Release。**
 
 1. 修改前先查看現有 Issue／PR，重用符合本次需求的未完成紀錄；沒有就建立 Issue，記錄目標、範圍、驗收及限制，回報連結。純問答不必建立 Issue。
    - Agent 可自行決定需要幾個 Issue，不必逐一詢問使用者；依目標與驗收範圍拆分，不相關的功能、bug 或流程維護必須分開追蹤，不因同一則訊息提出就合成一張 Issue。共用實作或測試的相關項目可互相連結，交付時逐項對照 Issue 與驗證結果。
@@ -20,9 +20,10 @@
 4. 使用者說「上 Git／提交／推送」時，意指提交至功能分支、推送並建立 PR，**不是直接推送 main，也不是授權合併**。
 5. PR 指向 main，正文用 Closes #<Issue 編號> 連結對應 Issue，列出使用者可見變更、測試及未完成事項；依 .github/pull_request_template.md 填寫。
 6. PR 必須有 Release Notes 分類標籤：enhancement（新功能）、bug（修正）、maintenance（重構／建置／流程）或 documentation（文件）。盡量選一個主要分類，方便 .github/release.yml 歸類。
-7. 建立 PR 後回報 Issue／PR URL 與驗證結果，等待使用者確認。**不得自行合併、關閉尚未交付的 Issue、刪除分支或建立 tag／發布 Release**；需要另外明確授權。以 PR 合併時的 closing keyword 關閉 Issue。
-8. 即使工作很小也保留追蹤；只有使用者明確指定本次例外時才可跳過 Issue／PR／直接推 main，並在回報及追蹤紀錄註明。不可將先前例外當作後續常態。
-9. GitHub、權限或網路不可用時保留本機工作並清楚回報，不得偷偷降級為直接推 main，也不得聲稱 Issue／PR 已建立。
+7. 建立 PR 後回報 Issue／PR URL 與驗證結果，等待使用者確認。**不得自行合併、關閉尚未交付的 Issue 或建立 tag／發布 Release**；需要另外明確授權。以 PR 合併時的 closing keyword 關閉 Issue。
+8. PR 合併後，刪除該功能分支的遠端與本機分支（`git push origin --delete <branch>`、`git branch -d <branch>`）；分支只是交付載體，紀錄留在 PR。分支仍被 worktree 使用或還有未合併內容時先處理，不強制刪除他人工作。
+9. 即使工作很小也保留追蹤；只有使用者明確指定本次例外時才可跳過 Issue／PR／直接推 main，並在回報及追蹤紀錄註明。不可將先前例外當作後續常態。
+10. GitHub、權限或網路不可用時保留本機工作並清楚回報，不得偷偷降級為直接推 main，也不得聲稱 Issue／PR 已建立。
 
 歷史補登是例外：既有提交已在 main，可以建立標示 historical 的 Issue、連結原 commit 並以 completed 關閉；不重寫歷史、不建立假 PR、不虛構原始開發／驗收時間。索引見 docs/history-issues.md。
 

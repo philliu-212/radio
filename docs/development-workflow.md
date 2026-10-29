@@ -25,13 +25,15 @@ PR 必須：
 - 以 main 為基底，依 PR template 填寫摘要、測試、Release Notes 與限制。
 - 正文包含 `Closes #<Issue 編號>`，讓合併自動關閉需求；不要提早關閉未交付的 Issue。
 - 選擇一個主要分類標籤：`enhancement`、`bug`、`maintenance` 或 `documentation`。
-- 回報 PR URL，等待使用者確認。未授權不得自行合併、刪除分支、建立 tag 或發布 Release。
+- 回報 PR URL，等待使用者確認。未授權不得自行合併、建立 tag 或發布 Release；合併後刪除該功能分支屬流程的一部分。
 
 GitHub 或權限不可用時保留本機工作，明確說明阻擋；不能跳過追蹤或聲稱遠端操作已完成。
 
 ## 4. 確認後合併
 
 由使用者審查，或在使用者明確授權後合併。保留 PR 連結、Issue 關聯與測試紀錄。這些規範不是 GitHub 分支保護設定；本次未修改倉庫規則或既有權限。
+
+合併後立即刪除對應功能分支的遠端與本機分支（`git push origin --delete <branch>`、`git branch -d <branch>`）。分支僅為交付載體，紀錄留在 PR；仍有 worktree 使用或未合併內容時先處理，不強制刪除。
 
 ## 5. 產生 Release Notes
 
