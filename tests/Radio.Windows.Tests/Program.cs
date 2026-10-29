@@ -26,6 +26,12 @@ internal sealed class TestForm(string[] args) : Form
         Hide();
         try
         {
+            if (args.Contains("--updates"))
+            {
+                await UpdateChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--rfi"))
             {
                 await RfiPlaybackChecks.RunAsync(args);

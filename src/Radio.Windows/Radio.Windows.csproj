@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
     <EmbeddedResource Include="Assets/RadioMini.ico" LogicalName="Radio.Windows.Assets.RadioMini.ico" />
+    <EmbeddedResource Include="UpdateInstaller.ps1" LogicalName="Radio.Windows.UpdateInstaller.ps1" />
   </ItemGroup>
   <!-- Pin runtime packages for Full releases without changing the Windows SDK pack. -->
   <Target Name="PinReleaseRuntimePackages" BeforeTargets="ProcessFrameworkReferences"

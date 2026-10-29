@@ -19,6 +19,8 @@ Hit FM 使用 Windows 相容播放路徑，其餘使用 Windows 純音訊模式�
 播放中按方形停止會斷開來源，再次播放回到直播；不提供暫停時移。
 縮小會收進系統匣並繼續播放；雙擊系統匣圖示可還原。
 關閉視窗會停止並退出。
+有正式新版時右上角顯示下載箭頭；點擊後下載同類型 Full 包、驗證並重啟，保留設定。下載期間繼續播放。
+啟動及每小時背景檢查 GitHub Release；更新需要可寫資料夾及 Windows PowerShell。失敗可重試或手動下載，記錄位於 %TEMP%/RadioMini-update-*/result.txt。
 
 極簡橫向介面，支援深／淺色切換。啟動播放策略等操作以該版本的專案 README／Release Notes 為準。
 主題、音量、收藏與播放次數保存在同資料夾的 radio.settings.json；唯讀資料夾則僅當次有效。
