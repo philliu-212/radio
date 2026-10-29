@@ -1,121 +1,115 @@
 param([Parameter(Mandatory=$true)][string]$BaselineZip,
-      [Parameter(Mandatory=$true)][string]$ExpectedVersion,
+      [Parameter(Mandatory=$true)][string]$CandidateZip,
+      [string]$SupersedingZip,
       [string]$ProjectRoot)
-
-# Explicit online end-to-end test. Always extracts into its own new folder;
-# never runs or writes settings into a user's existing portable directory.
 $ErrorActionPreference = 'Stop'
 if (!$ProjectRoot) { $ProjectRoot = Split-Path $PSScriptRoot -Parent }
-if ($ExpectedVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid expected version.' }
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
-$id = [Guid]::NewGuid().ToString('N')
-$root = Join-Path $ProjectRoot ('artifacts/update-e2e-' + $id)
+$root = Join-Path $ProjectRoot ('artifacts/ota-integration-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
-$result = [ordered]@{ Passed = $false; ExpectedVersion = $ExpectedVersion; TestDirectory = $root }
-$report = Join-Path $root 'result.json'
-$running = $null
-$exe = $null
-function Wait-Until([scriptblock]$Condition, [int]$Seconds, [string]$Message) {
+$report = [ordered]@{ Passed = $false; Scope = 'Actual WinForms portable over loopback HTTP; no public Release; no radio stream'; TestRoot = $root }
+$directory = $null
+function Wait-Until([scriptblock]$Predicate, [int]$Seconds, [string]$Message) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
-    do {
-        $value = & $Condition
-        if ($value) { return $value }
-        [Threading.Thread]::Sleep(200)
-    } while ([DateTime]::UtcNow -lt $deadline)
+    do { $value = & $Predicate; if ($value) { return $value }; [Threading.Thread]::Sleep(25) } while ([DateTime]::UtcNow -lt $deadline)
     throw $Message
+}
+function Read-State {
+    $stream = $null; $reader = $null
+    try {
+        $stream = [IO.FileStream]::new($statePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        $reader = [IO.StreamReader]::new($stream,[Text.Encoding]::UTF8)
+        return ($reader.ReadToEnd() | ConvertFrom-Json)
+    } catch [IO.IOException] { return $null }
+    finally { if ($reader) { $reader.Dispose() } elseif ($stream) { $stream.Dispose() } }
 }
 try {
     Expand-Archive -LiteralPath (Resolve-Path -LiteralPath $BaselineZip).Path -DestinationPath (Join-Path $root 'extracted')
-    $folders = @(Get-ChildItem -LiteralPath (Join-Path $root 'extracted') -Directory)
-    if ($folders.Count -ne 1) { throw 'Baseline ZIP must contain one portable folder.' }
-    $directory = $folders[0].FullName
-    $exe = Join-Path $directory 'RadioMini.exe'
-    $baseline = Get-Content -LiteralPath (Join-Path $directory 'radio.update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ([version]$baseline.version -ge [version]$ExpectedVersion) { throw 'Baseline must be older and contain the new updater.' }
-    $result.BaselineVersion = $baseline.version
-    $result.Mode = $baseline.mode
-    $result.BaselineNote = 'Locally built test baseline containing updater; not the historical official v0.4.0 binary.'
-    $settingsPath = Join-Path $directory 'radio.settings.json'
-    # No favorites: the actual restarted app must not start a real radio stream.
-    $settings = @{ SchemaVersion = 2; Theme = 'light'; Volume = 37; MyStationIds = @(); PlayCounts = @{ 'retained-test-id' = 9 }; LastStationId = 'retained-test-id'; StationSetupCompleted = $true }
-    [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 4))
-    [IO.File]::WriteAllText((Join-Path $directory 'personal-sentinel.txt'), 'preserve user file')
-    $started = [DateTime]::UtcNow
-    $running = Start-Process -FilePath $exe -ArgumentList '--no-autoplay' -WorkingDirectory $directory -PassThru
-    $result.OriginalPid = $running.Id
-    $condition = [System.Windows.Automation.OrCondition]::new(
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'UpdateButton'),
-        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, [regex]::Unescape('\u4e0b\u8f09\u4e26\u66f4\u65b0')))
-    $button = Wait-Until {
-        $running.Refresh()
-        if ($running.HasExited) { throw 'Baseline player exited before update.' }
-        if ($running.MainWindowHandle -eq [IntPtr]::Zero) { return $null }
-        $window = [System.Windows.Automation.AutomationElement]::FromHandle($running.MainWindowHandle)
-        $candidate = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-        if ($candidate -and !$candidate.Current.IsOffscreen -and $candidate.Current.IsEnabled) { return $candidate }
-    } 120 'No visible update arrow. Check the latest stable Release and manifest assets.'
-    $invoke = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-    $invoke.Invoke()
-    Wait-Until { $running.Refresh(); $running.HasExited } 180 'Player did not exit after clicking update.' | Out-Null
+    $directory = (Get-ChildItem -LiteralPath (Join-Path $root 'extracted') -Directory | Select-Object -First 1).FullName
+    $statePath = Join-Path $directory 'data/ota/state.json'
+    $old = Read-State
+    $settingsPath = Join-Path $directory 'data/radio.settings.json'
+    $settings = '{"SchemaVersion":2,"Theme":"light","Volume":37,"MyStationIds":[],"PlayCounts":{"retained":9},"LastStationId":"retained","StationSetupCompleted":true}'
+    [IO.File]::WriteAllText($settingsPath, $settings)
+    [IO.File]::WriteAllText((Join-Path $directory 'data/personal.txt'), 'keep')
+    $launcher = Join-Path $directory 'RadioMini.exe'
+    $initialLauncher = Start-Process -FilePath $launcher -ArgumentList '--no-autoplay --no-update-check' -WorkingDirectory $directory -PassThru
+    $oldExe = Join-Path $directory ($old.Current.Commit.Substring(0,12) + '/RadioMini.exe')
+    $player = Wait-Until {
+        Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $oldExe -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+    } 40 'Baseline launcher did not start the player.'
+    if (!$initialLauncher.WaitForExit(30000)) { throw 'Initial launcher did not finish health confirmation.' }
+    $report.Mode = $old.Current.Mode
+    $report.BaselineVersion = $old.Current.Version
+    $firstReport = Join-Path $root 'stage-first.json'
+    & dotnet run --no-build --project (Join-Path $ProjectRoot 'tests/Radio.Windows.Tests') -c Release -- --ota-stage --root $directory --zip (Resolve-Path -LiteralPath $CandidateZip).Path --report $firstReport
+    if ($LASTEXITCODE -ne 0) { throw 'Background OTA stage failed.' }
+    $report.FirstPreparation = Get-Content -LiteralPath $firstReport -Raw | ConvertFrom-Json
+    if ($SupersedingZip) {
+        $latestReport = Join-Path $root 'stage-latest.json'
+        & dotnet run --no-build --project (Join-Path $ProjectRoot 'tests/Radio.Windows.Tests') -c Release -- --ota-stage --root $directory --zip (Resolve-Path -LiteralPath $SupersedingZip).Path --report $latestReport
+        if ($LASTEXITCODE -ne 0) { throw 'Latest-wins preparation failed.' }
+        $report.LatestPreparation = Get-Content -LiteralPath $latestReport -Raw | ConvertFrom-Json
+    }
+    $player.Refresh()
+    if ($player.HasExited -or (Read-State).Current.Version -ne $old.Current.Version) { throw 'Preparation interrupted the running player.' }
+    $ready = Read-State
+    $report.TargetVersion = $ready.Pending.Version
+    # Exercise a second root invocation while the first player owns its data.
+    $duplicate = Start-Process -FilePath $launcher -ArgumentList '--no-autoplay --no-update-check' -WorkingDirectory $directory -PassThru
+    if (!$duplicate.WaitForExit(10000)) { throw 'Duplicate launcher failed to exit.' }
+    $same = @(Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $oldExe })
+    if ($same.Count -ne 1) { throw 'Multiple active instances own the same portable data.' }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $restartLauncher = Start-Process -FilePath $launcher -ArgumentList '--restart-update --no-autoplay --no-update-check' -WorkingDirectory $directory -PassThru
+    if (!$player.CloseMainWindow() -or !$player.WaitForExit(15000)) { throw 'Old player did not close normally.' }
+    $targetExe = Join-Path $directory ($ready.Pending.Commit.Substring(0,12) + '/RadioMini.exe')
     $next = Wait-Until {
-        Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $running.Id -and $_.Path -ieq $exe } | Select-Object -First 1
-    } 120 'Updated player did not restart.'
-    $result.RestartedPid = $next.Id
-    Wait-Until { $next.Refresh(); $next.MainWindowHandle -ne [IntPtr]::Zero } 30 'Restarted player has no window.' | Out-Null
-    $version = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $directory 'RadioMini.dll')).Version.ToString(3)
-    if ($version -ne $ExpectedVersion) { throw "Unexpected restarted version: $version" }
-    $installed = Get-Content -LiteralPath (Join-Path $directory 'radio.update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($installed.version -ne $ExpectedVersion -or $installed.mode -ne $baseline.mode) { throw 'Installed inventory version/mode mismatch.' }
-    foreach ($file in $installed.files) {
-        $path = Join-Path $directory $file.path
-        if (!(Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -ne $file.size -or
-            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $file.sha256) { throw "Installed file mismatch: $($file.path)" }
+        Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $targetExe -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+    } 40 'Prepared version failed to open.'
+    $report.RestartToWindowMs = $watch.Elapsed.TotalMilliseconds
+    Wait-Until { $snapshot = Read-State; $snapshot -and $snapshot.Trial -eq '' } 10 'New version did not acknowledge healthy startup.' | Out-Null
+    if (!$restartLauncher.WaitForExit(30000)) { throw 'Restart launcher did not finish confirmation/cleanup.' }
+    $new = Read-State
+    $actual = [Reflection.AssemblyName]::GetAssemblyName((Join-Path (Split-Path $targetExe -Parent) 'RadioMini.dll')).Version.ToString(3)
+    if ($actual -ne $ready.Pending.Version -or $new.Current.Version -ne $actual -or $null -ne $new.Pending) { throw 'Version switch mismatch.' }
+    $saved = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    if ($saved.Volume -ne 37 -or $saved.Theme -ne 'light' -or $saved.PlayCounts.retained -ne 9 -or $saved.LastStationId -ne 'retained' -or
+        [IO.File]::ReadAllText((Join-Path $directory 'data/personal.txt')) -ne 'keep') { throw 'Portable preferences were not preserved.' }
+    if ($new.Current.Mode -eq 'Full') {
+        $runtime = $next.Modules | Where-Object ModuleName -ieq 'coreclr.dll' | Select-Object -First 1
+        if (!$runtime.FileName.StartsWith((Split-Path $targetExe -Parent), [StringComparison]::OrdinalIgnoreCase)) { throw 'Full does not use its own runtime.' }
+        $report.BundledRuntime = $true
     }
-    $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($saved.Theme -ne 'light' -or $saved.Volume -ne 37 -or $saved.PlayCounts.'retained-test-id' -ne 9 -or $saved.LastStationId -ne 'retained-test-id' -or
-        @($saved.MyStationIds).Count -ne 0 -or !$saved.StationSetupCompleted -or
-        [IO.File]::ReadAllText((Join-Path $directory 'personal-sentinel.txt')) -ne 'preserve user file') { throw 'Preferences or personal file not preserved.' }
-    $work = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'RadioMini-update-*' | Where-Object { $_.CreationTimeUtc -ge $started }) |
-        Where-Object {
-            $manifest = Join-Path $_.FullName 'manifest.json'
-            if (Test-Path -LiteralPath $manifest) {
-                $candidate = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
-                $candidate.version -eq $ExpectedVersion -and $candidate.mode -eq $baseline.mode
-            }
-        } | Sort-Object CreationTimeUtc -Descending | Select-Object -First 1
-    if (!$work) { throw 'Cannot locate actual update plan.' }
-    Wait-Until { Test-Path -LiteralPath (Join-Path $work.FullName 'result.txt') } 30 'No installer completion log.' | Out-Null
-    if ((Get-Content -LiteralPath (Join-Path $work.FullName 'result.txt') -Raw).Trim() -ne 'Update completed.') { throw 'Installer did not report success.' }
-    $plan = Get-Content -LiteralPath (Join-Path $work.FullName 'plan.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    $changes = @($plan.files | Where-Object { $_.changed -and !$_.delete -and $_.path -ne 'radio.update-manifest.json' })
-    $result.ChangedFiles = @($changes.path)
-    $result.PlannedObjectBytes = ($installed.files | Where-Object { $_.path -in $changes.path } | Measure-Object downloadSize -Sum).Sum
-    $result.ManagedDeletions = @($plan.files | Where-Object { $_.delete } | ForEach-Object { $_.path })
-    if ($baseline.mode -eq 'Full') {
-        $runtime = $next.Modules | Where-Object { $_.ModuleName -ieq 'coreclr.dll' } | Select-Object -First 1
-        if (!$runtime -or !$runtime.FileName.StartsWith($directory + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Full did not use the bundled runtime.' }
-        $result.BundledRuntimeLoaded = $true
-        $runtimeFiles = @($baseline.files | Where-Object { $_.path -notin @('RadioMini.exe', 'RadioMini.dll', 'RadioMini.deps.json', 'RadioMini.runtimeconfig.json', 'Radio.Core.dll', 'READ-ME.txt', 'THIRD-PARTY-NOTICES.txt') })
-        $unchangedRuntime = @($runtimeFiles | Where-Object {
-            $old = $_
-            @($installed.files | Where-Object { $_.path -eq $old.path -and $_.sha256 -eq $old.sha256 }).Count -gt 0
-        })
-        if (@($unchangedRuntime | Where-Object { $_.path -in $changes.path }).Count) { throw 'Unchanged runtime was unnecessarily downloaded.' }
-        $result.UnchangedRuntimeFilesSkipped = $unchangedRuntime.Count
+    if (!$next.CloseMainWindow() -or !$next.WaitForExit(15000)) { throw 'New player did not exit normally.' }
+    $report.DiskBytesAfterSwitch = (Get-ChildItem -LiteralPath $directory -Recurse -File | Measure-Object Length -Sum).Sum
+    # Inject an OS-invalid executable into a separate new pending directory and
+    # prove the real launcher restores the last working version and user data.
+    $bad = $new.Current | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $bad.Commit = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    $bad.Version = '99.0.0'
+    $badDir = Join-Path $directory $bad.Commit.Substring(0,12)
+    New-Item -ItemType Directory -Path $badDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $badDir 'package.json'), ($bad | ConvertTo-Json -Depth 10))
+    [IO.File]::WriteAllText((Join-Path $badDir 'RadioMini.exe'), 'intentionally invalid PE for rollback test')
+    $new.Pending = $bad
+    [IO.File]::WriteAllText($statePath, ($new | ConvertTo-Json -Depth 12))
+    $rollbackLauncher = Start-Process -FilePath $launcher -ArgumentList '--no-autoplay --no-update-check' -WorkingDirectory $directory -PassThru
+    $fallback = Wait-Until {
+        Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $targetExe -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+    } 40 'Failed startup did not restore the previous working player.'
+    Wait-Until { $snapshot = Read-State; $snapshot -and $snapshot.Trial -eq '' } 10 'Rollback was not confirmed.' | Out-Null
+    if (!$rollbackLauncher.WaitForExit(30000)) { throw 'Rollback launcher did not finish.' }
+    if ((Read-State).Current.Version -ne $actual) { throw 'Rollback target mismatch.' }
+    if ((Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json).Volume -ne 37) { throw 'Rollback lost preferences.' }
+    $report.FailedStartupRollback = $true
+    if (!$fallback.CloseMainWindow() -or !$fallback.WaitForExit(15000)) { throw 'Fallback player did not exit.' }
+    $report.Passed = $true
+} catch { $report.Error = $_.Exception.Message; throw }
+finally {
+    if ($directory) {
+        Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Path.StartsWith($directory + '\',[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.Id -Force }
     }
-    if (!$next.CloseMainWindow()) { throw 'Cannot close restarted player normally.' }
-    if (!$next.WaitForExit(15000)) { throw 'Restarted player did not exit normally.' }
-    $result.Passed = $true
-    $result.InstallerLog = Join-Path $work.FullName 'result.txt'
-} catch {
-    $result.Error = $_.Exception.Message
-    throw
-} finally {
-    if ($exe) {
-        Get-Process -Name RadioMini -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq $exe } | ForEach-Object {
-            if (!$_.HasExited) { Stop-Process -Id $_.Id -Force }
-        }
-    }
-    [IO.File]::WriteAllText($report, ($result | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
-    Write-Output "E2E report: $report"
+    $path = Join-Path $root 'result.json'
+    [IO.File]::WriteAllText($path, ($report | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+    Write-Output "OTA integration report: $path"
 }
