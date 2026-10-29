@@ -241,7 +241,8 @@ internal sealed class MainForm : Form
         var logo = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
         logo.Paint += (_, e) => GlyphPainter.Draw(e.Graphics, PlayerGlyph.Radio,
             new Rectangle(0, (logo.Height - ScaleDip(13)) / 2, ScaleDip(13), ScaleDip(13)), _theme.Accent);
-        var brand = TextLabel("AppTitle"); brand.Text = AppTitle; brand.Font = OwnFont(11, family: "Segoe UI");
+        var brand = TextLabel("AppTitle"); brand.Text = "Radio Mini"; brand.Font = OwnFont(11, family: "Segoe UI");
+        _tips.SetToolTip(brand, AppTitle);
         header.Controls.Add(logo, 0, 0); header.Controls.Add(brand, 1, 0);
         header.Controls.Add(_themeButton, 2, 0); header.Controls.Add(_minimize, 3, 0); header.Controls.Add(_close, 4, 0);
         header.MouseDown += DragWindow; logo.MouseDown += DragWindow; brand.MouseDown += DragWindow;
@@ -308,8 +309,7 @@ internal sealed class MainForm : Form
             _stations.BeginUpdate(); _stations.Items.Clear();
             _stations.Items.AddRange(_library.Mine.Where(s => StationLibrary.Matches(s, _search.Query)).Cast<object>().ToArray());
             _stations.SelectedItem = _stations.Items.Cast<Station>().FirstOrDefault(s => s.Id == selected);
-            if (_stations.SelectedIndex < 0 && _stations.Items.Count > 0 && string.IsNullOrEmpty(_search.Query)) _stations.SelectedIndex = 0;
-            _lastSelectedStationId = SelectedStationId ?? selected;
+            _lastSelectedStationId = SelectedStationId ?? (_library.Mine.Any(station => station.Id == selected) ? selected : null);
             _stations.EndUpdate(); _stations.Invalidate();
         }
         finally { _suppressSelectionPlayback = false; }
@@ -325,6 +325,7 @@ internal sealed class MainForm : Form
         using var dialog = new StationManagerDialog(_library, _theme, Font);
         dialog.MembershipChanged += SavePreferences;
         dialog.ShowDialog(this);
+        _settings.StationSetupCompleted = true;
         if (_targetStation is { } target && !_library.Mine.Any(s => s.Id == target.Id)) StopPlayback();
         _library.Sort(); SavePreferences(); RefreshStationList(); UpdateEmptyState(); RefreshPresentation();
     }
@@ -434,7 +435,7 @@ internal sealed class MainForm : Form
             _playingStation = _targetStation;
             if (_countPending && _targetStation is { } successfulStation)
             {
-                _countPending = false; _library.RecordSuccess(successfulStation.Id); SavePreferences();
+                _countPending = false; _library.RecordSuccess(successfulStation.Id); RefreshStationList(); SavePreferences();
             }
             _started?.TrySetResult();
             StartMetadata();
@@ -542,7 +543,7 @@ internal sealed class MainForm : Form
         {
             for (var i = 0; i < _stations.Items.Count; i++)
                 if (_stations.Items[i] is Station station && station.Id == id) { _stations.SelectedIndex = i; return; }
-            throw new ArgumentException("Unknown station.", nameof(id));
+            throw new ArgumentException($"Unknown station '{id}' in visible results (query='{_search.Query}').", nameof(id));
         }
         finally { _suppressSelectionPlayback = false; }
     }
@@ -573,6 +574,8 @@ internal sealed class MainForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e); ApplyDpiTypography(); UpdateWindowShape(); RefreshPresentation();
+        if (!_settings.StationSetupCompleted && _library.Mine.Count == 0)
+            BeginInvoke(() => { if (!_closing) OpenStationManager(); });
     }
     private void DragWindow(object? sender, MouseEventArgs e)
     {

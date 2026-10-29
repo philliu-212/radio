@@ -1,6 +1,7 @@
 [
   {
     "id": "best-989",
+    "languages": ["zh"],
     "name": "好事989",
     "frequency": "98.9",
     "pageUrl": "http://www.bestradio.com.tw/",
@@ -11,6 +12,7 @@
   },
   {
     "id": "kiss-999",
+    "languages": ["zh"],
     "name": "KISS Radio",
     "frequency": "99.9",
     "pageUrl": "https://www.kiss.com.tw/test/hichannel2.php?api=1",
@@ -21,6 +23,7 @@
   },
   {
     "id": "pop-917",
+    "languages": ["zh"],
     "name": "POP Radio",
     "frequency": "91.7",
     "pageUrl": "https://www.pop917.com/liveStream.aspx?id=1",
@@ -31,6 +34,7 @@
   },
   {
     "id": "ufo-921",
+    "languages": ["zh"],
     "name": "飛碟電台",
     "frequency": "92.1",
     "pageUrl": "https://www.uforadio.com.tw/",
@@ -41,6 +45,7 @@
   },
   {
     "id": "bcc-ilike",
+    "languages": ["zh"],
     "name": "中廣流行網 i like radio",
     "frequency": "96.3",
     "pageUrl": "https://www.bcc.com.tw/onAir.asp?nid=2",
@@ -52,6 +57,7 @@
   },
   {
     "id": "hit-north",
+    "languages": ["zh"],
     "name": "Hit FM 北部",
     "frequency": "107.7",
     "pageUrl": "https://www.hitoradio.com/newweb/nowonaircount_new.php?block=0&area=6",
@@ -62,7 +68,8 @@
   },
   {
     "id": "rfi-monde",
-    "name": "RFI Monde（法語）",
+    "languages": ["fr"],
+    "name": "RFI Monde",
     "frequency": "",
     "pageUrl": "https://www.rfi.fr/fr/direct-monde",
     "resolver": "Direct",

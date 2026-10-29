@@ -14,11 +14,12 @@ public sealed record Station(
     string StreamHost,
     string MediaType,
     string? Match = null,
-    Uri? EndpointUrl = null)
+    Uri? EndpointUrl = null,
+    IReadOnlyList<string>? Languages = null)
 {
     public bool HasFrequency => !string.IsNullOrWhiteSpace(Frequency);
-    public string FrequencyLabel => HasFrequency ? Frequency : "網路";
-    public string DisplayName => HasFrequency ? $"FM {Frequency}　{Name}" : $"網路　{Name}";
+    public string FrequencyLabel => HasFrequency ? Frequency : "WEB";
+    public string DisplayName => HasFrequency ? $"FM {Frequency}　{Name}" : $"WEB　{Name}";
 }
 
 public static class StationCatalog
