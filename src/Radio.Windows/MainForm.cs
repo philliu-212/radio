@@ -469,7 +469,9 @@ internal sealed class MainForm : Form
             _playingStation = _targetStation;
             if (_countPending && _targetStation is { } successfulStation)
             {
-                _countPending = false; _library.RecordSuccess(successfulStation.Id); RefreshStationList(); SavePreferences();
+                _countPending = false;
+                _settings.LastStationId = successfulStation.Id;
+                _library.RecordSuccess(successfulStation.Id); RefreshStationList(); SavePreferences();
             }
             _started?.TrySetResult();
             StartMetadata();
@@ -612,10 +614,20 @@ internal sealed class MainForm : Form
         else if (_autoPlayOnStartup && _stations.Items.Count > 0)
         {
             _suppressSelectionPlayback = true;
-            try { _stations.SelectedIndex = 0; _lastSelectedStationId = SelectedStationId; }
+            try { _stations.SelectedIndex = StartupStationIndex(); _lastSelectedStationId = SelectedStationId; }
             finally { _suppressSelectionPlayback = false; }
             StartupPlaybackTask = SelectionPlaybackTask = PlaySelectedAsync();
         }
+    }
+    // Resume the station that actually played last. A first run, a removed
+    // favorite or a stale ID keeps the previous rule: the most played entry
+    // (ties keep membership order, all-zero plays index 0).
+    private int StartupStationIndex()
+    {
+        if (_settings.LastStationId is not { } lastId) return 0;
+        for (var i = 0; i < _stations.Items.Count; i++)
+            if (_stations.Items[i] is Station station && station.Id == lastId) return i;
+        return 0;
     }
     private void DragWindow(object? sender, MouseEventArgs e)
     {

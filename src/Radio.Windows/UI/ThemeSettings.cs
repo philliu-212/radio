@@ -9,6 +9,9 @@ internal sealed class ThemeSettings
     public int? Volume { get; set; }
     public List<string> MyStationIds { get; set; } = [];
     public Dictionary<string, long> PlayCounts { get; set; } = [];
+    // Station that actually reached Playing most recently. Used to resume on
+    // startup; removed or unknown IDs fall back to the play-count ordering.
+    public string? LastStationId { get; set; }
     public bool StationSetupCompleted { get; set; }
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "radio.settings.json");
 
@@ -24,6 +27,7 @@ internal sealed class ThemeSettings
             settings.MyStationIds = (settings.MyStationIds ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
             settings.PlayCounts = (settings.PlayCounts ?? []).Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && pair.Value >= 0)
                 .ToDictionary(pair => pair.Key, pair => pair.Value);
+            if (string.IsNullOrWhiteSpace(settings.LastStationId)) settings.LastStationId = null;
             if (settings.Volume is < 0 or > 100) settings.Volume = null;
             return settings;
         }
