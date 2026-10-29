@@ -43,8 +43,8 @@ internal static class IconChecks
             CheckTransparency(bitmap, $"ICO {expected}px");
             CheckResizedSource(png, artwork, bitmap);
             var visibleBounds = ArtworkBounds(bitmap);
-            Check(Math.Max(visibleBounds.Width, visibleBounds.Height) >= expected * .85,
-                $"ICO {expected}px artwork fills the canvas instead of retaining source padding");
+            Check(Math.Max(visibleBounds.Width, visibleBounds.Height) >= expected,
+                $"ICO {expected}px artwork spans the full frame with no reserved margin");
             // .NET 8's multi-frame selector treats the 0-byte directory width
             // inconsistently for 256px. Verify the Windows PNG decoder directly.
             var payload = bytes.AsSpan(offset, length).ToArray();
@@ -115,8 +115,7 @@ internal static class IconChecks
             graphics.Clear(Color.Transparent); graphics.CompositingMode = CompositingMode.SourceCopy;
             graphics.CompositingQuality = CompositingQuality.HighQuality;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            var inset = Math.Max(.25f, expected.Width * .01f);
-            var scale = Math.Min((expected.Width - inset * 2) / content.Width, (expected.Height - inset * 2) / content.Height);
+            var scale = Math.Min((float)expected.Width / content.Width, (float)expected.Height / content.Height);
             var width = content.Width * scale; var height = content.Height * scale;
             graphics.DrawImage(source, new RectangleF((expected.Width - width) / 2, (expected.Height - height) / 2, width, height), content, GraphicsUnit.Pixel);
         }
@@ -124,7 +123,7 @@ internal static class IconChecks
             for (var x = 0; x < actual.Width; x++)
                 if (expected.GetPixel(x, y).ToArgb() != actual.GetPixel(x, y).ToArgb())
                     throw new Exception($"ICO {actual.Width}px changes source RGBA beyond resizing at {x},{y}");
-        Check(true, $"ICO {actual.Width}px matches tightly framed RGBA-preserving artwork resize");
+        Check(true, $"ICO {actual.Width}px matches edge-filled RGBA-preserving artwork resize");
     }
 
     private static void Check(bool valid, string name)

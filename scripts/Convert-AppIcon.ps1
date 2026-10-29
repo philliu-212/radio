@@ -36,8 +36,11 @@ public static class RadioIconConverter {
             graphics.CompositingQuality = CompositingQuality.HighQuality;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            float inset = Math.Max(.25f, size * .01f);
-            float scale = Math.Min((size - inset * 2) / content.Width, (size - inset * 2) / content.Height);
+            // User-selected framing: no reserved margin. The trimmed artwork fills
+            // the frame on its longer axis; the shorter axis keeps only the
+            // unavoidable aspect-ratio remainder. Pixels outside the artwork are
+            // transparent in the source and are not painted.
+            float scale = Math.Min((float)size / content.Width, (float)size / content.Height);
             float width = content.Width * scale, height = content.Height * scale;
             graphics.DrawImage(source, new RectangleF((size-width)/2, (size-height)/2, width, height), content, GraphicsUnit.Pixel);
         }
@@ -84,7 +87,7 @@ public static class RadioIconConverter {
                 }
                 foreach (var frame in frames) writer.Write(frame);
             }
-            Console.WriteLine("Preserved RGBA PNG {0}x{1}; artwork {2}; nine ICO frames with minimal transparent margins.", original.Width, original.Height, content);
+            Console.WriteLine("Preserved RGBA PNG {0}x{1}; artwork {2}; nine ICO frames fill the canvas without reserved margins.", original.Width, original.Height, content);
         }
     }
 }
