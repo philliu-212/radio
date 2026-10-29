@@ -15,6 +15,9 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     private bool _muted;
     private bool _disposed;
     private int _generation;
+    private readonly PlaybackRecovery _recovery = new();
+    private int _waitingForProgress;
+    private int _progressCheckQueued;
 
     public MediaEngineAudioPlayer() => Marshal.ThrowExceptionForHR(MediaEngineInterop.MFStartup(0x20070, 0));
     public event Action<PlaybackStatus>? StatusChanged;
@@ -68,15 +71,41 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
 
     private void OnNativeEvent(int generation, uint eventId)
     {
-        // Ignore time-update/progress callbacks: the UI has no constantly redrawn clock/animation.
+        // Ignore progress and steady-playback time updates: there is no polling timer or UI clock.
         // BUFFERINGSTARTED (1005) describes source prefetch, not a playback stall.
         // WAITING (12) explicitly means playback stopped because the next frame is unavailable.
+        if (eventId == 18)
+        {
+            if (Volatile.Read(ref _waitingForProgress) == 0 || Interlocked.Exchange(ref _progressCheckQueued, 1) != 0) return;
+            _context.Post(_ =>
+            {
+                Interlocked.Exchange(ref _progressCheckQueued, 0);
+                if (_disposed || generation != _generation || _engine is null) return;
+                if (_recovery.TryRecover(_engine.GetCurrentTime(), _engine.GetReadyState(),
+                    _engine.IsPaused(), _engine.IsSeeking(), _engine.IsEnded()))
+                {
+                    Volatile.Write(ref _waitingForProgress, 0);
+                    Publish(AudioState.Playing, "直播播放中");
+                }
+            }, null);
+            return;
+        }
         if (eventId != 5 && eventId != 19 && PlaybackStateForEvent(eventId) is null) return;
         _context.Post(_ =>
         {
             if (_disposed || generation != _generation || _engine is null) return;
-            if (PlaybackStateForEvent(eventId) == AudioState.Playing) Publish(AudioState.Playing, "直播播放中");
-            else if (PlaybackStateForEvent(eventId) == AudioState.Buffering) Publish(AudioState.Buffering, "直播緩衝中…");
+            if (PlaybackStateForEvent(eventId) == AudioState.Playing)
+            {
+                _recovery.Reset();
+                Volatile.Write(ref _waitingForProgress, 0);
+                Publish(AudioState.Playing, "直播播放中");
+            }
+            else if (PlaybackStateForEvent(eventId) == AudioState.Buffering)
+            {
+                _recovery.BeginWaiting(_engine.GetCurrentTime());
+                Volatile.Write(ref _waitingForProgress, 1);
+                Publish(AudioState.Buffering, "直播緩衝中…");
+            }
             else
             {
                 var message = "直播已結束，請重新播放。";
@@ -102,6 +131,8 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     public void Stop()
     {
         _generation++;
+        _recovery.Reset();
+        Volatile.Write(ref _waitingForProgress, 0);
         var engine = _engine;
         _engine = null;
         if (engine is not null)

@@ -67,6 +67,14 @@ Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.
 
 可加 `--station hit-north` 只測一台；ID 見 `src/Radio.Core/stations.json`。每台先等播放狀態、暖機 3 秒，再檢查播放時鐘是否持續前進及取樣；結束後釋放來源。報告不儲存帶 token 的串流 URL。
 
+RFI 啟動／恢復狀態的線上量測需另行明確執行（一條真實串流、全程靜音，不修改設定）：
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi --seconds 600 --output artifacts/rfi-playback.json
+```
+
+此量測從連線開始每 250 毫秒取樣正式 `system` 路徑，分開計算開始播放後第一分鐘及後續的時鐘停頓。報告的 `passed` 只檢查開播／狀態恢復，**不代表停頓已解決**；不能把時鐘停頓當成已錄音確認的靜音。播放器沒有增加啟動等待、額外音訊緩衝或自動重連。
+
 新量測包含播放器程序與它擁有的播放子程序，不含共享 Windows 音訊服務或 GPU 記憶體；短測不代表長期穩定，也不代表已確認實際音訊可聽。沒有相同來源的瀏覽器基準前，不宣稱相對瀏覽器的節省比例。
 
 舊版效能數據、已移除的 mpv 比較與早期 UI 草稿已移出現行文件，可從 Git 歷史查閱；不把舊短測當成現行版本的驗收結果。長時間播放、實體多螢幕、斷網與睡眠恢復仍須另外驗證。
