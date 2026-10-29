@@ -9,7 +9,7 @@
     <AssemblyName>RadioMini</AssemblyName>
     <AssemblyTitle>Radio Mini</AssemblyTitle>
     <Product>Radio Mini</Product>
-    <Version>0.3.6</Version>
+    <Version>0.4.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
