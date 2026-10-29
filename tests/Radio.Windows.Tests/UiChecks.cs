@@ -365,8 +365,8 @@ internal static class UiChecks
             var rightLanguage = Find<Button>(dialog, "MyLanguageFilter");
             Check(left.PointToScreen(new Point(left.Width, 0)).X < leftLanguage.PointToScreen(Point.Empty).X &&
                 right.PointToScreen(new Point(right.Width, 0)).X < rightLanguage.PointToScreen(Point.Empty).X &&
-                leftLanguage.Parent == left.Parent && left.Height == 32 && right.Height == 32,
-                "Independent globe buttons sit outside both complete 32-DIP search pills");
+                leftLanguage.Parent == left.Parent && left.Height == 26 && right.Height == 26,
+                "Independent globe buttons sit outside both complete 26-DIP search pills");
             var addButton = Find<PlayerButton>(dialog, "AddStation");
             Check(addButton.Framed && addButton.Size == new Size(30, 30) && Find<PlayerButton>(dialog, "RemoveStation").Framed,
                 "Transfer arrows use compact framed 30-DIP buttons");
@@ -403,6 +403,10 @@ internal static class UiChecks
                     $"Manager DPI {dpi}: child windows cannot overlap any rounded perimeter edge");
                 Check(dialog.Region!.IsVisible(dialog.ClientSize.Width - 20, dialog.ClientSize.Height / 2), $"Manager DPI {dpi}: rounded window region follows full dialog size");
                 Check(available.ItemHeight == (int)Math.Round(37 * dpi / 96d), $"Manager DPI {dpi}: row height scales without clipping search or actions");
+                var expectedPill = (int)Math.Round(26 * dpi / 96d);
+                var globeButton = Find<Button>(dialog, "AvailableLanguageFilter");
+                Check(left.Height == globeButton.Height && Math.Abs(left.Height - expectedPill) <= 1,
+                    $"Manager DPI {dpi}: search pill and globe row scale together (search={left.Height}, globe={globeButton.Height}, nominal={expectedPill})");
                 Find<Button>(dialog, "AvailableLanguageFilter").PerformClick();
                 Check(dialog.LanguageMenu.Width == (int)(150 * dpi / 96f) &&
                     dialog.LanguageMenu.Items.Cast<ToolStripMenuItem>().All(item => item.Height == (int)(28 * dpi / 96f)),
@@ -576,7 +580,18 @@ internal static class UiChecks
         using (var pixels = new Bitmap(globe.Width, globe.Height))
         {
             globe.DrawToBitmap(pixels, globe.ClientRectangle);
-            Check(pixels.GetPixel(20, 7).ToArgb() == PlayerTheme.Dark.Accent.ToArgb(), "Active filter paints mint 5-DIP indicator dot");
+            var background = pixels.GetPixel(0, 0).ToArgb();
+            var inkLeft = globe.Width; var inktop = globe.Height; var inkRight = -1; var inkBottom = -1;
+            for (var y = 0; y < globe.Height; y++)
+                for (var x = 0; x < globe.Width; x++)
+                    if (pixels.GetPixel(x, y).ToArgb() != background)
+                    { inkLeft = Math.Min(inkLeft, x); inktop = Math.Min(inktop, y); inkRight = Math.Max(inkRight, x); inkBottom = Math.Max(inkBottom, y); }
+            var inkHeight = inkBottom - inktop + 1; var inkWidth = inkRight - inkLeft + 1;
+            Check(inkHeight is >= 14 and <= 16 && inkWidth >= 24,
+                $"14-DIP globe plus 8-DIP chevron paint a {inkWidth}x{inkHeight}px mark at 96 DPI");
+            Check(Math.Abs((inktop + inkBottom) / 2 - (globe.Height - 1) / 2) <= 1,
+                "Globe and chevron stay vertically centred inside the 34-DIP button");
+            Check(pixels.GetPixel(18, 7).ToArgb() == PlayerTheme.Dark.Accent.ToArgb(), "Active filter paints mint indicator dot at the globe's top right");
         }
         Capture(dialog, "artifacts/station-manager-independent-languages.png");
         globe.PerformClick();
