@@ -115,7 +115,7 @@ internal static class IconChecks
             graphics.Clear(Color.Transparent); graphics.CompositingMode = CompositingMode.SourceCopy;
             graphics.CompositingQuality = CompositingQuality.HighQuality;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            var inset = Math.Max(.5f, expected.Width * .02f);
+            var inset = Math.Max(.25f, expected.Width * .01f);
             var scale = Math.Min((expected.Width - inset * 2) / content.Width, (expected.Height - inset * 2) / content.Height);
             var width = content.Width * scale; var height = content.Height * scale;
             graphics.DrawImage(source, new RectangleF((expected.Width - width) / 2, (expected.Height - height) / 2, width, height), content, GraphicsUnit.Pixel);

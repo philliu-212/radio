@@ -36,7 +36,7 @@ public static class RadioIconConverter {
             graphics.CompositingQuality = CompositingQuality.HighQuality;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            float inset = Math.Max(.5f, size * .02f);
+            float inset = Math.Max(.25f, size * .01f);
             float scale = Math.Min((size - inset * 2) / content.Width, (size - inset * 2) / content.Height);
             float width = content.Width * scale, height = content.Height * scale;
             graphics.DrawImage(source, new RectangleF((size-width)/2, (size-height)/2, width, height), content, GraphicsUnit.Pixel);
