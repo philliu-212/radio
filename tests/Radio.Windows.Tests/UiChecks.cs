@@ -16,7 +16,7 @@ internal static class UiChecks
         var metadata = new FixtureMetadata();
         var resolver = new FixtureResolver();
         var settings = CatalogSettings();
-        using var form = new MainForm(player, false, true, resolver, metadata, settings);
+        using var form = new MainForm(player, false, true, resolver, metadata, settings, autoPlayOnStartup: false);
         form.Show();
         await Task.Delay(100);
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
@@ -94,11 +94,11 @@ internal static class UiChecks
         SendMouse(volume, 0x0202, -20, volume.Height / 2);
         Check(volume.Value == 0, "Clicking slider left edge clamps to zero");
         volume.Value = 40;
-        var committedVolume = -1;
-        ((VolumeSlider)volume).InteractionCompleted += () => committedVolume = volume.Value;
-        SendMessage(volume.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
-        Check(volume.Value != 40 && committedVolume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
-            "Wheel changes volume and commits the final value after native input processing");
+        var wheelPoint = volume.PointToScreen(new Point(volume.Width / 2, volume.Height / 2));
+        PostMessage(volume.Handle, 0x020A, new IntPtr(120 << 16), new IntPtr((wheelPoint.X & 0xffff) | ((wheelPoint.Y & 0xffff) << 16)));
+        await Task.Delay(30);
+        Check(volume.Value == 45 && settings.Volume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
+            "Queued slider wheel changes volume once and commits the routed final value");
         var playsBeforeScroll = player.Plays;
         var stationList = (StationListBox)list;
         var card = Find<Label>(form, "NowPlayingTitle").Parent!.Parent!;
@@ -262,6 +262,8 @@ internal static class UiChecks
         await CheckStationManagementAsync();
         await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
+        await CheckStartupAutoplayAsync();
+        await CheckCardVolumeAndTipsAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
@@ -636,10 +638,127 @@ internal static class UiChecks
             "Catalog explicitly records RFI French and POP Chinese without language suffixes");
     }
 
+    private static async Task CheckStartupAutoplayAsync()
+    {
+        var settings = CatalogSettings();
+        settings.Volume = 42; settings.PlayCounts["best-989"] = 12; settings.PlayCounts["pop-917"] = 3;
+        var player = new FixturePlayer { IsMuted = true };
+        using (var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), settings))
+        {
+            Check(player.Plays == 0, "Constructing the window never connects before it is shown");
+            form.Show(); await Task.Delay(30);
+            Check(player.Plays == 1 && form.SelectedStationId == "best-989" && form.LatestStatus.State == AudioState.Opening,
+                "Startup selects and starts exactly the most successfully played favorite");
+            Check(Math.Abs(player.Volume - .42) < .001 && player.IsMuted && settings.PlayCounts["best-989"] == 12,
+                "Startup respects saved volume and existing mute before success; opening does not count");
+            player.Emit(AudioState.Playing); await form.StartupPlaybackTask;
+            player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
+            Check(form.PlayingStationId == "best-989" && settings.PlayCounts["best-989"] == 13 && player.Plays == 1,
+                "Automatic playback counts only its first real Playing event");
+            form.Hide(); form.ShowPlayer(); await Task.Delay(30);
+            Check(player.Plays == 1, "Hide and restore never repeat startup playback");
+            Find<Button>(form, "PlayButton").PerformClick();
+            form.Hide(); form.ShowPlayer(); await Task.Delay(30);
+            Check(player.Plays == 1 && form.LatestStatus.State == AudioState.Stopped,
+                "Restoring a manually stopped player does not auto-play again");
+            form.Close();
+        }
+        foreach (var count in new[] { 0L, 4L })
+        {
+            var tiedSettings = new ThemeSettings { MyStationIds = ["ufo-921", "best-989"], PlayCounts = { ["ufo-921"] = count, ["best-989"] = count } };
+            var tiedPlayer = new FixturePlayer();
+            using var tied = new MainForm(tiedPlayer, false, true, new FixtureResolver(), new FixtureMetadata(), tiedSettings);
+            tied.Show(); await Task.Delay(20);
+            Check(tiedPlayer.Plays == 1 && tied.SelectedStationId == "ufo-921", $"Startup ties ({count} plays) preserve existing favorite order");
+            tiedPlayer.Emit(AudioState.Playing); await tied.StartupPlaybackTask; tied.Close();
+        }
+        var failedSettings = CatalogSettings(); failedSettings.PlayCounts["kiss-999"] = 9;
+        var failedPlayer = new FixturePlayer(); var failedResolver = new FixtureResolver { Fail = true };
+        using var failed = new MainForm(failedPlayer, false, true, failedResolver, new FixtureMetadata(), failedSettings);
+        failed.Show(); await Task.Delay(30); await failed.StartupPlaybackTask;
+        Check(failed.LatestStatus.State == AudioState.Failed && failedResolver.Calls == 1 && failedPlayer.Plays == 0 && failedSettings.PlayCounts["kiss-999"] == 9,
+            $"Failed startup leaves retry UI without counting, looping or trying another station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
+        failed.Close();
+    }
+
+    private static async Task CheckCardVolumeAndTipsAsync()
+    {
+        var settings = CatalogSettings(); settings.Volume = 40;
+        var player = new FixturePlayer(); var metadata = new FixtureMetadata();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), metadata, settings, autoPlayOnStartup: false);
+        form.Show(); await Task.Delay(20);
+        var card = Find<Control>(form, "PlaybackCard");
+        var volume = Find<VolumeSlider>(form, "Volume");
+        var list = Find<StationListBox>(form, "StationList");
+        var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(tips.GetToolTip(volume) == "音量 40%", "Volume tooltip is correct even before the first adjustment");
+        var playback = form.PlayForProbeAsync("bcc-ilike"); player.Emit(AudioState.Playing); await playback;
+        metadata.Pending[0].SetResult(new(MetadataKind.Program, "測試節目", "測試主持人", DateTimeOffset.UtcNow.AddMinutes(1)));
+        await Task.Delay(20);
+        static IEnumerable<Control> Descendants(Control parent) => parent.Controls.Cast<Control>()
+            .SelectMany(child => new[] { child }.Concat(Descendants(child)));
+        var surfaces = Descendants(card).Prepend(card).Where(control => control.Visible && control.Width > 0 && control.Height > 0).ToArray();
+        Check(Descendants(card).Prepend(card).Where(control => !string.IsNullOrEmpty(tips.GetToolTip(control)))
+                .Select(control => control.Name).Order().SequenceEqual(new[] { "OfficialLink", "Volume" }),
+            "Only official website and volume have card tooltips, including visible metadata and playback state");
+        Check(!string.IsNullOrEmpty(tips.GetToolTip(Find<Label>(form, "AppTitle"))) && Find<Button>(form, "PlayButton").AccessibleName == "停止",
+            "Card tooltip removal preserves brand version and accessible playback actions");
+        Check(Descendants(card).OfType<Label>().All(label => label is CardTextLabel && label.AutoEllipsis),
+            "Card labels preserve ellipsis while suppressing WinForms' independent overflow tooltips");
+        async Task Wheel(Control target, Control hovered, int delta)
+        {
+            var screen = hovered.PointToScreen(new Point(hovered.Width / 2, hovered.Height / 2));
+            Check(PostMessage(target.Handle, 0x020A, new IntPtr(delta << 16), new IntPtr((screen.X & 0xffff) | ((screen.Y & 0xffff) << 16))), "Wheel message queued");
+            await Task.Delay(20);
+        }
+        list.Focus(); var top = list.TopIndex;
+        foreach (var surface in surfaces)
+        {
+            volume.Value = 50;
+            await Wheel(list, surface, 120);
+            Check(volume.Value == 55 && settings.Volume == 55 && Math.Abs(player.Volume - .55) < .001 && list.TopIndex == top,
+                $"Hover wheel on {surface.Name}/{surface.GetType().Name} adjusts and commits volume with focus elsewhere");
+        }
+        volume.Value = 50; volume.Focus();
+        await Wheel(volume, volume, 120);
+        Check(volume.Value == 55, "Slider wheel is consumed once, without native double adjustment");
+        await Wheel(volume, card, -240);
+        Check(volume.Value == 45, "Reverse and multi-notch wheel input use consistent five-percent steps");
+        await Wheel(list, card, 60);
+        Check(volume.Value == 45, "Partial wheel delta is accumulated without premature adjustment");
+        await Wheel(list, card, 60);
+        Check(volume.Value == 50, "Two half-notch inputs produce one volume step");
+        volume.Value = 98; await Wheel(list, card, 120);
+        Check(volume.Value == 100 && settings.Volume == 100, "Card wheel clamps and commits upper volume bound");
+        volume.Value = 2; await Wheel(list, card, -120);
+        Check(volume.Value == 0 && settings.Volume == 0, "Card wheel clamps and commits lower volume bound");
+        var mute = Find<CheckBox>(form, "Mute"); mute.Checked = true;
+        await Wheel(list, card, 120);
+        Check(volume.Value == 5 && player.IsMuted && tips.GetToolTip(volume) == "音量 5%", "Wheel updates tooltip without cancelling mute");
+        list.TopIndex = 0; await Wheel(list, list, -120);
+        Check(list.TopIndex > 0 && volume.Value == 5, "Hovering station list still scrolls stations without changing volume");
+        using (var other = new Form { StartPosition = FormStartPosition.Manual, Location = new Point(form.Right + 20, form.Top), Size = new Size(100, 100) })
+        {
+            other.Show(); await Wheel(other, card, 120);
+            Check(volume.Value == 5, "Wheel messages belonging to another window are never intercepted");
+            other.Close();
+        }
+        form.Enabled = false; await Wheel(list, card, 120);
+        Check(volume.Value == 5, "Disabled owner, such as during modal management, does not adjust volume behind dialog");
+        form.Enabled = true;
+        foreach (var dpi in new[] { 120, 144, 192, 96 })
+        {
+            SimulateDpi(form, dpi); await Task.Delay(20);
+            volume.Value = 50; await Wheel(list, Find<Label>(form, "Frequency"), 120);
+            Check(volume.Value == 55, $"DPI {dpi}: card hover wheel screen-coordinate routing remains aligned");
+        }
+        form.Close();
+    }
+
     private static async Task CheckStationInputAsync()
     {
         var player = new FixturePlayer();
-        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings());
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
         form.Show();
         await Task.Delay(30);
         var list = Find<ListBox>(form, "StationList");
@@ -688,15 +807,20 @@ internal static class UiChecks
     }
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
 
     private sealed class FixtureResolver : IStreamResolver
     {
         public TaskCompletionSource<ResolvedStream>? Pending { get; set; }
         public bool Fail { get; set; }
-        public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token) =>
-            Fail ? throw new SourceResolutionException("Fixture source unavailable") : Pending?.Task ??
-            Task.FromResult(new ResolvedStream(new Uri("https://example.invalid/audio"), station.PageUrl, "audio/aac"));
+        public int Calls { get; private set; }
+        public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token)
+        {
+            Calls++;
+            return Fail ? throw new SourceResolutionException("Fixture source unavailable") : Pending?.Task ??
+                Task.FromResult(new ResolvedStream(new Uri("https://example.invalid/audio"), station.PageUrl, "audio/aac"));
+        }
     }
     private sealed class FixturePlayer : IAudioPlayer
     {

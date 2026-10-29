@@ -127,7 +127,7 @@ internal sealed class ProbeForm(string[] args) : Form
     {
         var player = PlayerBackend.Create(args);
         player.IsMuted = true;
-        using var form = new MainForm(player, persistPreferences: false, darkOverride: true,
+        using var form = new MainForm(player, persistPreferences: false, darkOverride: true, autoPlayOnStartup: false,
             settings: new Radio.Windows.UI.ThemeSettings { MyStationIds = StationCatalog.Load().Select(s => s.Id).ToList() });
         form.Show();
         var stationId = Option(args, "--station", "bcc-ilike");

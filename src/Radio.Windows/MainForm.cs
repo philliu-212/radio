@@ -24,21 +24,24 @@ internal sealed class MainForm : Form
     private readonly PlayerButton _minimize = new() { Name = "MinimizeButton", Glyph = PlayerGlyph.Minimize, AccessibleName = "最小化", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _close = new() { Name = "CloseButton", Glyph = PlayerGlyph.Close, AccessibleName = "關閉", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _official = new() { Name = "OfficialLink", Glyph = PlayerGlyph.External, AccessibleName = "電台官網", Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly Label _status = TextLabel("PlaybackStatus");
-    private readonly Label _title = TextLabel("NowPlayingTitle");
-    private readonly Label _frequency = TextLabel("Frequency");
-    private readonly Label _fm = TextLabel("FrequencyUnit");
-    private readonly Label _metadataTitle = TextLabel("MetadataTitle");
-    private readonly Label _metadataPerson = TextLabel("MetadataPerson");
+    private readonly Label _status = TextLabel("PlaybackStatus", card: true);
+    private readonly Label _title = TextLabel("NowPlayingTitle", card: true);
+    private readonly Label _frequency = TextLabel("Frequency", card: true);
+    private readonly Label _fm = TextLabel("FrequencyUnit", card: true);
+    private readonly Label _metadataTitle = TextLabel("MetadataTitle", card: true);
+    private readonly Label _metadataPerson = TextLabel("MetadataPerson", card: true);
     private readonly MuteButton _mute = new() { Name = "Mute", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly VolumeSlider _volume = new() { Name = "Volume", AccessibleName = "音量", Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly PlayerCard _card = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly PlayerCard _card = new() { Name = "PlaybackCard", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly ToolTip _tips = new() { ShowAlways = true };
     private readonly List<Font> _fonts = [];
     private readonly Dictionary<(float Size, FontStyle Style, string Family, int Dpi), Font> _fontCache = [];
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _trayTransport;
     private readonly bool _persistPreferences;
+    private readonly bool _autoPlayOnStartup;
+    private readonly CardVolumeWheelFilter _volumeWheel;
+    private bool _startupHandled;
     private Font _frequencyFont;
     private CancellationTokenSource? _playRequest;
     private CancellationTokenSource? _metadataRequest;
@@ -59,6 +62,7 @@ internal sealed class MainForm : Form
     private bool _suppressSelectionPlayback;
     private string? _lastSelectedStationId;
     internal Task SelectionPlaybackTask { get; private set; } = Task.CompletedTask;
+    internal Task StartupPlaybackTask { get; private set; } = Task.CompletedTask;
 
     internal int PresentationUpdates { get; private set; }
     internal bool IsBackgroundMode => _uiSuspended;
@@ -72,12 +76,14 @@ internal sealed class MainForm : Form
     private static string AppTitle => $"Radio Mini v{AppVersion}";
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
-        IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null)
+        IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
+        bool autoPlayOnStartup = true)
     {
         _player = player;
         _resolver = resolver ?? new OfficialStreamResolver();
         _metadataProvider = metadataProvider ?? new OfficialMetadataProvider();
         _persistPreferences = persistPreferences;
+        _autoPlayOnStartup = autoPlayOnStartup;
         _settings = settings ?? (persistPreferences ? ThemeSettings.Load() : new ThemeSettings());
         _library = new StationLibrary(_settings);
         _darkMode = darkOverride ?? _settings.Theme != "light";
@@ -167,11 +173,13 @@ internal sealed class MainForm : Form
         {
             if (e.KeyCode is Keys.Enter or Keys.Space) { e.SuppressKeyPress = true; await PlaySelectedAsync(); }
         };
-        if (_persistPreferences && _settings.Volume is { } savedVolume) _player.Volume = savedVolume / 100d;
+        if (_settings.Volume is { } savedVolume) _player.Volume = savedVolume / 100d;
         _volume.Value = (int)Math.Round(_player.Volume * 100);
         _mute.Checked = _player.IsMuted;
         _volume.ValueChanged += (_, _) => { _player.Volume = _volume.Value / 100d; _tips.SetToolTip(_volume, $"音量 {_volume.Value}%"); };
         _volume.InteractionCompleted += SavePreferences;
+        _volumeWheel = new CardVolumeWheelFilter(_card, _volume, SavePreferences);
+        Application.AddMessageFilter(_volumeWheel);
         _mute.CheckedChanged += (_, _) => { _player.IsMuted = _mute.Checked; _mute.Invalidate(); };
         _themeButton.Click += (_, _) => ToggleTheme();
         _minimize.Click += (_, _) => { WindowState = FormWindowState.Minimized; Hide(); };
@@ -198,13 +206,19 @@ internal sealed class MainForm : Form
         _tips.SetToolTip(_minimize, "縮到系統匣，繼續播放");
         _tips.SetToolTip(_close, "退出 Radio Mini");
         _tips.SetToolTip(_official, "開啟電台官方網頁");
-        _tips.SetToolTip(_mute, "靜音（保留音量）");
+        _tips.SetToolTip(_volume, $"音量 {_volume.Value}%");
         _tips.SetToolTip(_manage, "新增／管理電台"); _tips.SetToolTip(_emptyAdd, "新增電台");
         ApplyTheme();
         ResumeLayout(true);
     }
 
-    private static Label TextLabel(string name) => new() { Name = name, Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty, UseMnemonic = false };
+    private static Label TextLabel(string name, bool card = false)
+    {
+        Label label = card ? new CardTextLabel() : new Label();
+        label.Name = name; label.Dock = DockStyle.Fill; label.AutoEllipsis = true;
+        label.TextAlign = ContentAlignment.MiddleLeft; label.Margin = Padding.Empty; label.UseMnemonic = false;
+        return label;
+    }
     private Font OwnFont(float size, FontStyle style = FontStyle.Regular, string family = "Microsoft JhengHei UI")
     {
         var key = (size, style, family, DeviceDpi);
@@ -457,7 +471,6 @@ internal sealed class MainForm : Form
         _title.Text = station is null ? "選擇電台" : StationName(station);
         _frequency.Text = station?.FrequencyLabel ?? "—";
         _fm.Text = station is null || station.HasFrequency ? " FM" : "";
-        _tips.SetToolTip(_title, _title.Text);
         _status.Text = _latestStatus.State switch
         {
             AudioState.Playing => "● 播放中", AudioState.Opening => "● 連線中", AudioState.Buffering => "● 緩衝中",
@@ -465,11 +478,9 @@ internal sealed class MainForm : Form
         };
         _status.ForeColor = _latestStatus.State == AudioState.Playing ? _theme.Accent
             : _latestStatus.State == AudioState.Failed ? _theme.Warning : _theme.Muted;
-        _tips.SetToolTip(_status, _latestStatus.Message);
         var stop = _active && (_targetStation?.Id == SelectedStationId || SelectedStationId is null);
         _transport.Glyph = stop ? PlayerGlyph.Stop : PlayerGlyph.Play;
         _transport.AccessibleName = stop ? "停止" : "播放";
-        _tips.SetToolTip(_transport, stop ? "停止直播" : "播放選取的電台");
         _transport.Invalidate();
         var data = _metadata?.ExpiresAt > DateTimeOffset.UtcNow ? _metadata : null;
         SetMetadataLabel(_metadataTitle, data?.FirstLine);
@@ -478,7 +489,7 @@ internal sealed class MainForm : Form
     }
     private void SetMetadataLabel(Label label, string? value)
     {
-        label.Text = value ?? ""; label.Visible = value is not null; _tips.SetToolTip(label, value);
+        label.Text = value ?? ""; label.Visible = value is not null;
     }
 
     private void StartMetadata()
@@ -574,8 +585,17 @@ internal sealed class MainForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e); ApplyDpiTypography(); UpdateWindowShape(); RefreshPresentation();
+        if (_startupHandled) return;
+        _startupHandled = true;
         if (!_settings.StationSetupCompleted && _library.Mine.Count == 0)
             BeginInvoke(() => { if (!_closing) OpenStationManager(); });
+        else if (_autoPlayOnStartup && _stations.Items.Count > 0)
+        {
+            _suppressSelectionPlayback = true;
+            try { _stations.SelectedIndex = 0; _lastSelectedStationId = SelectedStationId; }
+            finally { _suppressSelectionPlayback = false; }
+            StartupPlaybackTask = SelectionPlaybackTask = PlaySelectedAsync();
+        }
     }
     private void DragWindow(object? sender, MouseEventArgs e)
     {
@@ -593,6 +613,7 @@ internal sealed class MainForm : Form
     {
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
+        _volumeWheel.Dispose();
         SavePreferences();
         _playRequest?.Cancel(); _playRequest = null;
         CancelMetadata(); _player.StatusChanged -= UpdateStatus;

@@ -22,7 +22,7 @@ $exe = if ($ExecutablePath) { $ExecutablePath } else {
 }
 if (!(Test-Path $exe)) { throw 'Run Run.cmd first, or specify -ExecutablePath for a release package.' }
 $exe = (Resolve-Path -LiteralPath $exe).Path
-$process = Start-Process -FilePath $exe -ArgumentList '--backend', $Backend -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+$process = Start-Process -FilePath $exe -ArgumentList '--backend', $Backend, '--no-autoplay' -WorkingDirectory (Split-Path -Parent $exe) -PassThru
 
 function Wait-Until([scriptblock]$Condition, [string]$Message, [int]$Seconds = 10) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
