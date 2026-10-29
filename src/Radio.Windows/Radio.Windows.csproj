@@ -5,11 +5,15 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>Radio</AssemblyName>
+    <ApplicationIcon>Assets/RadioMini.ico</ApplicationIcon>
+    <AssemblyName>RadioMini</AssemblyName>
+    <AssemblyTitle>Radio Mini</AssemblyTitle>
+    <Product>Radio Mini</Product>
     <Version>0.3.6</Version>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
+    <EmbeddedResource Include="Assets/RadioMini.ico" LogicalName="Radio.Windows.Assets.RadioMini.ico" />
   </ItemGroup>
   <!-- Pin runtime packages for Full releases without changing the Windows SDK pack. -->
   <Target Name="PinReleaseRuntimePackages" BeforeTargets="ProcessFrameworkReferences"

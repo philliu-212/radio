@@ -4,6 +4,8 @@
 
 使用 Windows 系統音訊：六台走純音訊模式，Hit FM 走相容路徑，不需要外部播放器。mpv 後端、安裝工具及二進位已移除。
 
+執行檔統一為 `RadioMini.exe`，視窗／工作列名稱為 **Radio Mini**，不附版號。應用程式圖示使用指定線稿製作的透明 PNG／多尺寸 ICO，套用至 EXE、視窗／工作列及系統匣；來源、留白調整與重建方式見 [圖示資產說明](src/Radio.Windows/Assets/README.md)。
+
 **可雙擊的 Lite／Full portable 包**見 [封裝指引](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。沿用深／淺色極簡橫向 UI，電台管理規格見 [station-management.md](docs/station-management.md)，官方來源與 metadata 限制見 [sources.md](docs/sources.md)。
 
 ## 電台
@@ -59,7 +61,7 @@ UI 冒煙腳本以 `--no-autoplay` 啟動，不因啟動自動收聽；既有腳
 靜音線上實驗（會產生少量正常收聽流量）需以已編譯的程式執行，避免把 SDK／建置程序算入播放器：
 
 ```powershell
-$exe = '.\src\Radio.Windows\bin\Debug\net8.0-windows10.0.19041.0\Radio.exe'
+$exe = '.\src\Radio.Windows\bin\Debug\net8.0-windows10.0.19041.0\RadioMini.exe'
 Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.json' -Wait
 ```
 

@@ -18,7 +18,7 @@ public static class RadioWindowTest {
 '@
 
 $exe = if ($ExecutablePath) { $ExecutablePath } else {
-    Join-Path $PSScriptRoot '..\src\Radio.Windows\bin\Debug\net8.0-windows10.0.19041.0\Radio.exe'
+    Join-Path $PSScriptRoot '..\src\Radio.Windows\bin\Debug\net8.0-windows10.0.19041.0\RadioMini.exe'
 }
 if (!(Test-Path $exe)) { throw 'Run Run.cmd first, or specify -ExecutablePath for a release package.' }
 $exe = (Resolve-Path -LiteralPath $exe).Path

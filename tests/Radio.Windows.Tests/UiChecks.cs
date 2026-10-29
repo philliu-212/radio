@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        IconChecks.Run();
         await CaptureFourArrowPreviewAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
             MediaEngineAudioPlayer.PlaybackStateForEvent(12) == AudioState.Buffering && MediaEngineAudioPlayer.PlaybackStateForEvent(13) == AudioState.Playing,
@@ -20,10 +21,15 @@ internal static class UiChecks
         form.Show();
         await Task.Delay(100);
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
-        Check(form.Text == $"Radio Mini v{expectedVersion}" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
-            "Header hides version while native window title retains the actual assembly version");
+        Check(form.Text == "Radio Mini" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
+            "Native taskbar/window title and header show only Radio Mini without a version");
         var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
+        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(form.Icon?.Width == (int)Math.Round(32 * form.DeviceDpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * form.DeviceDpi / 96d),
+            "Window/taskbar and tray load their own correctly sized artwork frames");
+        Check(tray.Text == "Radio Mini" && tray.ContextMenuStrip!.Items.Cast<ToolStripItem>().Any(item => item.Text == $"Radio Mini v{expectedVersion}"),
+            "Tray tooltip omits version while the explicit version information menu remains available");
         try { PlayerBackend.Create(["--backend", "mpv"]); throw new Exception("Removed backend was accepted."); }
         catch (ArgumentException) { Check(true, "Removed backend is rejected rather than launching an external player"); }
         Check(form.ClientSize == new Size(554, 271) && Find<ListBox>(form, "StationList").ItemHeight == 37,
@@ -53,6 +59,7 @@ internal static class UiChecks
         player.Emit(AudioState.Playing);
         await opening;
         Check(settings.PlayCounts.GetValueOrDefault("bcc-ilike") == 1, "Only successful playback counts");
+        Check(form.Text == "Radio Mini" && tray.Text == "Radio Mini · 中廣流行網", "Playback updates tray station name without adding a version to app titles");
         player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
         Check(settings.PlayCounts["bcc-ilike"] == 1 && ((Station)list.Items[0]).Id == "bcc-ilike" && form.SelectedStationId == "bcc-ilike" && player.Plays == 1,
             "Success immediately sorts while preserving selected station; reconnect does not count or play again");
@@ -236,6 +243,8 @@ internal static class UiChecks
             await Task.Delay(50);
             Check(form.DeviceDpi == dpi && ((StationListBox)list).VisibleRows == 5 && list.ItemHeight == (int)Math.Round(37 * dpi / 96d),
                 $"DPI {dpi}: five visible rows keep original 37-DIP item height");
+            Check(form.Icon?.Width == (int)Math.Round(32 * dpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * dpi / 96d),
+                $"DPI {dpi}: window and tray icons use matching native-size frames, including 40px at 125%");
             Check(Math.Abs(Find<Label>(form, "NowPlayingTitle").Font.Size - 11 * dpi / 72f) < .1, $"DPI {dpi}: explicit label fonts scale with list typography");
             Check(list.ClientSize.Width == list.Width, $"DPI {dpi}: overlay does not reserve a non-client scrollbar column");
             var scaledTrack = stationList.ScrollbarTrackBounds;

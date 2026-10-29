@@ -1,8 +1,8 @@
 Radio Portable Full — Windows x64
 
-解壓縮完整資料夾，雙擊 Radio.exe 即可開啟。
+解壓縮完整資料夾，雙擊 RadioMini.exe 即可開啟。
 已內含 .NET runtime，不需要另外安裝 .NET、SDK、mpv 或 FFmpeg。
-請保留全部檔案，不要只複製 Radio.exe。
+請保留全部檔案，不要只複製 RadioMini.exe。
 
 需求：Windows 10 2004／Windows 11 x64，具備 Windows 媒體元件及網路。
 Windows N 版本仍需要系統的 Media Feature Pack；本包不會安裝或更改系統元件。
