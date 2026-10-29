@@ -8,13 +8,15 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        await CaptureFourArrowPreviewAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
             MediaEngineAudioPlayer.PlaybackStateForEvent(12) == AudioState.Buffering && MediaEngineAudioPlayer.PlaybackStateForEvent(13) == AudioState.Playing,
             "Source prefetch events cannot falsely replace actual playback state");
         var player = new FixturePlayer();
         var metadata = new FixtureMetadata();
         var resolver = new FixtureResolver();
-        using var form = new MainForm(player, false, true, resolver, metadata);
+        var settings = CatalogSettings();
+        using var form = new MainForm(player, false, true, resolver, metadata, settings);
         form.Show();
         await Task.Delay(100);
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
@@ -22,14 +24,15 @@ internal static class UiChecks
             "Visible app title and taskbar title show the actual app assembly version");
         try { PlayerBackend.Create(["--backend", "mpv"]); throw new Exception("Removed backend was accepted."); }
         catch (ArgumentException) { Check(true, "Removed backend is rejected rather than launching an external player"); }
-        Check(form.ClientSize == new Size(554, 233) && Find<ListBox>(form, "StationList").ItemHeight == 37,
-            "Approved 554 x 233 DIP window keeps original 37-DIP items");
+        Check(form.ClientSize == new Size(554, 271) && Find<ListBox>(form, "StationList").ItemHeight == 37,
+            "Search adds only 38 DIP in height; original widths, fonts and 31-DIP rows remain");
         Check(player.Plays == 0 && form.LatestStatus.State == AudioState.Stopped, "Startup never auto-plays");
         Capture(form, "artifacts/direction-c-dark-idle.png");
         var list = Find<ListBox>(form, "StationList");
         var play = Find<Button>(form, "PlayButton");
         var mute = Find<CheckBox>(form, "Mute");
         var volume = Find<TrackBar>(form, "Volume");
+        CheckNoStationFocusFrame((StationListBox)list, Find<StationSearchBox>(form, "StationSearch").Controls[0]);
         Check(list.Items.Count == 7, "Seven catalog stations remain available");
         var listWidth = list.Width;
         Check(((StationListBox)list).VisibleRows == 5, "List shows exactly five full rows");
@@ -46,6 +49,17 @@ internal static class UiChecks
         Check(form.LatestStatus.State == AudioState.Buffering, "Buffering reflects engine event");
         player.Emit(AudioState.Playing);
         await opening;
+        Check(settings.PlayCounts.GetValueOrDefault("bcc-ilike") == 1, "Only successful playback counts");
+        player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
+        Check(settings.PlayCounts["bcc-ilike"] == 1 && ((Station)list.Items[0]).Id == "pop-917", "Buffering/reconnect events neither count again nor reorder rows");
+        var search = Find<StationSearchBox>(form, "StationSearch");
+        var playsBeforeSearch = player.Plays;
+        search.Query = "107.7";
+        Check(list.Items.Count == 1 && form.PlayingStationId == "bcc-ilike" && player.Plays == playsBeforeSearch, "Frequency search never retunes playback");
+        search.Query = "does not exist";
+        Check(list.Items.Count == 0 && form.PlayingStationId == "bcc-ilike", "No results keep existing audio and information");
+        search.Query = "";
+        Check(list.Items.Count == 7 && player.Plays == playsBeforeSearch, "Clearing search restores full list silently");
         Check(form.PlayingStationId == "bcc-ilike" && metadata.Calls == 1, "Actual Playing event starts visible metadata fetch");
         var oldMetadata = metadata.Pending[0];
         list.SelectedIndex = 5;
@@ -188,10 +202,13 @@ internal static class UiChecks
         play.PerformClick();
         Check(form.LatestStatus.State == AudioState.Stopped && form.PlayingStationId is null && !form.MetadataRunning, "Stop disconnects and clears metadata");
         var retry = form.PlayForProbeAsync("best-989");
+        var countBeforeFailure = settings.PlayCounts.GetValueOrDefault("best-989");
         player.Emit(AudioState.Failed);
         await retry;
+        Check(settings.PlayCounts.GetValueOrDefault("best-989") == countBeforeFailure, "Failed stream never increments count");
         Check(form.LatestStatus.State == AudioState.Failed && play.AccessibleName == "播放", "Engine errors keep a usable retry button");
         var recovered = form.PlayForProbeAsync("best-989"); player.Emit(AudioState.Playing); await recovered;
+        Check(settings.PlayCounts["best-989"] == countBeforeFailure + 1, "New successful manual retry counts once");
         Check(form.LatestStatus.State == AudioState.Playing, "Playback can recover after error");
         resolver.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var slow = form.PlayForProbeAsync("kiss-999");
@@ -238,6 +255,8 @@ internal static class UiChecks
         Check(player.Disposed && metadata.Disposed, "Window close releases playback, metadata and tray ownership");
         CheckPreferences();
         await CheckStationInputAsync();
+        await CheckStationManagementAsync();
+        await CheckBatchStationManagementAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
@@ -256,6 +275,22 @@ internal static class UiChecks
     private static T Find<T>(Control root, string name) where T : Control => (T)root.Controls.Find(name, true).Single();
     private static void SendMouse(Control control, int message, int x, int y) =>
         SendMessage(control.Handle, message, message == 0x0202 ? IntPtr.Zero : new IntPtr(1), new IntPtr((x & 0xffff) | (y << 16)));
+    private static int HitTest(Form form, Point screenPoint) => (int)SendMessage(form.Handle, 0x0084, IntPtr.Zero,
+        new IntPtr((screenPoint.X & 0xffff) | ((screenPoint.Y & 0xffff) << 16)));
+    private static void CheckNoStationFocusFrame(StationListBox list, Control other)
+    {
+        list.SelectedIndex = 0; list.Focus(); list.Refresh();
+        using var focused = new Bitmap(list.Width, list.Height);
+        list.DrawToBitmap(focused, list.ClientRectangle);
+        other.Focus(); list.Refresh();
+        using var unfocused = new Bitmap(list.Width, list.Height);
+        list.DrawToBitmap(unfocused, list.ClientRectangle);
+        for (var y = 0; y < focused.Height; y++)
+            for (var x = 0; x < focused.Width; x++)
+                if (focused.GetPixel(x, y) != unfocused.GetPixel(x, y))
+                    throw new Exception($"Station focus changed row pixels: {list.Name} at {x},{y}");
+        Check(true, $"{list.Name}: focused selection adds no dotted frame");
+    }
     private static void CheckPreferences()
     {
         var folder = Path.GetFullPath($"artifacts/settings-tests-{Guid.NewGuid():N}");
@@ -269,11 +304,212 @@ internal static class UiChecks
         Check(ThemeSettings.Load(path) is { Volume: 73, Theme: "dark" }, "Changing theme does not reset persisted volume");
         File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"dark","Volume":200}""");
         Check(ThemeSettings.Load(path).Volume is null, "Invalid stored volume is ignored");
+        var settings = CatalogSettings(); settings.PlayCounts["pop-917"] = 12;
+        ThemeSettings.Save(settings, path);
+        ThemeSettings.Save(false, 62, path);
+        var restored = ThemeSettings.Load(path);
+        Check(restored.MyStationIds.SequenceEqual(settings.MyStationIds) && restored.PlayCounts["pop-917"] == 12 && restored.Volume == 62,
+            "Station membership and real counts survive saving preferences and reloading");
+        restored.MyStationIds.Clear(); ThemeSettings.Save(restored, path);
+        Check(ThemeSettings.Load(path).MyStationIds.Count == 0, "Explicit empty membership persists");
+        File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"light","Volume":45}""");
+        restored = ThemeSettings.Load(path);
+        Check(restored.Theme == "light" && restored.Volume == 45 && restored.MyStationIds.Count == 0, "Legacy settings migrate without inventing membership or losing preferences");
     }
+    private static async Task CaptureFourArrowPreviewAsync()
+    {
+        // Capture the real controls with isolated fixture membership, never user settings.
+        var settings = new ThemeSettings { MyStationIds = ["best-989", "pop-917", "ufo-921"] };
+        using var font = new Font("Microsoft JhengHei UI", 10);
+        using var dialog = new StationManagerDialog(new StationLibrary(settings), PlayerTheme.Dark, font);
+        dialog.Show(); await Task.Delay(30);
+        var available = Find<ListBox>(dialog, "AvailableStations");
+        var mine = Find<ListBox>(dialog, "MyStations");
+        available.SetSelected(0, true); available.SetSelected(2, true); mine.SetSelected(1, true);
+        Capture(dialog, "artifacts/station-manager-four-arrows.png");
+        dialog.Close();
+    }
+
+    private static ThemeSettings CatalogSettings() => new() { MyStationIds = StationCatalog.Load().Select(s => s.Id).ToList() };
+
+    private static async Task CheckStationManagementAsync()
+    {
+        var settings = new ThemeSettings();
+        var library = new StationLibrary(settings);
+        using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
+        {
+            dialog.Show(); await Task.Delay(30);
+            var available = Find<ListBox>(dialog, "AvailableStations");
+            var mine = Find<ListBox>(dialog, "MyStations");
+            var left = Find<StationSearchBox>(dialog, "AvailableSearch");
+            var right = Find<StationSearchBox>(dialog, "MySearch");
+            Check(available.Items.Count == 7 && mine.Items.Count == 0 && Find<Button>(dialog, "DoneButton").Enabled,
+                "Empty manager allows completion and exposes the real catalog");
+            Check(left.PointToScreen(new Point(left.Width, 0)).X == available.PointToScreen(new Point(((StationListBox)available).ItemContentWidth, 0)).X &&
+                right.PointToScreen(new Point(right.Width, 0)).X == mine.PointToScreen(new Point(((StationListBox)mine).ItemContentWidth, 0)).X,
+                "Both search pills align with the visible station rows' right edges");
+            var addButton = Find<PlayerButton>(dialog, "AddStation");
+            Check(addButton.Framed && addButton.Size == new Size(30, 30) && Find<PlayerButton>(dialog, "RemoveStation").Framed,
+                "Transfer arrows use compact framed 30-DIP buttons");
+            Check(HitTest(dialog, dialog.PointToScreen(new Point(100, dialog.ClientSize.Height - 10))) == 2,
+                "Dialog background exposes native caption hit testing for window dragging");
+            Check(HitTest(dialog, left.PointToScreen(new Point(left.Width / 2, left.Height / 2))) == 1 &&
+                HitTest(dialog, available.PointToScreen(new Point(50, 20))) == 1 &&
+                HitTest(dialog, addButton.PointToScreen(new Point(15, 15))) == 1,
+                "Search, station rows and transfer buttons are not draggable surfaces");
+            CheckNoStationFocusFrame((StationListBox)available, left.Controls[0]);
+            left.Query = "91.7"; right.Query = "KISS";
+            Check(available.Items.Count == 1 && mine.Items.Count == 0, "Manager searches are independent");
+            available.SelectedIndex = 0; Find<Button>(dialog, "AddStation").PerformClick();
+            Check(available.Items.Count == 0 && mine.Items.Count == 0 && library.Mine.Count == 1, "Adding moves membership, respecting both filters");
+            right.Query = "POP";
+            Check(mine.Items.Count == 1 && library.Count("pop-917") == 0, "Name search finds newly added station with zero count");
+            library.Add("pop-917"); Check(library.Mine.Count == 1, "Duplicate membership rejected");
+            mine.SelectedIndex = 0; Find<Button>(dialog, "RemoveStation").PerformClick();
+            Check(mine.Items.Count == 0 && available.Items.Count == 1, "Removing returns station to available catalog");
+            left.Query = "";
+            Capture(dialog, "artifacts/station-manager-empty.png");
+            CheckLayout(dialog);
+            foreach (var dpi in new[] { 120, 144, 192, 96 })
+            {
+                SimulateDpi(dialog, dpi, 293); await Task.Delay(30);
+                CheckLayout(dialog);
+                Check(new[] { "AddStation", "RemoveStation", "AddAllStations", "RemoveAllStations" }
+                    .Select(name => Find<Button>(dialog, name)).All(button => button.Width == (int)Math.Round(30 * dpi / 96d) && button.Height == (int)Math.Round(30 * dpi / 96d)),
+                    $"Manager DPI {dpi}: all four action buttons keep their compact square size");
+                var content = dialog.Controls[0];
+                var corner = (int)Math.Ceiling(12 * dpi / 96d);
+                Check(content.Left >= corner && content.Top >= corner &&
+                    content.Right <= dialog.ClientSize.Width - corner && content.Bottom <= dialog.ClientSize.Height - corner,
+                    $"Manager DPI {dpi}: child windows cannot overlap any rounded perimeter edge");
+                Check(dialog.Region!.IsVisible(dialog.ClientSize.Width - 20, dialog.ClientSize.Height / 2), $"Manager DPI {dpi}: rounded window region follows full dialog size");
+                Check(available.ItemHeight == (int)Math.Round(37 * dpi / 96d), $"Manager DPI {dpi}: row height scales without clipping search or actions");
+                Capture(dialog, $"artifacts/station-manager-dpi-{dpi}.png");
+            }
+            Find<Button>(dialog, "DoneButton").PerformClick();
+        }
+        library.Add("pop-917"); library.Add("ufo-921"); library.Add("bcc-ilike");
+        library.RecordSuccess("bcc-ilike");
+        Check(library.Mine[0].Id == "pop-917", "Successful play does not immediately sort");
+        library.Sort();
+        Check(library.Mine.Select(s => s.Id).SequenceEqual(new[] { "bcc-ilike", "pop-917", "ufo-921" }), "Sort is descending with stable ties");
+        library.Remove("bcc-ilike"); library.Add("bcc-ilike");
+        Check(library.Count("bcc-ilike") == 1, "Statistics survive removal and re-addition");
+
+        var player = new FixturePlayer();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata());
+        var opened = 0;
+        using var timer = new System.Windows.Forms.Timer { Interval = 30 };
+        timer.Tick += (_, _) =>
+        {
+            var manager = Application.OpenForms.OfType<StationManagerDialog>().FirstOrDefault();
+            if (manager is null) return;
+            timer.Stop(); opened++;
+            Check(manager.Modal && manager.Owner == form && form.Visible, "Manager is modal and retains main window behind it");
+            if (opened == 2)
+            {
+                var available = Find<ListBox>(manager, "AvailableStations"); available.SelectedIndex = 0;
+                Find<Button>(manager, "AddStation").PerformClick();
+                available.SelectedIndex = 0;
+                Capture(manager, "artifacts/station-manager-added.png");
+            }
+            if (opened == 3)
+            {
+                var mine = Find<ListBox>(manager, "MyStations"); mine.SelectedIndex = 0;
+                Find<Button>(manager, "RemoveStation").PerformClick();
+                Check(form.PlayingStationId == "pop-917", "Managing membership does not interrupt audio before completion");
+            }
+            Find<Button>(manager, "DoneButton").PerformClick();
+        };
+        form.Show(); await Task.Delay(150);
+        Check(opened == 0 && !Application.OpenForms.OfType<StationManagerDialog>().Any() && Find<Button>(form, "EmptyAddStation").Visible,
+            "First empty startup shows only the central plus, never opens management automatically");
+        Capture(form, "artifacts/station-first-start.png");
+        timer.Start(); Find<Button>(form, "EmptyAddStation").PerformClick();
+        Check(opened == 1 && Find<Button>(form, "EmptyAddStation").Visible && !Find<ListBox>(form, "StationList").Visible,
+            "Central plus opens manager; zero-station completion leaves only centered plus");
+        Capture(form, "artifacts/station-empty-player.png");
+        timer.Start(); Find<Button>(form, "EmptyAddStation").PerformClick();
+        Check(opened == 2 && Find<ListBox>(form, "StationList").Visible && !Find<Button>(form, "EmptyAddStation").Visible,
+            "Central plus reopens manager and adding restores normal player");
+        Capture(form, "artifacts/station-player-search.png");
+        var playback = form.PlayForProbeAsync("pop-917"); player.Emit(AudioState.Playing); await playback;
+        timer.Start(); Find<Button>(form, "ManageStations").PerformClick();
+        Check(opened == 3 && form.PlayingStationId is null && form.LatestStatus.State == AudioState.Stopped && Find<Button>(form, "EmptyAddStation").Visible,
+            "Completing removal of the playing station stops audio and returns to zero-state player");
+        form.Close();
+    }
+    private static async Task CheckBatchStationManagementAsync()
+    {
+        var settings = new ThemeSettings();
+        var library = new StationLibrary(settings);
+        using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
+        {
+            dialog.Show(); await Task.Delay(30);
+            var available = Find<StationListBox>(dialog, "AvailableStations");
+            var mine = Find<StationListBox>(dialog, "MyStations");
+            var left = Find<StationSearchBox>(dialog, "AvailableSearch");
+            var right = Find<StationSearchBox>(dialog, "MySearch");
+            var add = Find<Button>(dialog, "AddStation"); var remove = Find<Button>(dialog, "RemoveStation");
+            var addAll = Find<Button>(dialog, "AddAllStations"); var removeAll = Find<Button>(dialog, "RemoveAllStations");
+            void ClickRow(StationListBox list, int index)
+            {
+                var y = list.GetItemRectangle(index).Top + list.ItemHeight / 2;
+                SendMouse(list, 0x0201, 50, y); SendMouse(list, 0x0202, 50, y);
+            }
+            Check(!add.Enabled && !remove.Enabled && addAll.Enabled && !removeAll.Enabled,
+                "Selected and all-result actions have independent empty-state availability");
+            ClickRow(available, 0); ClickRow(available, 2);
+            Check(available.SelectedIndices.Cast<int>().SequenceEqual(new[] { 0, 2 }), "Plain clicks select multiple rows without Ctrl");
+            var selectedDrawn = new HashSet<int>();
+            void RecordSelection(object? sender, DrawItemEventArgs e) { if ((e.State & DrawItemState.Selected) != 0) selectedDrawn.Add(e.Index); }
+            available.DrawItem += RecordSelection; available.Refresh(); available.DrawItem -= RecordSelection;
+            Check(selectedDrawn.SetEquals(new[] { 0, 2 }), "All selected rows receive the selection background");
+            ClickRow(available, 0);
+            Check(available.SelectedIndices.Cast<int>().SequenceEqual(new[] { 2 }), "Clicking an already selected row toggles only that row off");
+            var beforeScroll = available.SelectedItems.Cast<Station>().Select(s => s.Id).ToArray();
+            SendMessage(available.Handle, 0x020A, new IntPtr(-120 << 16), IntPtr.Zero);
+            Check(available.SelectedItems.Cast<Station>().Select(s => s.Id).SequenceEqual(beforeScroll), "Multi-select scrolling does not alter selections");
+            available.TopIndex = 0;
+            ClickRow(available, 0); ClickRow(available, 1);
+            var notifications = 0; dialog.MembershipChanged += () => notifications++;
+            add.PerformClick();
+            Check(library.Mine.Count == 3 && library.Available.Count == 4 && notifications == 1,
+                "Single chevron transfers all selected rows in one batch");
+            mine.SetSelected(0, true); mine.SetSelected(1, true); remove.PerformClick();
+            Check(library.Mine.Count == 1 && notifications == 2, "Left single chevron removes multiple selected rows in one batch");
+            left.Query = "91.7"; addAll.PerformClick();
+            Check(library.Mine.Count == 2 && available.Items.Count == 0 && !addAll.Enabled,
+                "Double right chevron adds only visible search results without prior selection");
+            right.Query = "96.3"; removeAll.PerformClick();
+            Check(library.Mine.Count == 1 && library.Mine[0].Id == "pop-917" && !removeAll.Enabled,
+                "Double left chevron removes search results but preserves hidden stations");
+            left.Query = ""; addAll.PerformClick(); right.Query = "";
+            Check(library.Mine.Count == 7 && !addAll.Enabled && removeAll.Enabled, "Unfiltered add-all includes the entire remaining catalog without duplicates");
+            removeAll.PerformClick();
+            Check(library.Mine.Count == 0 && library.Available.Count == 7 && !removeAll.Enabled && Find<Button>(dialog, "DoneButton").Enabled,
+                "Unfiltered remove-all leaves valid zero-station membership and enabled completion");
+            Check(settings.PlayCounts.Values.All(count => count == 0), "Batch selection and transfer never increment playback statistics");
+            dialog.Close();
+        }
+
+        var seed = StationCatalog.Load()[0];
+        var catalog = Enumerable.Range(0, 120).Select(index => seed with { Id = $"fixture-{index}", Name = $"Fixture {index}" }).ToArray();
+        var largeSettings = new ThemeSettings { MyStationIds = catalog.Take(100).Select(s => s.Id).ToList(), PlayCounts = { ["fixture-0"] = 17 } };
+        var largeLibrary = new StationLibrary(largeSettings, catalog);
+        using var largeDialog = new StationManagerDialog(largeLibrary, PlayerTheme.Dark, SystemFonts.MessageBoxFont!);
+        largeDialog.Show(); await Task.Delay(30);
+        var largeNotifications = 0; largeDialog.MembershipChanged += () => largeNotifications++;
+        Find<Button>(largeDialog, "RemoveAllStations").PerformClick();
+        Check(largeLibrary.Mine.Count == 0 && largeLibrary.Available.Count == 120 && largeNotifications == 1 && largeLibrary.Count("fixture-0") == 17,
+            "One double-chevron click removes 100 stations, notifies once and retains lifetime statistics");
+        largeDialog.Close();
+    }
+
     private static async Task CheckStationInputAsync()
     {
         var player = new FixturePlayer();
-        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata());
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings());
         form.Show();
         await Task.Delay(30);
         var list = Find<ListBox>(form, "StationList");
@@ -312,9 +548,10 @@ internal static class UiChecks
         finally { graphics.ReleaseHdc(dc); }
         bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
     }
-    private static void SimulateDpi(Form form, int dpi)
+    private static void SimulateDpi(Form form, int dpi, int height = 271)
     {
-        var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + 554 * dpi / 96, Bottom = form.Top + 233 * dpi / 96 };
+        var width = form is StationManagerDialog ? 690 : 554;
+        var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + width * dpi / 96, Bottom = form.Top + height * dpi / 96 };
         var ptr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeRect>());
         try { Marshal.StructureToPtr(rect, ptr, false); SendMessage(form.Handle, 0x02E0, new IntPtr(dpi | dpi << 16), ptr); }
         finally { Marshal.FreeHGlobal(ptr); }

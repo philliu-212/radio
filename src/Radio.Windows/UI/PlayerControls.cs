@@ -18,7 +18,7 @@ internal static class RoundedShape
     }
 }
 
-internal enum PlayerGlyph { Play, Stop, Speaker, Muted, Theme, Minimize, Close, External, Radio }
+internal enum PlayerGlyph { Play, Stop, Speaker, Muted, Theme, Minimize, Close, External, Radio, Search, Plus, ArrowRight, ArrowLeft, Check, ListPlus, BookmarkCheck, ChevronRight, ChevronLeft, DoubleChevronRight, DoubleChevronLeft }
 
 internal static class GlyphPainter
 {
@@ -33,6 +33,32 @@ internal static class GlyphPainter
         using var brush = new SolidBrush(color);
         switch (glyph)
         {
+            case PlayerGlyph.ChevronRight:
+            case PlayerGlyph.ChevronLeft:
+            case PlayerGlyph.DoubleChevronRight:
+            case PlayerGlyph.DoubleChevronLeft:
+                if (glyph is PlayerGlyph.ChevronLeft or PlayerGlyph.DoubleChevronLeft)
+                { graphics.TranslateTransform(20, 0); graphics.ScaleTransform(-1, 1); }
+                foreach (var x in glyph is PlayerGlyph.DoubleChevronRight or PlayerGlyph.DoubleChevronLeft ? new[] { 3, 11 } : new[] { 7 })
+                    graphics.DrawLines(pen, new Point[] { new(x, 4), new(x + 5, 10), new(x, 16) });
+                break;
+            case PlayerGlyph.Search:
+                graphics.DrawEllipse(pen, 3, 3, 10, 10); graphics.DrawLine(pen, 12, 12, 17, 17); break;
+            case PlayerGlyph.Plus:
+                graphics.DrawLine(pen, 4, 10, 16, 10); graphics.DrawLine(pen, 10, 4, 10, 16); break;
+            case PlayerGlyph.ArrowRight:
+            case PlayerGlyph.ArrowLeft:
+                if (glyph == PlayerGlyph.ArrowLeft) { graphics.TranslateTransform(20, 0); graphics.ScaleTransform(-1, 1); }
+                graphics.DrawLine(pen, 3, 10, 17, 10);
+                graphics.DrawLines(pen, new Point[] { new(12, 5), new(17, 10), new(12, 15) }); break;
+            case PlayerGlyph.Check:
+                graphics.DrawLines(pen, new Point[] { new(4, 10), new(8, 14), new(16, 5) }); break;
+            case PlayerGlyph.ListPlus:
+                graphics.DrawLine(pen, 3, 4, 16, 4); graphics.DrawLine(pen, 3, 9, 10, 9); graphics.DrawLine(pen, 3, 14, 8, 14);
+                graphics.DrawLine(pen, 14, 10, 14, 18); graphics.DrawLine(pen, 10, 14, 18, 14); break;
+            case PlayerGlyph.BookmarkCheck:
+                graphics.DrawPolygon(pen, new Point[] { new(4, 2), new(16, 2), new(16, 18), new(10, 14), new(4, 18) });
+                graphics.DrawLines(pen, new Point[] { new(7, 8), new(9, 10), new(13, 6) }); break;
             case PlayerGlyph.Play: graphics.FillPolygon(brush, new Point[] { new(7, 4), new(16, 10), new(7, 16) }); break;
             case PlayerGlyph.Stop:
                 using (var path = RoundedShape.Create(new Rectangle(5, 5, 10, 10), 2)) graphics.DrawPath(pen, path);
@@ -82,6 +108,9 @@ internal sealed class PlayerButton : Button
     private PlayerTheme _theme = PlayerTheme.Dark;
     private bool _hover;
     public bool Primary { get; init; }
+    public bool Accent { get; init; }
+    public bool Circular { get; init; }
+    public bool Framed { get; init; }
     public PlayerGlyph Glyph { get; set; }
     public PlayerButton()
     {
@@ -96,14 +125,21 @@ internal sealed class PlayerButton : Button
     {
         e.Graphics.Clear(Parent?.BackColor ?? _theme.Canvas);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        if (Primary || _hover)
+        if (Primary || _hover || Framed)
         {
-            using var path = RoundedShape.Create(new Rectangle(0, 0, Width - 1, Height - 1), (int)(10 * (FindForm()?.DeviceDpi ?? DeviceDpi) / 96f));
-            using var brush = new SolidBrush(Primary ? (_hover ? ControlPaint.Light(_theme.Button, .1f) : _theme.Button) : _theme.Hover);
+            var scale = (FindForm()?.DeviceDpi ?? DeviceDpi) / 96f;
+            using var path = RoundedShape.Create(new Rectangle(0, 0, Width - 1, Height - 1), Circular ? Math.Min(Width, Height) / 2 : (int)((Framed ? 5 : 10) * scale));
+            using var brush = new SolidBrush(Framed ? (Enabled ? (_hover ? _theme.Selection : _theme.Playing) : _theme.Canvas)
+                : Primary ? (_hover ? ControlPaint.Light(_theme.Button, .1f) : _theme.Button) : _theme.Hover);
             e.Graphics.FillPath(brush, path);
+            if (Framed)
+            {
+                using var border = new Pen(Enabled ? Color.FromArgb(110, _theme.Accent) : _theme.Track, Math.Max(1, scale));
+                e.Graphics.DrawPath(border, path);
+            }
         }
         var size = (int)(18 * (FindForm()?.DeviceDpi ?? DeviceDpi) / 96f);
-        GlyphPainter.Draw(e.Graphics, Glyph, new Rectangle((Width - size) / 2, (Height - size) / 2, size, size), Primary ? _theme.ButtonText : _theme.Muted);
+        GlyphPainter.Draw(e.Graphics, Glyph, new Rectangle((Width - size) / 2, (Height - size) / 2, size, size), !Enabled ? (Framed ? _theme.Muted : _theme.Track) : Primary ? _theme.ButtonText : Accent ? _theme.Accent : _theme.Muted);
         if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -3, -3), _theme.Accent, BackColor);
     }
 }
@@ -221,7 +257,7 @@ internal sealed class StationListBox : ListBox
             var bounds = GetItemRectangle(index);
             if (bounds.Top >= ClientSize.Height) break;
             if (!bounds.IntersectsWith(e.ClipRectangle)) continue;
-            var state = index == SelectedIndex ? DrawItemState.Selected : DrawItemState.None;
+            var state = GetSelected(index) ? DrawItemState.Selected : DrawItemState.None;
             if (index == SelectedIndex && Focused && ShowFocusCues) state |= DrawItemState.Focus;
             OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, bounds, index, state, ForeColor, BackColor));
         }
@@ -346,7 +382,7 @@ internal sealed class StationListBox : ListBox
             _pointerInside = ClientRectangle.Contains(point);
             ScrollToMouse(point.Y); _draggingScrollbar = false; Capture = false; Invalidate(); m.Result = IntPtr.Zero; return;
         }
-        if (m.Msg is 0x0201 or 0x0203)
+        if (SelectionMode == SelectionMode.One && m.Msg is 0x0201 or 0x0203)
         {
             var index = IndexFromPoint(point);
             if (index >= 0)

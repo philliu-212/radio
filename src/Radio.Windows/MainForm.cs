@@ -11,6 +11,14 @@ internal sealed class MainForm : Form
     private readonly IAudioPlayer _player;
     private readonly IStationMetadataProvider _metadataProvider;
     private readonly StationListBox _stations = new() { Name = "StationList", AccessibleName = "電台清單", Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly StationSearchBox _search = new() { Name = "StationSearch", Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly PlayerButton _manage = new() { Name = "ManageStations", Glyph = PlayerGlyph.Plus, Accent = true, AccessibleName = "新增電台", Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly PlayerButton _emptyAdd = new() { Name = "EmptyAddStation", Glyph = PlayerGlyph.Plus, Primary = true, Circular = true, AccessibleName = "新增電台", Size = new Size(44, 44), Anchor = AnchorStyles.None };
+    private readonly Panel _content = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly ThemeSettings _settings;
+    private readonly StationLibrary _library;
+    private Control _normalBody = null!;
+    private bool _countPending;
     private readonly PlayerButton _transport = new() { Name = "PlayButton", Primary = true, Glyph = PlayerGlyph.Play, AccessibleName = "播放", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _themeButton = new() { Name = "ThemeToggle", Glyph = PlayerGlyph.Theme, AccessibleName = "切換深淺色模式", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _minimize = new() { Name = "MinimizeButton", Glyph = PlayerGlyph.Minimize, AccessibleName = "最小化", Dock = DockStyle.Fill, Margin = Padding.Empty };
@@ -64,13 +72,15 @@ internal sealed class MainForm : Form
     private static string AppTitle => $"Radio Mini v{AppVersion}";
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
-        IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null)
+        IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null)
     {
         _player = player;
         _resolver = resolver ?? new OfficialStreamResolver();
         _metadataProvider = metadataProvider ?? new OfficialMetadataProvider();
         _persistPreferences = persistPreferences;
-        _darkMode = darkOverride ?? ThemeSettings.LoadDarkMode();
+        _settings = settings ?? (persistPreferences ? ThemeSettings.Load() : new ThemeSettings());
+        _library = new StationLibrary(_settings);
+        _darkMode = darkOverride ?? _settings.Theme != "light";
         _theme = _darkMode ? PlayerTheme.Dark : PlayerTheme.Light;
         SuspendLayout();
         Text = AppTitle;
@@ -80,8 +90,8 @@ internal sealed class MainForm : Form
         MaximizeBox = false;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(554, 233);
-        MinimumSize = new Size(554, 233);
+        ClientSize = new Size(554, 271);
+        MinimumSize = new Size(554, 271);
         StartPosition = FormStartPosition.CenterScreen;
         DoubleBuffered = true;
 
@@ -94,15 +104,31 @@ internal sealed class MainForm : Form
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12));
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 54));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        _stations.DataSource = StationCatalog.Load();
         _stations.DisplayMember = nameof(Station.DisplayName);
+        RefreshStationList();
         _lastSelectedStationId = (_stations.SelectedItem as Station)?.Id;
-        body.Controls.Add(_stations, 0, 0);
+        var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
+        left.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 12, 8) };
+        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12)); tools.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22));
+        tools.Controls.Add(_search, 0, 0); tools.Controls.Add(_manage, 2, 0);
+        left.Controls.Add(tools, 0, 0); left.Controls.Add(_stations, 0, 1);
+        body.Controls.Add(left, 0, 0);
         // Only widen the gap: item -> 2 DIP -> 2-DIP scrollbar -> 8 DIP -> status card.
-        body.SetColumnSpan(_stations, 2);
+        body.SetColumnSpan(left, 2);
         body.Controls.Add(BuildPlayerCard(), 2, 0);
-        layout.Controls.Add(body, 0, 1);
+        _normalBody = body;
+        var empty = new TableLayoutPanel { Name = "EmptyPlayer", Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Margin = Padding.Empty };
+        empty.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); empty.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        empty.Controls.Add(_emptyAdd, 0, 0);
+        _content.Controls.Add(body); _content.Controls.Add(empty);
+        layout.Controls.Add(_content, 0, 1);
         Controls.Add(layout);
+        UpdateEmptyState();
+        _search.QueryChanged += () => { RefreshStationList(); RefreshPresentation(); };
+        _manage.Click += (_, _) => OpenStationManager(); _emptyAdd.Click += (_, _) => OpenStationManager();
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("開啟播放器", null, (_, _) => ShowPlayer());
@@ -125,6 +151,7 @@ internal sealed class MainForm : Form
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
         _stations.SelectedIndexChanged += (_, _) =>
         {
+            if (_suppressSelectionPlayback) return;
             var changed = SelectedStationId != _lastSelectedStationId;
             _lastSelectedStationId = SelectedStationId;
             RefreshPresentation();
@@ -140,7 +167,7 @@ internal sealed class MainForm : Form
         {
             if (e.KeyCode is Keys.Enter or Keys.Space) { e.SuppressKeyPress = true; await PlaySelectedAsync(); }
         };
-        if (_persistPreferences && ThemeSettings.Load().Volume is { } savedVolume) _player.Volume = savedVolume / 100d;
+        if (_persistPreferences && _settings.Volume is { } savedVolume) _player.Volume = savedVolume / 100d;
         _volume.Value = (int)Math.Round(_player.Volume * 100);
         _mute.Checked = _player.IsMuted;
         _volume.ValueChanged += (_, _) => { _player.Volume = _volume.Value / 100d; _tips.SetToolTip(_volume, $"音量 {_volume.Value}%"); };
@@ -172,6 +199,7 @@ internal sealed class MainForm : Form
         _tips.SetToolTip(_close, "退出 Radio Mini");
         _tips.SetToolTip(_official, "開啟電台官方網頁");
         _tips.SetToolTip(_mute, "靜音（保留音量）");
+        _tips.SetToolTip(_manage, "新增／管理電台"); _tips.SetToolTip(_emptyAdd, "新增電台");
         ApplyTheme();
         ResumeLayout(true);
     }
@@ -197,7 +225,8 @@ internal sealed class MainForm : Form
         _metadataTitle.Font = OwnFont(10.5f); _metadataPerson.Font = OwnFont(9.5f);
         ResumeLayout(true);
     }
-    private Station? DisplayedSource => _playingStation ?? _targetStation ?? _stations.SelectedItem as Station;
+    private Station? DisplayedSource => _playingStation ?? _targetStation ?? _stations.SelectedItem as Station
+        ?? _library.Mine.FirstOrDefault(station => station.Id == _lastSelectedStationId);
     private static string StationName(Station station) => station.Id == "bcc-ilike" ? "中廣流行網" : station.Name;
     private static Uri OfficialPage(Station station) => station.Id == "kiss-999"
         ? new Uri("https://www.kiss.com.tw/") : station.PageUrl;
@@ -267,7 +296,37 @@ internal sealed class MainForm : Form
     }
     private void SavePreferences()
     {
-        if (_persistPreferences) ThemeSettings.Save(_darkMode, _volume.Value);
+        _settings.Theme = _darkMode ? "dark" : "light"; _settings.Volume = _volume.Value;
+        if (_persistPreferences) ThemeSettings.Save(_settings);
+    }
+    private void RefreshStationList()
+    {
+        var selected = SelectedStationId ?? _lastSelectedStationId;
+        _suppressSelectionPlayback = true;
+        try
+        {
+            _stations.BeginUpdate(); _stations.Items.Clear();
+            _stations.Items.AddRange(_library.Mine.Where(s => StationLibrary.Matches(s, _search.Query)).Cast<object>().ToArray());
+            _stations.SelectedItem = _stations.Items.Cast<Station>().FirstOrDefault(s => s.Id == selected);
+            if (_stations.SelectedIndex < 0 && _stations.Items.Count > 0 && string.IsNullOrEmpty(_search.Query)) _stations.SelectedIndex = 0;
+            _lastSelectedStationId = SelectedStationId ?? selected;
+            _stations.EndUpdate(); _stations.Invalidate();
+        }
+        finally { _suppressSelectionPlayback = false; }
+    }
+    private void UpdateEmptyState()
+    {
+        var hasStations = _library.Mine.Count > 0;
+        _normalBody.Visible = hasStations;
+        _content.Controls["EmptyPlayer"]!.Visible = !hasStations;
+    }
+    internal void OpenStationManager()
+    {
+        using var dialog = new StationManagerDialog(_library, _theme, Font);
+        dialog.MembershipChanged += SavePreferences;
+        dialog.ShowDialog(this);
+        if (_targetStation is { } target && !_library.Mine.Any(s => s.Id == target.Id)) StopPlayback();
+        _library.Sort(); SavePreferences(); RefreshStationList(); UpdateEmptyState(); RefreshPresentation();
     }
     private void ApplyTheme()
     {
@@ -275,11 +334,12 @@ internal sealed class MainForm : Form
         _card.BackColor = _theme.Surface;
         _stations.BackColor = _theme.Canvas; _stations.ForeColor = _theme.Text;
         _stations.ScrollbarColor = _theme.Track;
+        _search.SetTheme(_theme);
         _title.ForeColor = _theme.Text; _frequency.ForeColor = _theme.Text; _fm.ForeColor = _theme.Muted;
         _metadataTitle.ForeColor = _theme.Text; _metadataPerson.ForeColor = _theme.Muted;
         _mute.Theme = _theme; _mute.BackColor = _theme.Surface;
         _volume.Theme = _theme; _volume.BackColor = _theme.Surface;
-        foreach (var button in new[] { _transport, _themeButton, _minimize, _close, _official }) button.SetTheme(_theme);
+        foreach (var button in new[] { _transport, _themeButton, _minimize, _close, _official, _manage, _emptyAdd }) button.SetTheme(_theme);
         RefreshPresentation(); Invalidate(true);
     }
 
@@ -302,18 +362,18 @@ internal sealed class MainForm : Form
         TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
             new Rectangle(bounds.Right - ScaleDip(40), bounds.Y, ScaleDip(34), bounds.Height), _theme.Muted,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
-        if (selected && _stations.Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(bounds, -2, -2), _theme.Accent, background);
     }
 
-    private Task TogglePlaybackAsync() => _active && _targetStation?.Id == SelectedStationId
+    private Task TogglePlaybackAsync() => _active && (_targetStation?.Id == SelectedStationId || SelectedStationId is null)
         ? StopFromButtonAsync() : PlaySelectedAsync();
     private Task StopFromButtonAsync() { StopPlayback(); return Task.CompletedTask; }
 
     private async Task PlaySelectedAsync()
     {
-        if (_stations.SelectedItem is not Station station || _closing) return;
+        var station = _stations.SelectedItem as Station ?? DisplayedSource;
+        if (station is null || _closing) return;
         StopPlayback();
-        _hasStarted = true; _active = true; _targetStation = station;
+        _hasStarted = true; _active = true; _targetStation = station; _countPending = true;
         var request = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
@@ -343,7 +403,7 @@ internal sealed class MainForm : Form
 
     private void FailPlayback(string message)
     {
-        _active = false; _playingStation = null; CancelMetadata();
+        _active = false; _countPending = false; _playingStation = null; CancelMetadata();
         _player.Stop();
         UpdateStatus(new PlaybackStatus(AudioState.Failed, message));
     }
@@ -351,7 +411,7 @@ internal sealed class MainForm : Form
     {
         var request = _playRequest; _playRequest = null; _started = null;
         request?.Cancel();
-        _active = false; _playingStation = null; _targetStation = null;
+        _active = false; _countPending = false; _playingStation = null; _targetStation = null;
         CancelMetadata();
         _player.Stop();
         UpdateStatus(new PlaybackStatus(AudioState.Stopped, "已停止；再次播放將連接當下直播。"));
@@ -372,12 +432,16 @@ internal sealed class MainForm : Form
         if (status.State == AudioState.Playing)
         {
             _playingStation = _targetStation;
+            if (_countPending && _targetStation is { } successfulStation)
+            {
+                _countPending = false; _library.RecordSuccess(successfulStation.Id); SavePreferences();
+            }
             _started?.TrySetResult();
             StartMetadata();
         }
         else if (status.State is AudioState.Failed or AudioState.Stopped)
         {
-            _active = false; _playingStation = null; CancelMetadata(); _started?.TrySetResult();
+            _active = false; _countPending = false; _playingStation = null; CancelMetadata(); _started?.TrySetResult();
         }
         _trayTransport.Text = _active ? "停止" : "播放";
         _tray.Text = _active && _targetStation is { } station ? $"{AppTitle} · {StationName(station)}" : AppTitle;
@@ -401,7 +465,7 @@ internal sealed class MainForm : Form
         _status.ForeColor = _latestStatus.State == AudioState.Playing ? _theme.Accent
             : _latestStatus.State == AudioState.Failed ? _theme.Warning : _theme.Muted;
         _tips.SetToolTip(_status, _latestStatus.Message);
-        var stop = _active && _targetStation?.Id == SelectedStationId;
+        var stop = _active && (_targetStation?.Id == SelectedStationId || SelectedStationId is null);
         _transport.Glyph = stop ? PlayerGlyph.Stop : PlayerGlyph.Play;
         _transport.AccessibleName = stop ? "停止" : "播放";
         _tips.SetToolTip(_transport, stop ? "停止直播" : "播放選取的電台");
