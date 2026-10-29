@@ -21,6 +21,13 @@ internal sealed class MainForm : Form
     private bool _countPending;
     private readonly PlayerButton _transport = new() { Name = "PlayButton", Primary = true, Glyph = PlayerGlyph.Play, AccessibleName = "播放", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _themeButton = new() { Name = "ThemeToggle", Glyph = PlayerGlyph.Theme, AccessibleName = "切換深淺色模式", Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly PlayerButton _updateButton = new() { Name = "UpdateButton", Glyph = PlayerGlyph.Download, Accent = true, AccessibleName = "下載並更新", Dock = DockStyle.Fill, Margin = Padding.Empty, Visible = false };
+    private readonly CancellationTokenSource _updateLifetime = new();
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 60 * 60 * 1000 };
+    private readonly PortableUpdate _updater = new();
+    private UpdateRelease? _availableUpdate;
+    private bool _checkingUpdate;
+    private bool _installingUpdate;
     private readonly PlayerButton _minimize = new() { Name = "MinimizeButton", Glyph = PlayerGlyph.Minimize, AccessibleName = "最小化", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _close = new() { Name = "CloseButton", Glyph = PlayerGlyph.Close, AccessibleName = "關閉", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _official = new() { Name = "OfficialLink", Glyph = PlayerGlyph.External, AccessibleName = "電台官網", Dock = DockStyle.Fill, Margin = Padding.Empty };
@@ -186,6 +193,8 @@ internal sealed class MainForm : Form
         Application.AddMessageFilter(_volumeWheel);
         _mute.CheckedChanged += (_, _) => { _player.IsMuted = _mute.Checked; _mute.Invalidate(); };
         _themeButton.Click += (_, _) => ToggleTheme();
+        _updateButton.Click += async (_, _) => await InstallUpdateAsync();
+        _updateTimer.Tick += async (_, _) => await CheckForUpdateAsync();
         _minimize.Click += (_, _) => { WindowState = FormWindowState.Minimized; Hide(); };
         _close.Click += (_, _) => Close();
         _official.Click += (_, _) =>
@@ -267,10 +276,11 @@ internal sealed class MainForm : Form
 
     private Control BuildHeader()
     {
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 5, RowCount = 1 };
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 6, RowCount = 1 };
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 17));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
         for (var i = 0; i < 3; i++) header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 25));
         var logo = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
         logo.Paint += (_, e) => GlyphPainter.Draw(e.Graphics, PlayerGlyph.Radio,
@@ -278,7 +288,8 @@ internal sealed class MainForm : Form
         var brand = TextLabel("AppTitle"); brand.Text = AppName; brand.Font = OwnFont(11, family: "Segoe UI");
         _tips.SetToolTip(brand, AppTitle);
         header.Controls.Add(logo, 0, 0); header.Controls.Add(brand, 1, 0);
-        header.Controls.Add(_themeButton, 2, 0); header.Controls.Add(_minimize, 3, 0); header.Controls.Add(_close, 4, 0);
+        header.Controls.Add(_updateButton, 2, 0);
+        header.Controls.Add(_themeButton, 3, 0); header.Controls.Add(_minimize, 4, 0); header.Controls.Add(_close, 5, 0);
         header.MouseDown += DragWindow; logo.MouseDown += DragWindow; brand.MouseDown += DragWindow;
         return header;
     }
@@ -374,7 +385,7 @@ internal sealed class MainForm : Form
         _metadataTitle.ForeColor = _theme.Text; _metadataPerson.ForeColor = _theme.Muted;
         _mute.Theme = _theme; _mute.BackColor = _theme.Surface;
         _volume.Theme = _theme; _volume.BackColor = _theme.Surface;
-        foreach (var button in new[] { _transport, _themeButton, _minimize, _close, _official, _manage, _emptyAdd }) button.SetTheme(_theme);
+        foreach (var button in new[] { _transport, _updateButton, _themeButton, _minimize, _close, _official, _manage, _emptyAdd }) button.SetTheme(_theme);
         RefreshPresentation(); Invalidate(true);
     }
 
@@ -609,6 +620,11 @@ internal sealed class MainForm : Form
         base.OnShown(e); ApplyDpiTypography(); UpdateWindowShape(); RefreshPresentation();
         if (_startupHandled) return;
         _startupHandled = true;
+        if (_persistPreferences && PortableUpdate.IsPortable)
+        {
+            _updateTimer.Start();
+            _ = CheckForUpdateAsync();
+        }
         if (!_settings.StationSetupCompleted && _library.Mine.Count == 0)
             BeginInvoke(() => { if (!_closing) OpenStationManager(); });
         else if (_autoPlayOnStartup && _stations.Items.Count > 0)
@@ -629,6 +645,63 @@ internal sealed class MainForm : Form
             if (_stations.Items[i] is Station station && station.Id == lastId) return i;
         return 0;
     }
+
+    private async Task CheckForUpdateAsync()
+    {
+        if (_checkingUpdate || _installingUpdate || _closing) return;
+        _checkingUpdate = true;
+        try
+        {
+            var release = await _updater.CheckAsync(_updateLifetime.Token);
+            if (!_closing) ShowAvailableUpdate(release);
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or InvalidOperationException or FormatException or KeyNotFoundException or IOException or InvalidDataException or UnauthorizedAccessException)
+        { /* Offline/rate-limited checks must not interrupt radio playback. Retry next hour. */ }
+        finally { _checkingUpdate = false; }
+    }
+
+    internal void ShowAvailableUpdate(UpdateRelease? release)
+    {
+        _availableUpdate = release;
+        _updateButton.Visible = release is not null;
+        ((TableLayoutPanel)_updateButton.Parent!).ColumnStyles[2].Width = release is null ? 0 : ScaleDip(25);
+        if (release is not null) _tips.SetToolTip(_updateButton, $"下載並更新至 v{release.Version.ToString(3)}（完成後重新啟動）");
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (_availableUpdate is not { } release || _installingUpdate) return;
+        _installingUpdate = true;
+        _updateButton.Enabled = false;
+        _updateButton.AccessibleName = "正在下載更新";
+        try
+        {
+            var progress = new Progress<int>(percent =>
+            {
+                if (!_closing) _tips.SetToolTip(_updateButton, $"正在下載更新 {percent}%");
+            });
+            var work = await _updater.PrepareAsync(release, progress, _updateLifetime.Token);
+            if (_closing) return;
+            _tips.SetToolTip(_updateButton, "正在準備重新啟動…");
+            await PortableUpdate.StartInstallerAsync(work, _updateLifetime.Token);
+            if (!_closing) Close();
+        }
+        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or NotSupportedException or System.Text.Json.JsonException or KeyNotFoundException or FormatException)
+        {
+            if (!_closing)
+            {
+                _tips.SetToolTip(_updateButton, "更新失敗，點擊重試");
+                MessageBox.Show(this, $"更新未完成，原版本仍可使用。\n{error.Message}\n\n也可從 {PortableUpdate.Repository}/releases/latest 手動下載。",
+                    AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+        finally
+        {
+            _installingUpdate = false;
+            if (!_closing) { _updateButton.Enabled = true; _updateButton.AccessibleName = "下載並更新"; }
+        }
+    }
     private void DragWindow(object? sender, MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left) return;
@@ -645,6 +718,7 @@ internal sealed class MainForm : Form
     {
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
+        _updateTimer.Stop(); _updateTimer.Dispose(); _updateLifetime.Cancel(); _updater.Dispose();
         _volumeWheel.Dispose();
         SavePreferences();
         _playRequest?.Cancel(); _playRequest = null;

@@ -18,7 +18,7 @@ internal static class RoundedShape
     }
 }
 
-internal enum PlayerGlyph { Play, Stop, Speaker, Muted, Theme, Minimize, Close, External, Radio, Search, Plus, ArrowRight, ArrowLeft, Check, ListPlus, BookmarkCheck, ChevronRight, ChevronLeft, DoubleChevronRight, DoubleChevronLeft }
+internal enum PlayerGlyph { Play, Stop, Speaker, Muted, Theme, Minimize, Close, External, Radio, Search, Plus, ArrowRight, ArrowLeft, Check, ListPlus, BookmarkCheck, ChevronRight, ChevronLeft, DoubleChevronRight, DoubleChevronLeft, Download }
 
 internal static class GlyphPainter
 {
@@ -73,6 +73,11 @@ internal static class GlyphPainter
                 graphics.DrawArc(pen, 4, 4, 11, 11, 30, 285);
                 graphics.DrawArc(pen, 9, 1, 9, 10, 90, 140);
                 graphics.DrawLine(pen, 15, 2, 15, 4); graphics.DrawLine(pen, 18, 5, 16, 6);
+                break;
+            case PlayerGlyph.Download:
+                graphics.DrawLine(pen, 10, 3, 10, 12);
+                graphics.DrawLines(pen, new Point[] { new(6, 9), new(10, 13), new(14, 9) });
+                graphics.DrawLines(pen, new Point[] { new(4, 14), new(4, 17), new(16, 17), new(16, 14) });
                 break;
             case PlayerGlyph.Minimize: graphics.DrawLine(pen, 6, 10, 14, 10); break;
             case PlayerGlyph.Close: graphics.DrawLine(pen, 6, 6, 14, 14); graphics.DrawLine(pen, 14, 6, 6, 14); break;

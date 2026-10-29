@@ -9,6 +9,8 @@ $version = [string]($projectXml.Project.PropertyGroup.Version | Where-Object { $
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a major.minor.patch Version in the app project.' }
 $name = 'Radio-Portable-v' + $version + '-' + $mode + '-win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $output = Join-Path $ProjectRoot ('dist/' + $name)
+$updateOutput = Join-Path $ProjectRoot ('dist/Radio-Update-v' + $version + '-win-x64')
+if (Test-Path (Join-Path $updateOutput "Radio-Update-v$version-$mode-win-x64.json")) { throw 'Update assets for this version/mode already exist. Move the previous output before rebuilding.' }
 if (Test-Path $output) { throw 'Output already exists. No files have been replaced.' }
 $arguments = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained',
     $SelfContained.IsPresent.ToString().ToLowerInvariant(), '-o', $output,
@@ -41,6 +43,7 @@ $unexpected = if (!$SelfContained) { Get-ChildItem -LiteralPath $output -File | 
 } }
 if ($unexpected) { throw 'Unexpected package files found. Inspect the output before distributing it.' }
 if (Test-Path (Join-Path $output 'mpv.exe')) { throw 'Portable packages must not contain mpv.' }
+& (Join-Path $PSScriptRoot 'New-UpdateAssets.ps1') -InputDirectory $output -OutputDirectory $updateOutput -Version $version -Mode $mode
 Compress-Archive -LiteralPath $output -DestinationPath ($output + '.zip')
 $size = (Get-ChildItem -LiteralPath $output -File -Recurse | Measure-Object Length -Sum).Sum
 Write-Output "Portable folder: $output"

@@ -21,6 +21,16 @@ internal static class UiChecks
         using var form = new MainForm(player, false, true, resolver, metadata, settings, autoPlayOnStartup: false);
         form.Show();
         await Task.Delay(100);
+        var update = Find<PlayerButton>(form, "UpdateButton");
+        var themePosition = Find<PlayerButton>(form, "ThemeToggle").Left;
+        Check(!update.Visible, "Update arrow is hidden without a newer version");
+        form.ShowAvailableUpdate(new UpdateRelease(new Version(0, 5, 0), new Uri("https://example.invalid/update.json"), 100, new string('a', 64), "Lite"));
+        Check(update.Visible && update.Glyph == PlayerGlyph.Download && update.AccessibleName == "下載並更新" && update.Width > 0,
+            "New release shows accessible download arrow");
+        Check(Find<PlayerButton>(form, "ThemeToggle").Left == themePosition, "Update arrow does not displace window controls");
+        Capture(form, "artifacts/update-available.png");
+        form.ShowAvailableUpdate(null);
+        Check(!update.Visible, "No release restores original header layout");
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
         Check(form.Text == "Radio Mini" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
             "Native taskbar/window title and header show only Radio Mini without a version");

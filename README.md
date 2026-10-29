@@ -42,6 +42,7 @@ dotnet run --project src/Radio.Windows
 - 懸浮右側狀態區任何位置皆可用滾輪調整音量，每格 5%，不需聚焦滑桿；保留靜音狀態。區塊內僅音量與官網顯示懸浮文字。右上角最小化按鈕縮到系統匣，點工作列則正常最小化／還原，皆繼續播放；關閉視窗會退出，還原不重複自動播放。
 - 來源解析或播放失敗時可手動重試，或開啟官方頁面。本原型不做應用程式層自動重連，不繞過地區／播放時限／存取限制。
 - 音量、深／淺色偏好、我的電台及播放次數保存在程式同資料夾的 `radio.settings.json`；舊版設定保留音量與主題，沒有選台資料則進入首次管理流程。尚未加入 Windows 開機自啟、錄音或時移。
+- Portable 版啟動及每小時背景檢查正式新版；有可驗證的同類型 Lite／Full 更新清單時，右上角才顯示下載箭頭。兩模式共用**檔案級增量更新**：只下載新增／修改／缺少的檔案，未變動 runtime 不重抓，不退回整包下載；只刪除上版清單追蹤且未被手動修改的過時檔案。點擊後驗證並重啟，保留原設定；下載期間仍可收聽。開發／probe／離線測試不檢查更新。首次從 v0.4.0 升級仍需手動下載，詳細限制見 [portable 更新說明](docs/portable.md#一鍵更新)。
 
 ## 測試與量測
 
@@ -51,6 +52,7 @@ dotnet run --project src/Radio.Windows
 dotnet run --project tests/Radio.Core.Tests -c Release
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --ui
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --updates
 dotnet build src/Radio.Windows
 powershell -NoProfile -File scripts/Smoke-Test.ps1
 ```
