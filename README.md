@@ -2,9 +2,9 @@
 
 個人用、低資源優先的 Windows 網路廣播**驗證原型**。原生 WinForms 介面，直接播放官方音訊來源，不啟動瀏覽器、WebView 或音訊代理伺服器。
 
-使用 Windows 系統音訊：六台走純音訊模式，Hit FM 走相容路徑，不需要外部播放器。mpv 後端、安裝工具及二進位已移除；[舊實驗紀錄](docs/mpv.md)僅供歷史參考。
+使用 Windows 系統音訊：六台走純音訊模式，Hit FM 走相容路徑，不需要外部播放器。mpv 後端、安裝工具及二進位已移除。
 
-**可雙擊的 Lite／Full portable 包**見 [docs/portable.md](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。現採使用者指定的 [Direction C 橫向 UI](docs/ui-direction-c.md)，支援深／淺色與展開時的官方節目／歌曲資訊。
+**可雙擊的 Lite／Full portable 包**見 [封裝指引](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。沿用深／淺色極簡橫向 UI，電台管理規格見 [station-management.md](docs/station-management.md)，官方來源與 metadata 限制見 [sources.md](docs/sources.md)。
 
 ## 電台
 
@@ -67,9 +67,11 @@ Start-Process $exe -ArgumentList '--probe --seconds 15 --output artifacts/probe.
 
 新量測包含播放器程序與它擁有的播放子程序，不含共享 Windows 音訊服務或 GPU 記憶體；短測不代表長期穩定，也不代表已確認實際音訊可聽。沒有相同來源的瀏覽器基準前，不宣稱相對瀏覽器的節省比例。
 
-舊 Windows 相容路徑的實測與 KISS 影像軌問題見 [docs/experiments.md](docs/experiments.md)；當時的 [mpv 對照實驗](docs/mpv.md)中，KISS 的合計 private 記憶體約從 137 降至 51 MiB。相容路徑本身的影像開銷未消除，但不再是 KISS 的預設播放路徑。
+舊版效能數據、已移除的 mpv 比較與早期 UI 草稿已移出現行文件，可從 Git 歷史查閱；不把舊短測當成現行版本的驗收結果。長時間播放、實體多螢幕、斷網與睡眠恢復仍須另外驗證。
 
-後續已新增 Windows Media Engine 純音訊路徑，第一階段 portable 包 KISS 的 private 約為 **26 MiB（Lite）／26 MiB（Full）**，不需 mpv。最新 Direction C 包的顯示／系統匣／還原對照與封裝大小見 [portable 實測](docs/portable.md)。
+## 文件與規範
+
+`docs` 不是播放器執行時的資料目錄；保留少量維護文件是為了記錄官方來源與封裝限制。`scripts/Publish-Release.ps1` 會複製其中兩份 portable 說明（擇一）及第三方授權文字，這些檔案不可直接刪除。開發規範應隨專案根目錄 `AGENTS.md` 一起 commit；使用支援該檔案的 agent 在專案內開發時會讀取，但它不是 GitHub 權限或分支保護。
 
 ## 分層與手機版
 
@@ -78,7 +80,7 @@ src/Radio.Core/       # 電台 JSON、官方來源解析、IStreamResolver / IAu
 src/Radio.Windows/    # WinForms、Windows 原生 MediaPlayer／HLS 引擎、線上實驗
 tests/Radio.Core.Tests/
 tests/Radio.Windows.Tests/ # 本機靜音 WAV／UI 回歸測試
-docs/                # 來源調查與實驗紀錄
+docs/                # 現行來源、管理規格、封裝指引及封裝用說明／授權
 artifacts/           # 本機實驗產物（不進 Git）
 ```
 

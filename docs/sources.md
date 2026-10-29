@@ -21,7 +21,24 @@
 - KISS 的官方頁面請求曾出現 403，另一次請求可正常取得；網路可達性不代表所有裝置／時間都能播放。拒絕回應時應正常報錯。
 - 靜態頁面正規表示式及官方 API 均可能變動；應維護小型、可離線測試的解析器，而不是啟動瀏覽器抓整站。
 - Windows 使用系統 HLS 引擎。`DesiredSeekableWindowSize` 是向系統提出的請求，不是整個程序記憶體的硬上限，也不代表所有來源都會遵守。
-- KISS 的 HLS 在實驗中回報 `AudioOnlyPlayback=false`、影像尺寸 `640x360`。即使不顯示畫面，原生引擎仍有額外成本。嘗試將 `MediaPlaybackItem.VideoTracks.SelectedIndex` 設為 `-1` 會被本機 Windows 引擎以 `0x80070057` 拒絕，該實驗程式已移除。不要聲稱目前已停用影像解碼或只下載音訊。
+- 現行 `SystemAudioPlayer` 對 Hit FM 採 Windows MediaPlayer 相容路徑，其餘採 Media Engine `AUDIOONLY` 模式；不再提供 mpv。KISS 的來源可包含影像，不能把舊相容路徑的成本當成現行預設結果；傳輸是否只有音訊仍需另外量測，不從「畫面沒有影像」推論。
+
+## Metadata 維護摘要
+
+既有實作在 `src/Radio.Core/StationMetadata.cs` 與 `BestRadioSchedule.cs`，不是每台都提供即時歌名：
+
+| 電台 | 已採用的官方資料 | 顯示限制 |
+| --- | --- | --- |
+| 好事989 | `http://www.bestradio.com.tw/schedule989.htm` 的節目表 | 依台灣時間及週別計算，標示「節目表」，不是即時 on-air 確認；代班可能不同，不猜 DJ 或歌名。 |
+| KISS | `https://www.kiss.com.tw/templates/header_songlist_json.php?area=0` 的 `now_playing` | 保留「即將播放」；驗證回傳時間，拒絕／過期就留白，不承諾與聲音同步。 |
+| 中廣流行網 | 上表的官方 ChannelInfoBat API | 依頻道識別取得節目／DJ，不把節目名當歌名。 |
+| Hit FM 北部 | `https://www.hitoradio.com/newweb/onair_n_ajax_cname.php` | 僅使用已驗證 DJ 姓名，HTML 當文字資料解析，不渲染。 |
+| POP、飛碟、RFI Monde | 未接入已驗證的 metadata provider | 缺資料時留白，不從排行榜、名稱、宣傳文字或任意 StreamTitle 猜測正在播的歌曲。 |
+
+- 僅對實際播放中的受支援電台在視窗可見時查詢；切台、停止、最小化會取消額外查詢，舊回應不能套到新電台。
+- 查詢逾時、格式變動、HTTP 拒絕或 TTL 到期只清除附加資訊，不影響音訊；節目表快取也須依目前時間重新計算時段。
+- 不另開音訊串流做 metadata 偵測、不執行網站腳本、不為文字查詢引入瀏覽器或繞過 403／驗證碼。
+- 舊抽樣與實驗細節保留於 Git 歷史，不作為目前直播內容或穩定性的證據。離線測試見 `tests/Radio.Core.Tests/MetadataChecks.cs`。
 
 ## 參考
 
