@@ -1,5 +1,8 @@
 using Radio.Windows.UI;
 using System.Runtime.InteropServices;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Security.Cryptography;
 
 namespace Radio.Windows.Tests;
 
@@ -7,6 +10,14 @@ internal static class IconChecks
 {
     public static void Run()
     {
+        using var pngStream = typeof(IconChecks).Assembly.GetManifestResourceStream("Radio.Windows.Tests.RadioMini.png")!;
+        using var pngCopy = new MemoryStream(); pngStream.CopyTo(pngCopy);
+        Check(Convert.ToHexString(SHA256.HashData(pngCopy.ToArray())) == "5F8A8AE795B4CB8D8D26354A3BCC9AA3EC23F3C0B6C35AAF935CC4573DC52DA5",
+            "PNG is byte-for-byte the user-supplied radio.png, with original colors and alpha");
+        pngCopy.Position = 0;
+        using var png = new Bitmap(pngCopy);
+        Check(png.Size == new Size(1254, 1254), "Source PNG retains its original 1254px resolution and composition");
+        CheckTransparency(png, "Source PNG");
         using var stream = typeof(MainForm).Assembly.GetManifestResourceStream(AppIcon.ResourceName)!;
         using var copy = new MemoryStream(); stream.CopyTo(copy);
         var bytes = copy.ToArray();
@@ -27,6 +38,7 @@ internal static class IconChecks
             using var bitmap = new Bitmap(frameStream);
             Check(bitmap.Width == expected && bitmap.Height == expected, $"ICO {expected}px PNG decodes correctly");
             CheckTransparency(bitmap, $"ICO {expected}px");
+            CheckResizedSource(png, bitmap);
             // .NET 8's multi-frame selector treats the 0-byte directory width
             // inconsistently for 256px. Verify the Windows PNG decoder directly.
             var payload = bytes.AsSpan(offset, length).ToArray();
@@ -39,10 +51,6 @@ internal static class IconChecks
             }
             finally { DestroyIcon(handle); }
         }
-        using var pngStream = typeof(IconChecks).Assembly.GetManifestResourceStream("Radio.Windows.Tests.RadioMini.png")!;
-        using var png = new Bitmap(pngStream);
-        Check(png.Size == new Size(512, 512), "Transparent source PNG is 512px square");
-        CheckTransparency(png, "Source PNG");
         using var owned = AppIcon.Load();
         using var ownedBitmap = owned.ToBitmap();
         CheckTransparency(ownedBitmap, "Detached runtime icon after resource stream closes");
@@ -59,19 +67,33 @@ internal static class IconChecks
         Check(bitmap.GetPixel(0, 0).A == 0 && bitmap.GetPixel(bitmap.Width - 1, 0).A == 0 &&
             bitmap.GetPixel(0, bitmap.Height - 1).A == 0 && bitmap.GetPixel(bitmap.Width - 1, bitmap.Height - 1).A == 0,
             $"{name}: all corners are truly transparent");
-        var transparent = 0; var opaque = 0; var antialiased = 0;
+        var transparent = 0; var visible = 0; var antialiased = 0;
         for (var y = 0; y < bitmap.Height; y++)
             for (var x = 0; x < bitmap.Width; x++)
             {
                 var pixel = bitmap.GetPixel(x, y);
                 if (pixel.A == 0) transparent++;
-                else if (pixel.A == 255) opaque++;
-                else antialiased++;
-                if (pixel.A > 32 && (pixel.R < 240 || pixel.G < 240 || pixel.B < 240))
-                    throw new Exception($"{name}: visible black matte at {x},{y}");
+                else { visible++; if (pixel.A < 255) antialiased++; }
             }
-        Check(transparent > bitmap.Width * bitmap.Height / 3 && opaque > 0 && antialiased > 0,
-            $"{name}: transparent background, white artwork and alpha antialiasing survive");
+        Check(transparent > bitmap.Width * bitmap.Height / 3 && visible > 0 && antialiased > 0,
+            $"{name}: supplied transparency and antialiased artwork survive without forced opacity");
+    }
+
+    private static void CheckResizedSource(Bitmap source, Bitmap actual)
+    {
+        using var expected = new Bitmap(actual.Width, actual.Height, PixelFormat.Format32bppArgb);
+        using (var graphics = Graphics.FromImage(expected))
+        {
+            graphics.Clear(Color.Transparent); graphics.CompositingMode = CompositingMode.SourceCopy;
+            graphics.CompositingQuality = CompositingQuality.HighQuality;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            graphics.DrawImage(source, new Rectangle(0, 0, expected.Width, expected.Height));
+        }
+        for (var y = 0; y < actual.Height; y++)
+            for (var x = 0; x < actual.Width; x++)
+                if (expected.GetPixel(x, y).ToArgb() != actual.GetPixel(x, y).ToArgb())
+                    throw new Exception($"ICO {actual.Width}px changes source RGBA beyond resizing at {x},{y}");
+        Check(true, $"ICO {actual.Width}px exactly matches color-and-alpha-preserving source resize");
     }
 
     private static void Check(bool valid, string name)
