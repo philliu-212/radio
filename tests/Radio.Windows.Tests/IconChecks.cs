@@ -1,0 +1,85 @@
+using Radio.Windows.UI;
+using System.Runtime.InteropServices;
+
+namespace Radio.Windows.Tests;
+
+internal static class IconChecks
+{
+    public static void Run()
+    {
+        using var stream = typeof(MainForm).Assembly.GetManifestResourceStream(AppIcon.ResourceName)!;
+        using var copy = new MemoryStream(); stream.CopyTo(copy);
+        var bytes = copy.ToArray();
+        using var reader = new BinaryReader(new MemoryStream(bytes));
+        Check(reader.ReadUInt16() == 0 && reader.ReadUInt16() == 1 && reader.ReadUInt16() == 8,
+            "ICO contains exactly eight Windows icon frames");
+        foreach (var expected in new[] { 16, 20, 24, 32, 48, 64, 128, 256 })
+        {
+            var width = reader.ReadByte(); var height = reader.ReadByte();
+            Check((width == 0 ? 256 : width) == expected && (height == 0 ? 256 : height) == expected,
+                $"ICO includes {expected}px frame");
+            reader.ReadByte(); reader.ReadByte();
+            Check(reader.ReadUInt16() == 1 && reader.ReadUInt16() == 32, $"ICO {expected}px declares 32-bit alpha");
+            var length = reader.ReadInt32(); var offset = reader.ReadInt32();
+            Check(offset >= 6 + 8 * 16 && length > 0 && offset <= bytes.Length - length,
+                $"ICO {expected}px payload stays inside resource");
+            using var frameStream = new MemoryStream(bytes, offset, length);
+            using var bitmap = new Bitmap(frameStream);
+            Check(bitmap.Width == expected && bitmap.Height == expected, $"ICO {expected}px PNG decodes correctly");
+            CheckTransparency(bitmap, $"ICO {expected}px");
+            // .NET 8's multi-frame selector treats the 0-byte directory width
+            // inconsistently for 256px. Verify the Windows PNG decoder directly.
+            var payload = bytes.AsSpan(offset, length).ToArray();
+            var handle = CreateIconFromResourceEx(payload, (uint)payload.Length, true, 0x00030000, expected, expected, 0);
+            Check(handle != IntPtr.Zero, $"Windows decodes the {expected}px icon payload");
+            try
+            {
+                using var native = Icon.FromHandle(handle);
+                Check(native.Size == new Size(expected, expected), $"Native Windows icon is {expected}px");
+            }
+            finally { DestroyIcon(handle); }
+        }
+        using var pngStream = typeof(IconChecks).Assembly.GetManifestResourceStream("Radio.Windows.Tests.RadioMini.png")!;
+        using var png = new Bitmap(pngStream);
+        Check(png.Size == new Size(512, 512), "Transparent source PNG is 512px square");
+        CheckTransparency(png, "Source PNG");
+        using var owned = AppIcon.Load();
+        using var ownedBitmap = owned.ToBitmap();
+        CheckTransparency(ownedBitmap, "Detached runtime icon after resource stream closes");
+
+        var exe = Path.ChangeExtension(typeof(MainForm).Assembly.Location, ".exe");
+        Check(File.Exists(exe), "Built Windows apphost is available for EXE icon verification");
+        using var executableIcon = Icon.ExtractAssociatedIcon(exe)!;
+        using var executableBitmap = executableIcon.ToBitmap();
+        CheckTransparency(executableBitmap, "Compiled EXE icon");
+    }
+
+    private static void CheckTransparency(Bitmap bitmap, string name)
+    {
+        Check(bitmap.GetPixel(0, 0).A == 0 && bitmap.GetPixel(bitmap.Width - 1, 0).A == 0 &&
+            bitmap.GetPixel(0, bitmap.Height - 1).A == 0 && bitmap.GetPixel(bitmap.Width - 1, bitmap.Height - 1).A == 0,
+            $"{name}: all corners are truly transparent");
+        var transparent = 0; var opaque = 0; var antialiased = 0;
+        for (var y = 0; y < bitmap.Height; y++)
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.A == 0) transparent++;
+                else if (pixel.A == 255) opaque++;
+                else antialiased++;
+                if (pixel.A > 32 && (pixel.R < 240 || pixel.G < 240 || pixel.B < 240))
+                    throw new Exception($"{name}: visible black matte at {x},{y}");
+            }
+        Check(transparent > bitmap.Width * bitmap.Height / 3 && opaque > 0 && antialiased > 0,
+            $"{name}: transparent background, white artwork and alpha antialiasing survive");
+    }
+
+    private static void Check(bool valid, string name)
+    {
+        if (!valid) throw new Exception(name);
+        Console.WriteLine($"PASS: {name}");
+    }
+
+    [DllImport("user32.dll")] private static extern IntPtr CreateIconFromResourceEx(byte[] bits, uint size, bool icon, uint version, int width, int height, uint flags);
+    [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr icon);
+}

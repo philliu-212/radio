@@ -4,6 +4,8 @@
 
 使用 Windows 系統音訊：六台走純音訊模式，Hit FM 走相容路徑，不需要外部播放器。mpv 後端、安裝工具及二進位已移除。
 
+應用程式圖示使用指定線稿製作的透明 PNG／多尺寸 ICO，套用至 EXE、視窗／工作列及系統匣；來源、透明處理與重建方式見 [圖示資產說明](src/Radio.Windows/Assets/README.md)。
+
 **可雙擊的 Lite／Full portable 包**見 [封裝指引](docs/portable.md)；兩者都不附 mpv，Full 內含 runtime、不必另裝 .NET。沿用深／淺色極簡橫向 UI，電台管理規格見 [station-management.md](docs/station-management.md)，官方來源與 metadata 限制見 [sources.md](docs/sources.md)。
 
 ## 電台

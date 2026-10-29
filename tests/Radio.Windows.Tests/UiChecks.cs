@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        IconChecks.Run();
         await CaptureFourArrowPreviewAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
             MediaEngineAudioPlayer.PlaybackStateForEvent(12) == AudioState.Buffering && MediaEngineAudioPlayer.PlaybackStateForEvent(13) == AudioState.Playing,
@@ -24,6 +25,8 @@ internal static class UiChecks
             "Header hides version while native window title retains the actual assembly version");
         var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
+        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(form.Icon is not null && ReferenceEquals(form.Icon, tray.Icon), "Window, taskbar and tray share the owned custom app icon");
         try { PlayerBackend.Create(["--backend", "mpv"]); throw new Exception("Removed backend was accepted."); }
         catch (ArgumentException) { Check(true, "Removed backend is rejected rather than launching an external player"); }
         Check(form.ClientSize == new Size(554, 271) && Find<ListBox>(form, "StationList").ItemHeight == 37,

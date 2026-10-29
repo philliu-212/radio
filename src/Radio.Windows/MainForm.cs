@@ -34,6 +34,7 @@ internal sealed class MainForm : Form
     private readonly VolumeSlider _volume = new() { Name = "Volume", AccessibleName = "音量", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerCard _card = new() { Name = "PlaybackCard", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly ToolTip _tips = new() { ShowAlways = true };
+    private readonly Icon _appIcon = AppIcon.Load();
     private readonly List<Font> _fonts = [];
     private readonly Dictionary<(float Size, FontStyle Style, string Family, int Dpi), Font> _fontCache = [];
     private readonly NotifyIcon _tray;
@@ -90,6 +91,7 @@ internal sealed class MainForm : Form
         _theme = _darkMode ? PlayerTheme.Dark : PlayerTheme.Light;
         SuspendLayout();
         Text = AppTitle;
+        Icon = _appIcon;
         Font = OwnFont(10);
         _frequencyFont = OwnFont(8.5f, family: "Segoe UI");
         FormBorderStyle = FormBorderStyle.None;
@@ -152,7 +154,7 @@ internal sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(AppTitle).Enabled = false;
         menu.Items.Add("退出", null, (_, _) => Close());
-        _tray = new NotifyIcon { Icon = SystemIcons.Application, Text = AppTitle, ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Icon = _appIcon, Text = AppTitle, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowPlayer();
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
         _stations.SelectedIndexChanged += (_, _) =>
@@ -618,7 +620,7 @@ internal sealed class MainForm : Form
         _playRequest?.Cancel(); _playRequest = null;
         CancelMetadata(); _player.StatusChanged -= UpdateStatus;
         _player.Dispose(); _metadataProvider.Dispose();
-        _tray.Visible = false; _tray.ContextMenuStrip?.Dispose(); _tray.Dispose(); _tips.Dispose();
+        _tray.Visible = false; _tray.ContextMenuStrip?.Dispose(); _tray.Dispose(); _tips.Dispose(); _appIcon.Dispose();
     }
     protected override void Dispose(bool disposing)
     {
