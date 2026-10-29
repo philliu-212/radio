@@ -655,7 +655,7 @@ internal sealed class MainForm : Form
             var release = await _updater.CheckAsync(_updateLifetime.Token);
             if (!_closing) ShowAvailableUpdate(release);
         }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or InvalidOperationException or FormatException or KeyNotFoundException)
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or InvalidOperationException or FormatException or KeyNotFoundException or IOException or InvalidDataException or UnauthorizedAccessException)
         { /* Offline/rate-limited checks must not interrupt radio playback. Retry next hour. */ }
         finally { _checkingUpdate = false; }
     }
@@ -687,7 +687,7 @@ internal sealed class MainForm : Form
             if (!_closing) Close();
         }
         catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or NotSupportedException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or NotSupportedException or System.Text.Json.JsonException or KeyNotFoundException or FormatException)
         {
             if (!_closing)
             {

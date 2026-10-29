@@ -9,32 +9,65 @@ $backup = Join-Path $Work 'backup'
 $payload = Join-Path $Work 'payload'
 $log = Join-Path $Work 'result.txt'
 $playerExited = $false
+function Assert-NoLink([string]$Path) {
+    while ($Path) {
+        if ((Test-Path -LiteralPath $Path) -and ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Update path contains a link.'
+        }
+        $Path = Split-Path -Parent $Path
+    }
+}
+function Assert-File([string]$Path, $Entry) {
+    Assert-NoLink $Path
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-Item -LiteralPath $Path).Length -ne $Entry.size -or
+        (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ine $Entry.sha256) {
+        throw "File changed or corrupt: $($Entry.path)"
+    }
+}
 try {
     $parent = Get-Process -Id $ParentId -ErrorAction Stop
-    # Hold the process handle before signalling readiness, avoiding PID reuse.
     $null = $parent.Handle
-    if (!(Test-Path -LiteralPath (Join-Path $payload 'RadioMini.exe'))) { throw 'Missing payload.' }
-    $files = @(Get-ChildItem -LiteralPath $payload -Recurse -File)
+    $plan = Get-Content -LiteralPath (Join-Path $Work 'plan.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $files = @($plan.files)
+    $seen = @{}
+    if ($files.Count -lt 5 -or $files.Count -gt 10001) { throw 'Invalid update plan.' }
     foreach ($file in $files) {
-        if ($file.Name -ieq 'radio.settings.json') { throw 'Settings must not be updated.' }
-        $relative = $file.FullName.Substring($payload.Length).TrimStart('\')
-        $target = Join-Path $Destination $relative
-        # Do not follow junctions/symlinks in a portable folder.
-        $check = $target
-        while ($check) {
-            if ((Test-Path -LiteralPath $check) -and ((Get-Item -LiteralPath $check -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                throw 'Update destination contains a link.'
-            }
-            $check = Split-Path -Parent $check
-        }
+        $parts = $file.path.Split('/')
+        if (!$file.path -or $file.path.Length -gt 240 -or $seen.ContainsKey($file.path) -or
+            $file.sha256 -notmatch '^[a-fA-F0-9]{64}$' -or $file.size -lt 0 -or
+            @($parts | Where-Object { $_ -notmatch '^[A-Za-z0-9_.-]+$' -or $_ -in @('.', '..', 'radio.settings.json') -or
+                $_.EndsWith('.') -or $_ -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)' }).Count) { throw 'Unsafe update plan.' }
+        $seen[$file.path] = $true
+        $target = Join-Path $Destination $file.path
+        Assert-NoLink $target
+        if ($file.expectMissing -and (Test-Path -LiteralPath $target)) { throw "New file now conflicts with local data: $($file.path)" }
+        if ($file.delete) {
+            if ($file.path -ieq 'radio.update-manifest.json') { throw 'Cannot delete installed manifest.' }
+            if (Test-Path -LiteralPath $target) { Assert-File $target $file }
+        } elseif ($file.changed) { Assert-File (Join-Path $payload $file.path) $file }
+        # Unchanged files were hashed by the app; revalidate them after exit,
+        # not twice before exit. Audio continues during preparation.
+    }
+    foreach ($required in @('RadioMini.exe', 'RadioMini.dll', 'RadioMini.deps.json', 'RadioMini.runtimeconfig.json', 'Radio.Core.dll', 'radio.update-manifest.json')) {
+        if (!@($files | Where-Object { $_.path -ieq $required -and !$_.delete }).Count) { throw 'Incomplete update plan.' }
     }
     Set-Content -LiteralPath (Join-Path $Work 'ready') -Value 'ready'
     if (!$parent.WaitForExit(60000)) { throw 'Player did not exit; update cancelled.' }
     $playerExited = $true
+    # Validate the complete target version again after exit, including unchanged
+    # local files and old hashes of deletions. Do not install a partial version.
     foreach ($file in $files) {
-        $relative = $file.FullName.Substring($payload.Length).TrimStart('\')
-        $target = Join-Path $Destination $relative
-        $saved = Join-Path $backup $relative
+        $target = Join-Path $Destination $file.path
+        Assert-NoLink $target
+        if ($file.expectMissing -and (Test-Path -LiteralPath $target)) { throw "New file now conflicts with local data: $($file.path)" }
+        if ($file.delete) {
+            if (Test-Path -LiteralPath $target) { Assert-File $target $file }
+        } elseif ($file.changed) { Assert-File (Join-Path $payload $file.path) $file }
+        else { Assert-File $target $file }
+    }
+    foreach ($file in @($files | Where-Object { $_.changed -or $_.delete })) {
+        $target = Join-Path $Destination $file.path
+        $saved = Join-Path $backup $file.path
         $existed = Test-Path -LiteralPath $target
         if ($existed) {
             New-Item -ItemType Directory -Path (Split-Path -Parent $saved) -Force | Out-Null
@@ -42,8 +75,11 @@ try {
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
         $changed.Add(@{ Target = $target; Saved = $saved; Existed = $existed })
-        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+        if ($file.delete) {
+            if ($existed) { Remove-Item -LiteralPath $target -Force }
+        } else { Copy-Item -LiteralPath (Join-Path $payload $file.path) -Destination $target -Force }
     }
+    foreach ($file in @($files | Where-Object { $_.changed -and !$_.delete })) { Assert-File (Join-Path $Destination $file.path) $file }
     Set-Content -LiteralPath $log -Value 'Update completed.'
     if (!$NoRestart) { Start-Process -FilePath (Join-Path $Destination 'RadioMini.exe') -WorkingDirectory $Destination -ErrorAction Stop | Out-Null }
 } catch {
@@ -52,7 +88,7 @@ try {
         $item = $changed[$i]
         try {
             if ($item.Existed) { Copy-Item -LiteralPath $item.Saved -Destination $item.Target -Force }
-            else { Remove-Item -LiteralPath $item.Target -Force -ErrorAction Stop }
+            elseif (Test-Path -LiteralPath $item.Target) { Remove-Item -LiteralPath $item.Target -Force -ErrorAction Stop }
         } catch { $details += "`r`nRollback: " + $_.Exception.Message }
     }
     Set-Content -LiteralPath $log -Value $details
@@ -63,7 +99,5 @@ try {
     exit 1
 }
 # Cleanup cannot turn a successful restart into a rollback of running binaries.
-# Remove only this update's own files; retain the small diagnostic log.
 Remove-Item -LiteralPath $payload -Recurse -Force -ErrorAction SilentlyContinue
 if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue }
-Remove-Item -LiteralPath (Join-Path $Work 'update.zip') -Force -ErrorAction SilentlyContinue

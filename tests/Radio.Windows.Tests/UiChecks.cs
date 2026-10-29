@@ -24,7 +24,7 @@ internal static class UiChecks
         var update = Find<PlayerButton>(form, "UpdateButton");
         var themePosition = Find<PlayerButton>(form, "ThemeToggle").Left;
         Check(!update.Visible, "Update arrow is hidden without a newer version");
-        form.ShowAvailableUpdate(new UpdateRelease(new Version(0, 5, 0), new Uri("https://example.invalid/update.zip"), 100, new string('a', 64)));
+        form.ShowAvailableUpdate(new UpdateRelease(new Version(0, 5, 0), new Uri("https://example.invalid/update.json"), 100, new string('a', 64), "Lite"));
         Check(update.Visible && update.Glyph == PlayerGlyph.Download && update.AccessibleName == "下載並更新" && update.Width > 0,
             "New release shows accessible download arrow");
         Check(Find<PlayerButton>(form, "ThemeToggle").Left == themePosition, "Update arrow does not displace window controls");
