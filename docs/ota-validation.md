@@ -8,19 +8,19 @@
 
 | 項目 | Lite | Full |
 | --- | ---: | ---: |
-| 1.1 ZIP 大小 | 6,343,828 bytes | 76,313,404 bytes |
-| 1.1 背景下載＋ZIP 驗證 | 0.369 秒 | 0.896 秒 |
-| 1.1 背景解壓＋逐檔驗證＋準備 | 0.610 秒 | 9.765 秒 |
-| 1.2 ZIP 大小 | 6,343,825 bytes | 76,313,410 bytes |
-| 1.2 背景下載＋ZIP 驗證 | 0.365 秒 | 0.865 秒 |
-| 1.2 背景解壓＋準備＋淘汰舊 pending | 0.633 秒 | 10.420 秒 |
-| 要求重啟→1.2 主視窗可見 | 2.178 秒 | 2.041 秒 |
-| 初始磁碟用量（含測試設定／狀態） | 22,732,956 bytes | 190,842,180 bytes |
-| 1.1 備妥後 | 45,371,984 bytes | 381,346,911 bytes |
-| 1.2 取代 1.1 pending 後 | 45,372,946 bytes | 381,410,072 bytes |
-| 切換完成（保留回復版本） | 45,373,530 bytes | 381,410,656 bytes |
+| 1.1 ZIP 大小 | 6,344,671 bytes | 76,314,233 bytes |
+| 1.1 背景下載＋ZIP 驗證 | 0.401 秒 | 1.274 秒 |
+| 1.1 背景解壓＋逐檔驗證＋準備 | 0.663 秒 | 11.989 秒 |
+| 1.2 ZIP 大小 | 6,344,671 bytes | 76,314,245 bytes |
+| 1.2 背景下載＋ZIP 驗證 | 0.361 秒 | 0.888 秒 |
+| 1.2 背景解壓＋準備＋淘汰舊 pending | 0.633 秒 | 10.930 秒 |
+| 要求重啟→1.2 主視窗可見 | 2.173 秒 | 2.190 秒 |
+| 初始磁碟用量（含測試設定／狀態） | 22,735,004 bytes | 190,844,228 bytes |
+| 1.1 備妥後 | 45,375,568 bytes | 381,350,495 bytes |
+| 1.2 取代 1.1 pending 後 | 45,376,530 bytes | 381,413,656 bytes |
+| 切換完成（保留回復版本） | 45,377,114 bytes | 381,414,239 bytes |
 
-Launcher 本身為 89,088 bytes，含既有多尺寸圖示；不打包另一份 .NET runtime。
+Launcher 本身為 89,600 bytes，含既有多尺寸圖示；不打包另一份 .NET runtime。
 
 測試結果兩模式均通過：
 
@@ -32,13 +32,15 @@ Launcher 本身為 89,088 bytes，含既有多尺寸圖示；不打包另一份 
 
 量測方式：背景兩個時間由 `Stopwatch` 的 Downloading／Preparing／Ready 狀態量測；網路 body bytes 由 loopback server 記錄。重啟時間從腳本發出與 UI 相同的 Launcher 重啟請求並關閉舊視窗，到新程序 MainWindowHandle 非零；不含使用者操作時間，不是渲染第一幀的精密追蹤，也不是實體人工按鍵計時。磁碟為檔案長度總和，不是 NTFS allocation／尖峰空間；準備過程短暫含 ZIP＋解壓資料，尖峰可能較高。
 
-本機原始報告（不進 Git）：`artifacts/ota-integration-*/result.json`，最終跨版測試 Lite `3166065476d5401982b88a13e2910d49`、Full `d3a645e1ff5b416d8cd20602ae437b63`。另跑正常 1.0→1.1，Lite `b26270c8e63240e8be2987b7f8088f6b`、Full `3a1d42988b4d4262bdd09498b75ed3b6` 皆通過（重啟分別 2.126／2.045 秒）。
+本機原始報告（不進 Git）：`artifacts/ota-integration-*/result.json`，以實作提交 `45f71e8` 重建後，最終跨版測試 Lite `05b66463eff243a7b16b4b3772de51e8`、Full `75bc67b5775a4e118755dbe76c569ab9`。另跑正常 1.0→1.1，Lite `d8b1e7effa9445b08848dba3c1aaf500`、Full `60d289c6488e477e80920f4644422c59` 皆通過（重啟分別 2.169／2.097 秒）。
+
+正式打包腳本亦在 `45f71e8` 上本機執行（未發行）：Lite ZIP `20261029-222836` 為 6,350,505 bytes，Full ZIP `20261029-222853` 為 76,345,073 bytes；兩包解壓後從根 Launcher 啟動、舊根設定自動複製進 data、原檔保留、設定保存、正常退出與 Full 包內 runtime 均通過。`SHA256SUMS-v0.5.0.txt` 兩筆和實際 ZIP 雜湊一致。與上表測試包不同，正式候選包含使用說明與原始授權通知。
 
 中途曾有失敗輪次：腳本以不允許 delete sharing 的讀取和 state 原子替換衝突；無效 PE 在 Windows loader 可能阻塞 Process.Start。已改成允許原子替換的讀取、等待 Launcher 完成確認再進下一步，並於 Launcher 預檢 PE header／x64 machine、抑制 OS 載入錯誤視窗，加入有界診斷紀錄。上表及四輪結果都是修正後重跑，沒有把失敗輪次寫成通過。
 
 ## 離線／UI 回歸
 
-`--updates` 已驗證兩模式的數值版本比較、排除 draft／prerelease、準備不切換 Current、Latest Wins、取消舊下載、去重、指數退避、中斷後重試、新版失敗保留舊 Pending、ZIP hash／路徑穿越／重複檔／symlink／schema／清單不完整防護、跨程序鎖、原子 state 備份與未確認 Trial 的設定回復。
+`--updates` 已驗證兩模式的數值版本比較、排除 draft／prerelease、準備不切換 Current、Latest Wins、取消舊下載／關閉時取消、去重、指數退避、中斷後重試、新版失敗保留舊 Pending、ZIP hash／路徑穿越／重複檔／symlink／schema／清單不完整防護、排他檔案鎖、原子 state 備份與未確認 Trial 的設定回復。另實際執行遷移腳本，驗證 schema 1 收藏／音量／主題／次數原封複製且不覆寫目的設定，及未支援 schema 99 明確拒絕。
 
 小型假包的數值保存在 `artifacts/ota-offline-metrics.json`，**不當成上表的真實 Portable 數值**。既有 UI／核心／系統音訊回歸與最終實作提交的驗證結果另外列在 PR。
 
