@@ -13,11 +13,11 @@ internal static class IconChecks
     {
         using var pngStream = typeof(IconChecks).Assembly.GetManifestResourceStream("Radio.Windows.Tests.RadioMini.png")!;
         using var pngCopy = new MemoryStream(); pngStream.CopyTo(pngCopy);
-        Check(Convert.ToHexString(SHA256.HashData(pngCopy.ToArray())) == "5F8A8AE795B4CB8D8D26354A3BCC9AA3EC23F3C0B6C35AAF935CC4573DC52DA5",
-            "PNG is byte-for-byte the user-supplied radio.png, with original colors and alpha");
+        Check(Convert.ToHexString(SHA256.HashData(pngCopy.ToArray())) == "105A4D1A4384E6E8785256D64EBD0ED9992DC066391E197CAB28A3101D9C9162",
+            "PNG is byte-for-byte the user-cropped radio_1100.png, with original colors and alpha");
         pngCopy.Position = 0;
         using var png = new Bitmap(pngCopy);
-        Check(png.Size == new Size(1254, 1254), "Source PNG retains its original 1254px resolution and composition");
+        Check(png.Size == new Size(1100, 1100), "Source PNG retains its cropped 1100px resolution and composition");
         CheckTransparency(png, "Source PNG");
         var artwork = ArtworkBounds(png);
         using var stream = typeof(MainForm).Assembly.GetManifestResourceStream(AppIcon.ResourceName)!;
