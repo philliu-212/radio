@@ -36,7 +36,7 @@ if ($SelfContained) {
     }
 }
 $unexpected = if (!$SelfContained) { Get-ChildItem -LiteralPath $output -File | Where-Object {
-    $_.Name -notin @('Radio.exe', 'Radio.dll', 'Radio.deps.json', 'Radio.runtimeconfig.json', 'Radio.Core.dll',
+    $_.Name -notin @('RadioMini.exe', 'RadioMini.dll', 'RadioMini.deps.json', 'RadioMini.runtimeconfig.json', 'Radio.Core.dll',
         'Microsoft.Windows.SDK.NET.dll', 'WinRT.Runtime.dll', 'READ-ME.txt', 'THIRD-PARTY-NOTICES.txt')
 } }
 if ($unexpected) { throw 'Unexpected package files found. Inspect the output before distributing it.' }
@@ -45,6 +45,6 @@ Compress-Archive -LiteralPath $output -DestinationPath ($output + '.zip')
 $size = (Get-ChildItem -LiteralPath $output -File -Recurse | Measure-Object Length -Sum).Sum
 Write-Output "Portable folder: $output"
 Write-Output "ZIP: $output.zip"
-Write-Output ('Unpacked files: {0:N2} MiB. Double-click Radio.exe.' -f ($size / 1MB))
+Write-Output ('Unpacked files: {0:N2} MiB. Double-click RadioMini.exe.' -f ($size / 1MB))
 if ($SelfContained) { Write-Output "Includes .NET Desktop Runtime $($runtime.version); no separate .NET install required." }
 else { Write-Output 'Lite package requires an existing .NET 8 Desktop Runtime.' }

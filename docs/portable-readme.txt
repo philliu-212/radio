@@ -1,8 +1,8 @@
 Radio Portable Lite — Windows x64
 
-解壓縮整個資料夾，雙擊 Radio.exe 即可開啟。
+解壓縮整個資料夾，雙擊 RadioMini.exe 即可開啟。
 不用安裝本程式、不需要 mpv／FFmpeg，也不需要 SDK 或命令列。
-請保留資料夾內全部檔案，不要只複製 Radio.exe。
+請保留資料夾內全部檔案，不要只複製 RadioMini.exe。
 
 需求：
 - Windows 10 2004／Windows 11 x64，具備 Windows 媒體元件。

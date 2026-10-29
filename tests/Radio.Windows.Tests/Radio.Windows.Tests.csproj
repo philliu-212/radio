@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Radio.Windows/Radio.Windows.csproj" />
+    <EmbeddedResource Include="../../src/Radio.Windows/Assets/RadioMini.png" LogicalName="Radio.Windows.Tests.RadioMini.png" />
   </ItemGroup>
 </Project>

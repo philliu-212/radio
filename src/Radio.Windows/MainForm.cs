@@ -34,6 +34,8 @@ internal sealed class MainForm : Form
     private readonly VolumeSlider _volume = new() { Name = "Volume", AccessibleName = "音量", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerCard _card = new() { Name = "PlaybackCard", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly ToolTip _tips = new() { ShowAlways = true };
+    private Icon _appIcon = AppIcon.Load();
+    private Icon _trayIcon = AppIcon.Load(16);
     private readonly List<Font> _fonts = [];
     private readonly Dictionary<(float Size, FontStyle Style, string Family, int Dpi), Font> _fontCache = [];
     private readonly NotifyIcon _tray;
@@ -73,7 +75,8 @@ internal sealed class MainForm : Form
     internal string DisplayedStation => _title.Text;
     internal bool MetadataRunning => _metadataRequest is not null;
     internal static string AppVersion => typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-    private static string AppTitle => $"Radio Mini v{AppVersion}";
+    private const string AppName = "Radio Mini";
+    private static string AppTitle => $"{AppName} v{AppVersion}";
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
@@ -89,7 +92,8 @@ internal sealed class MainForm : Form
         _darkMode = darkOverride ?? _settings.Theme != "light";
         _theme = _darkMode ? PlayerTheme.Dark : PlayerTheme.Light;
         SuspendLayout();
-        Text = AppTitle;
+        Text = AppName;
+        Icon = _appIcon;
         Font = OwnFont(10);
         _frequencyFont = OwnFont(8.5f, family: "Segoe UI");
         FormBorderStyle = FormBorderStyle.None;
@@ -152,7 +156,7 @@ internal sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(AppTitle).Enabled = false;
         menu.Items.Add("退出", null, (_, _) => Close());
-        _tray = new NotifyIcon { Icon = SystemIcons.Application, Text = AppTitle, ContextMenuStrip = menu, Visible = true };
+        _tray = new NotifyIcon { Icon = _trayIcon, Text = AppName, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowPlayer();
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
         _stations.SelectedIndexChanged += (_, _) =>
@@ -238,6 +242,22 @@ internal sealed class MainForm : Form
         _frequency.Font = OwnFont(16, FontStyle.Bold, "Segoe UI"); _fm.Font = OwnFont(9, family: "Segoe UI");
         _metadataTitle.Font = OwnFont(10.5f); _metadataPerson.Font = OwnFont(9.5f);
         ResumeLayout(true);
+        UpdateWindowIcons();
+    }
+    private void UpdateWindowIcons()
+    {
+        if (_resourcesDisposed || _tray is null) return;
+        var windowSize = ScaleDip(32); var traySize = ScaleDip(16);
+        if (_appIcon.Width != windowSize)
+        {
+            var next = AppIcon.Load(windowSize); var previous = _appIcon;
+            Icon = next; _appIcon = next; previous.Dispose();
+        }
+        if (_trayIcon.Width != traySize)
+        {
+            var next = AppIcon.Load(traySize); var previous = _trayIcon;
+            _tray.Icon = next; _trayIcon = next; previous.Dispose();
+        }
     }
     private Station? DisplayedSource => _playingStation ?? _targetStation ?? _stations.SelectedItem as Station
         ?? _library.Mine.FirstOrDefault(station => station.Id == _lastSelectedStationId);
@@ -255,7 +275,7 @@ internal sealed class MainForm : Form
         var logo = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
         logo.Paint += (_, e) => GlyphPainter.Draw(e.Graphics, PlayerGlyph.Radio,
             new Rectangle(0, (logo.Height - ScaleDip(13)) / 2, ScaleDip(13), ScaleDip(13)), _theme.Accent);
-        var brand = TextLabel("AppTitle"); brand.Text = "Radio Mini"; brand.Font = OwnFont(11, family: "Segoe UI");
+        var brand = TextLabel("AppTitle"); brand.Text = AppName; brand.Font = OwnFont(11, family: "Segoe UI");
         _tips.SetToolTip(brand, AppTitle);
         header.Controls.Add(logo, 0, 0); header.Controls.Add(brand, 1, 0);
         header.Controls.Add(_themeButton, 2, 0); header.Controls.Add(_minimize, 3, 0); header.Controls.Add(_close, 4, 0);
@@ -461,7 +481,7 @@ internal sealed class MainForm : Form
             _active = false; _countPending = false; _playingStation = null; CancelMetadata(); _started?.TrySetResult();
         }
         _trayTransport.Text = _active ? "停止" : "播放";
-        _tray.Text = _active && _targetStation is { } station ? $"{AppTitle} · {StationName(station)}" : AppTitle;
+        _tray.Text = _active && _targetStation is { } station ? $"{AppName} · {StationName(station)}" : AppName;
         RefreshPresentation();
     }
 
@@ -630,7 +650,7 @@ internal sealed class MainForm : Form
         _playRequest?.Cancel(); _playRequest = null;
         CancelMetadata(); _player.StatusChanged -= UpdateStatus;
         _player.Dispose(); _metadataProvider.Dispose();
-        _tray.Visible = false; _tray.ContextMenuStrip?.Dispose(); _tray.Dispose(); _tips.Dispose();
+        _tray.Visible = false; _tray.ContextMenuStrip?.Dispose(); _tray.Dispose(); _tips.Dispose(); _appIcon.Dispose(); _trayIcon.Dispose();
     }
     protected override void Dispose(bool disposing)
     {

@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        IconChecks.Run();
         await CaptureFourArrowPreviewAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
             MediaEngineAudioPlayer.PlaybackStateForEvent(12) == AudioState.Buffering && MediaEngineAudioPlayer.PlaybackStateForEvent(13) == AudioState.Playing,
@@ -20,10 +21,15 @@ internal static class UiChecks
         form.Show();
         await Task.Delay(100);
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
-        Check(form.Text == $"Radio Mini v{expectedVersion}" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
-            "Header hides version while native window title retains the actual assembly version");
+        Check(form.Text == "Radio Mini" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
+            "Native taskbar/window title and header show only Radio Mini without a version");
         var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
+        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(form.Icon?.Width == (int)Math.Round(32 * form.DeviceDpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * form.DeviceDpi / 96d),
+            "Window/taskbar and tray load their own correctly sized artwork frames");
+        Check(tray.Text == "Radio Mini" && tray.ContextMenuStrip!.Items.Cast<ToolStripItem>().Any(item => item.Text == $"Radio Mini v{expectedVersion}"),
+            "Tray tooltip omits version while the explicit version information menu remains available");
         try { PlayerBackend.Create(["--backend", "mpv"]); throw new Exception("Removed backend was accepted."); }
         catch (ArgumentException) { Check(true, "Removed backend is rejected rather than launching an external player"); }
         Check(form.ClientSize == new Size(554, 271) && Find<ListBox>(form, "StationList").ItemHeight == 37,
@@ -53,6 +59,7 @@ internal static class UiChecks
         player.Emit(AudioState.Playing);
         await opening;
         Check(settings.PlayCounts.GetValueOrDefault("bcc-ilike") == 1, "Only successful playback counts");
+        Check(form.Text == "Radio Mini" && tray.Text == "Radio Mini · 中廣流行網", "Playback updates tray station name without adding a version to app titles");
         player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
         Check(settings.PlayCounts["bcc-ilike"] == 1 && ((Station)list.Items[0]).Id == "bcc-ilike" && form.SelectedStationId == "bcc-ilike" && player.Plays == 1,
             "Success immediately sorts while preserving selected station; reconnect does not count or play again");
@@ -236,6 +243,8 @@ internal static class UiChecks
             await Task.Delay(50);
             Check(form.DeviceDpi == dpi && ((StationListBox)list).VisibleRows == 5 && list.ItemHeight == (int)Math.Round(37 * dpi / 96d),
                 $"DPI {dpi}: five visible rows keep original 37-DIP item height");
+            Check(form.Icon?.Width == (int)Math.Round(32 * dpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * dpi / 96d),
+                $"DPI {dpi}: window and tray icons use matching native-size frames, including 40px at 125%");
             Check(Math.Abs(Find<Label>(form, "NowPlayingTitle").Font.Size - 11 * dpi / 72f) < .1, $"DPI {dpi}: explicit label fonts scale with list typography");
             Check(list.ClientSize.Width == list.Width, $"DPI {dpi}: overlay does not reserve a non-client scrollbar column");
             var scaledTrack = stationList.ScrollbarTrackBounds;
@@ -358,8 +367,8 @@ internal static class UiChecks
             var rightLanguage = Find<Button>(dialog, "MyLanguageFilter");
             Check(left.PointToScreen(new Point(left.Width, 0)).X < leftLanguage.PointToScreen(Point.Empty).X &&
                 right.PointToScreen(new Point(right.Width, 0)).X < rightLanguage.PointToScreen(Point.Empty).X &&
-                leftLanguage.Parent == left.Parent && left.Height == 32 && right.Height == 32,
-                "Independent globe buttons sit outside both complete 32-DIP search pills");
+                leftLanguage.Parent == left.Parent && left.Height == 26 && right.Height == 26,
+                "Independent globe buttons sit outside both complete 26-DIP search pills");
             var addButton = Find<PlayerButton>(dialog, "AddStation");
             Check(addButton.Framed && addButton.Size == new Size(30, 30) && Find<PlayerButton>(dialog, "RemoveStation").Framed,
                 "Transfer arrows use compact framed 30-DIP buttons");
@@ -396,6 +405,10 @@ internal static class UiChecks
                     $"Manager DPI {dpi}: child windows cannot overlap any rounded perimeter edge");
                 Check(dialog.Region!.IsVisible(dialog.ClientSize.Width - 20, dialog.ClientSize.Height / 2), $"Manager DPI {dpi}: rounded window region follows full dialog size");
                 Check(available.ItemHeight == (int)Math.Round(37 * dpi / 96d), $"Manager DPI {dpi}: row height scales without clipping search or actions");
+                var expectedPill = (int)Math.Round(26 * dpi / 96d);
+                var globeButton = Find<Button>(dialog, "AvailableLanguageFilter");
+                Check(left.Height == globeButton.Height && Math.Abs(left.Height - expectedPill) <= 1,
+                    $"Manager DPI {dpi}: search pill and globe row scale together (search={left.Height}, globe={globeButton.Height}, nominal={expectedPill})");
                 Find<Button>(dialog, "AvailableLanguageFilter").PerformClick();
                 Check(dialog.LanguageMenu.Width == (int)(150 * dpi / 96f) &&
                     dialog.LanguageMenu.Items.Cast<ToolStripMenuItem>().All(item => item.Height == (int)(28 * dpi / 96f)),
@@ -569,7 +582,18 @@ internal static class UiChecks
         using (var pixels = new Bitmap(globe.Width, globe.Height))
         {
             globe.DrawToBitmap(pixels, globe.ClientRectangle);
-            Check(pixels.GetPixel(20, 7).ToArgb() == PlayerTheme.Dark.Accent.ToArgb(), "Active filter paints mint 5-DIP indicator dot");
+            var background = pixels.GetPixel(0, 0).ToArgb();
+            var inkLeft = globe.Width; var inktop = globe.Height; var inkRight = -1; var inkBottom = -1;
+            for (var y = 0; y < globe.Height; y++)
+                for (var x = 0; x < globe.Width; x++)
+                    if (pixels.GetPixel(x, y).ToArgb() != background)
+                    { inkLeft = Math.Min(inkLeft, x); inktop = Math.Min(inktop, y); inkRight = Math.Max(inkRight, x); inkBottom = Math.Max(inkBottom, y); }
+            var inkHeight = inkBottom - inktop + 1; var inkWidth = inkRight - inkLeft + 1;
+            Check(inkHeight is >= 14 and <= 16 && inkWidth >= 24,
+                $"14-DIP globe plus 8-DIP chevron paint a {inkWidth}x{inkHeight}px mark at 96 DPI");
+            Check(Math.Abs((inktop + inkBottom) / 2 - (globe.Height - 1) / 2) <= 1,
+                "Globe and chevron stay vertically centred inside the 34-DIP button");
+            Check(pixels.GetPixel(18, 7).ToArgb() == PlayerTheme.Dark.Accent.ToArgb(), "Active filter paints mint indicator dot at the globe's top right");
         }
         Capture(dialog, "artifacts/station-manager-independent-languages.png");
         globe.PerformClick();
