@@ -16,22 +16,25 @@ internal static class UiChecks
         var metadata = new FixtureMetadata();
         var resolver = new FixtureResolver();
         var settings = CatalogSettings();
-        using var form = new MainForm(player, false, true, resolver, metadata, settings);
+        using var form = new MainForm(player, false, true, resolver, metadata, settings, autoPlayOnStartup: false);
         form.Show();
         await Task.Delay(100);
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
-        Check(form.Text == $"Radio Mini v{expectedVersion}" && Find<Label>(form, "AppTitle").Text == form.Text,
-            "Visible app title and taskbar title show the actual app assembly version");
+        Check(form.Text == $"Radio Mini v{expectedVersion}" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
+            "Header hides version while native window title retains the actual assembly version");
+        var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
         try { PlayerBackend.Create(["--backend", "mpv"]); throw new Exception("Removed backend was accepted."); }
         catch (ArgumentException) { Check(true, "Removed backend is rejected rather than launching an external player"); }
         Check(form.ClientSize == new Size(554, 271) && Find<ListBox>(form, "StationList").ItemHeight == 37,
             "Search adds only 38 DIP in height; original widths, fonts and 31-DIP rows remain");
-        Check(player.Plays == 0 && form.LatestStatus.State == AudioState.Stopped, "Startup never auto-plays");
+        Check(player.Plays == 0 && form.LatestStatus.State == AudioState.Stopped && form.SelectedStationId is null, "Startup neither auto-selects nor auto-plays");
         Capture(form, "artifacts/direction-c-dark-idle.png");
         var list = Find<ListBox>(form, "StationList");
         var play = Find<Button>(form, "PlayButton");
         var mute = Find<CheckBox>(form, "Mute");
         var volume = Find<TrackBar>(form, "Volume");
+        form.SelectForProbe("pop-917");
         CheckNoStationFocusFrame((StationListBox)list, Find<StationSearchBox>(form, "StationSearch").Controls[0]);
         Check(list.Items.Count == 7, "Seven catalog stations remain available");
         var listWidth = list.Width;
@@ -51,7 +54,8 @@ internal static class UiChecks
         await opening;
         Check(settings.PlayCounts.GetValueOrDefault("bcc-ilike") == 1, "Only successful playback counts");
         player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
-        Check(settings.PlayCounts["bcc-ilike"] == 1 && ((Station)list.Items[0]).Id == "pop-917", "Buffering/reconnect events neither count again nor reorder rows");
+        Check(settings.PlayCounts["bcc-ilike"] == 1 && ((Station)list.Items[0]).Id == "bcc-ilike" && form.SelectedStationId == "bcc-ilike" && player.Plays == 1,
+            "Success immediately sorts while preserving selected station; reconnect does not count or play again");
         var search = Find<StationSearchBox>(form, "StationSearch");
         var playsBeforeSearch = player.Plays;
         search.Query = "107.7";
@@ -90,11 +94,11 @@ internal static class UiChecks
         SendMouse(volume, 0x0202, -20, volume.Height / 2);
         Check(volume.Value == 0, "Clicking slider left edge clamps to zero");
         volume.Value = 40;
-        var committedVolume = -1;
-        ((VolumeSlider)volume).InteractionCompleted += () => committedVolume = volume.Value;
-        SendMessage(volume.Handle, 0x020A, new IntPtr(120 << 16), IntPtr.Zero);
-        Check(volume.Value != 40 && committedVolume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
-            "Wheel changes volume and commits the final value after native input processing");
+        var wheelPoint = volume.PointToScreen(new Point(volume.Width / 2, volume.Height / 2));
+        PostMessage(volume.Handle, 0x020A, new IntPtr(120 << 16), new IntPtr((wheelPoint.X & 0xffff) | ((wheelPoint.Y & 0xffff) << 16)));
+        await Task.Delay(30);
+        Check(volume.Value == 45 && settings.Volume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
+            "Queued slider wheel changes volume once and commits the routed final value");
         var playsBeforeScroll = player.Plays;
         var stationList = (StationListBox)list;
         var card = Find<Label>(form, "NowPlayingTitle").Parent!.Parent!;
@@ -130,7 +134,7 @@ internal static class UiChecks
         Check(stationList.ScrollThumb.Top == track.Top && track.Top == 8, "Top thumb is inset inside first item's rounded ends");
         SendMouse(list, 0x0201, track.Left, track.Bottom - 1);
         SendMouse(list, 0x0202, track.Left, track.Bottom - 1);
-        Check(list.TopIndex == list.Items.Count - stationList.VisibleRows && player.Plays == playsBeforeScroll && list.SelectedIndex == 5,
+        Check(list.TopIndex == list.Items.Count - stationList.VisibleRows && player.Plays == playsBeforeScroll && form.SelectedStationId == "hit-north",
             "Thin overlay scrollbar is clickable without selecting or retuning stations");
         Check(stationList.ScrollThumb.Bottom == track.Bottom && track.Bottom == 5 * list.ItemHeight - 8,
             "Bottom thumb stays inside last item's rounded ends");
@@ -257,6 +261,9 @@ internal static class UiChecks
         await CheckStationInputAsync();
         await CheckStationManagementAsync();
         await CheckBatchStationManagementAsync();
+        await CheckLanguageFiltersAsync();
+        await CheckStartupAutoplayAsync();
+        await CheckCardVolumeAndTipsAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
@@ -304,12 +311,12 @@ internal static class UiChecks
         Check(ThemeSettings.Load(path) is { Volume: 73, Theme: "dark" }, "Changing theme does not reset persisted volume");
         File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"dark","Volume":200}""");
         Check(ThemeSettings.Load(path).Volume is null, "Invalid stored volume is ignored");
-        var settings = CatalogSettings(); settings.PlayCounts["pop-917"] = 12;
+        var settings = CatalogSettings(); settings.PlayCounts["pop-917"] = 12; settings.StationSetupCompleted = true;
         ThemeSettings.Save(settings, path);
         ThemeSettings.Save(false, 62, path);
         var restored = ThemeSettings.Load(path);
-        Check(restored.MyStationIds.SequenceEqual(settings.MyStationIds) && restored.PlayCounts["pop-917"] == 12 && restored.Volume == 62,
-            "Station membership and real counts survive saving preferences and reloading");
+        Check(restored.MyStationIds.SequenceEqual(settings.MyStationIds) && restored.PlayCounts["pop-917"] == 12 && restored.Volume == 62 && restored.StationSetupCompleted,
+            "Station membership, real counts and setup completion survive saving preferences and reloading");
         restored.MyStationIds.Clear(); ThemeSettings.Save(restored, path);
         Check(ThemeSettings.Load(path).MyStationIds.Count == 0, "Explicit empty membership persists");
         File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"light","Volume":45}""");
@@ -345,9 +352,12 @@ internal static class UiChecks
             var right = Find<StationSearchBox>(dialog, "MySearch");
             Check(available.Items.Count == 7 && mine.Items.Count == 0 && Find<Button>(dialog, "DoneButton").Enabled,
                 "Empty manager allows completion and exposes the real catalog");
-            Check(left.PointToScreen(new Point(left.Width, 0)).X == available.PointToScreen(new Point(((StationListBox)available).ItemContentWidth, 0)).X &&
-                right.PointToScreen(new Point(right.Width, 0)).X == mine.PointToScreen(new Point(((StationListBox)mine).ItemContentWidth, 0)).X,
-                "Both search pills align with the visible station rows' right edges");
+            var leftLanguage = Find<Button>(dialog, "AvailableLanguageFilter");
+            var rightLanguage = Find<Button>(dialog, "MyLanguageFilter");
+            Check(left.PointToScreen(new Point(left.Width, 0)).X < leftLanguage.PointToScreen(Point.Empty).X &&
+                right.PointToScreen(new Point(right.Width, 0)).X < rightLanguage.PointToScreen(Point.Empty).X &&
+                leftLanguage.Parent == left.Parent && left.Height == 32 && right.Height == 32,
+                "Independent globe buttons sit outside both complete 32-DIP search pills");
             var addButton = Find<PlayerButton>(dialog, "AddStation");
             Check(addButton.Framed && addButton.Size == new Size(30, 30) && Find<PlayerButton>(dialog, "RemoveStation").Framed,
                 "Transfer arrows use compact framed 30-DIP buttons");
@@ -361,7 +371,7 @@ internal static class UiChecks
             left.Query = "91.7"; right.Query = "KISS";
             Check(available.Items.Count == 1 && mine.Items.Count == 0, "Manager searches are independent");
             available.SelectedIndex = 0; Find<Button>(dialog, "AddStation").PerformClick();
-            Check(available.Items.Count == 0 && mine.Items.Count == 0 && library.Mine.Count == 1, "Adding moves membership, respecting both filters");
+            Check(available.Items.Count == 0 && mine.Items.Count == 1 && library.Mine.Count == 1 && right.Query == "", "Adding clears incompatible destination search to reveal the moved station");
             right.Query = "POP";
             Check(mine.Items.Count == 1 && library.Count("pop-917") == 0, "Name search finds newly added station with zero count");
             library.Add("pop-917"); Check(library.Mine.Count == 1, "Duplicate membership rejected");
@@ -384,13 +394,18 @@ internal static class UiChecks
                     $"Manager DPI {dpi}: child windows cannot overlap any rounded perimeter edge");
                 Check(dialog.Region!.IsVisible(dialog.ClientSize.Width - 20, dialog.ClientSize.Height / 2), $"Manager DPI {dpi}: rounded window region follows full dialog size");
                 Check(available.ItemHeight == (int)Math.Round(37 * dpi / 96d), $"Manager DPI {dpi}: row height scales without clipping search or actions");
+                Find<Button>(dialog, "AvailableLanguageFilter").PerformClick();
+                Check(dialog.LanguageMenu.Width == (int)(150 * dpi / 96f) &&
+                    dialog.LanguageMenu.Items.Cast<ToolStripMenuItem>().All(item => item.Height == (int)(28 * dpi / 96f)),
+                    $"Manager DPI {dpi}: compact language popup dimensions scale with its globe button");
+                dialog.LanguageMenu.Close();
                 Capture(dialog, $"artifacts/station-manager-dpi-{dpi}.png");
             }
             Find<Button>(dialog, "DoneButton").PerformClick();
         }
         library.Add("pop-917"); library.Add("ufo-921"); library.Add("bcc-ilike");
         library.RecordSuccess("bcc-ilike");
-        Check(library.Mine[0].Id == "pop-917", "Successful play does not immediately sort");
+        Check(library.Mine[0].Id == "bcc-ilike", "Successful play immediately sorts");
         library.Sort();
         Check(library.Mine.Select(s => s.Id).SequenceEqual(new[] { "bcc-ilike", "pop-917", "ufo-921" }), "Sort is descending with stable ties");
         library.Remove("bcc-ilike"); library.Add("bcc-ilike");
@@ -406,7 +421,7 @@ internal static class UiChecks
             if (manager is null) return;
             timer.Stop(); opened++;
             Check(manager.Modal && manager.Owner == form && form.Visible, "Manager is modal and retains main window behind it");
-            if (opened == 2)
+            if (opened is 2 or 4)
             {
                 var available = Find<ListBox>(manager, "AvailableStations"); available.SelectedIndex = 0;
                 Find<Button>(manager, "AddStation").PerformClick();
@@ -421,23 +436,31 @@ internal static class UiChecks
             }
             Find<Button>(manager, "DoneButton").PerformClick();
         };
-        form.Show(); await Task.Delay(150);
-        Check(opened == 0 && !Application.OpenForms.OfType<StationManagerDialog>().Any() && Find<Button>(form, "EmptyAddStation").Visible,
-            "First empty startup shows only the central plus, never opens management automatically");
+        timer.Start(); form.Show(); await Task.Delay(150);
+        Check(opened == 1 && !Application.OpenForms.OfType<StationManagerDialog>().Any() && Find<Button>(form, "EmptyAddStation").Visible,
+            "First empty startup opens manager automatically and empty completion returns to central plus");
         Capture(form, "artifacts/station-first-start.png");
-        timer.Start(); Find<Button>(form, "EmptyAddStation").PerformClick();
-        Check(opened == 1 && Find<Button>(form, "EmptyAddStation").Visible && !Find<ListBox>(form, "StationList").Visible,
-            "Central plus opens manager; zero-station completion leaves only centered plus");
         Capture(form, "artifacts/station-empty-player.png");
         timer.Start(); Find<Button>(form, "EmptyAddStation").PerformClick();
         Check(opened == 2 && Find<ListBox>(form, "StationList").Visible && !Find<Button>(form, "EmptyAddStation").Visible,
             "Central plus reopens manager and adding restores normal player");
+        Check(form.SelectedStationId is null && player.Plays == 0, "Adding first station neither selects nor starts silent fake playback");
         Capture(form, "artifacts/station-player-search.png");
         var playback = form.PlayForProbeAsync("pop-917"); player.Emit(AudioState.Playing); await playback;
         timer.Start(); Find<Button>(form, "ManageStations").PerformClick();
         Check(opened == 3 && form.PlayingStationId is null && form.LatestStatus.State == AudioState.Stopped && Find<Button>(form, "EmptyAddStation").Visible,
             "Completing removal of the playing station stops audio and returns to zero-state player");
+        var playsBeforeReAdd = player.Plays;
+        timer.Start(); Find<Button>(form, "EmptyAddStation").PerformClick();
+        Check(opened == 4 && form.SelectedStationId is null && player.Plays == playsBeforeReAdd,
+            "Re-adding a removed selected station does not revive stale selection or auto-play");
         form.Close();
+        using var completedEmpty = new MainForm(new FixturePlayer(), false, true, new FixtureResolver(), new FixtureMetadata(),
+            new ThemeSettings { StationSetupCompleted = true });
+        completedEmpty.Show(); await Task.Delay(60);
+        Check(!Application.OpenForms.OfType<StationManagerDialog>().Any() && Find<Button>(completedEmpty, "EmptyAddStation").Visible,
+            "Completed empty setup restarts at central plus without forcing manager again");
+        completedEmpty.Close();
     }
     private static async Task CheckBatchStationManagementAsync()
     {
@@ -506,10 +529,236 @@ internal static class UiChecks
         largeDialog.Close();
     }
 
+    private static async Task CheckLanguageFiltersAsync()
+    {
+        var seed = StationCatalog.Load()[0];
+        Station[] catalog = [
+            seed with { Id = "pop", Name = "POP Radio", Languages = ["zh"] },
+            seed with { Id = "fr", Name = "France Écoute", Languages = ["fr"] },
+            seed with { Id = "en", Name = "BBC Radio 1", Languages = ["en"] },
+            seed with { Id = "multi", Name = "雙語 Radio", Languages = ["zh", "en"] },
+            seed with { Id = "unknown", Name = "English France 未知", Languages = null },
+            seed with { Id = "empty", Name = "Empty", Languages = [] },
+            seed with { Id = "future", Name = "日本語", Languages = ["ja"] }
+        ];
+        var settings = new ThemeSettings { MyStationIds = ["pop", "multi"] };
+        var library = new StationLibrary(settings, catalog);
+        using var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!);
+        dialog.Show(); await Task.Delay(30);
+        var available = Find<ListBox>(dialog, "AvailableStations");
+        var mine = Find<ListBox>(dialog, "MyStations");
+        var left = Find<StationSearchBox>(dialog, "AvailableSearch");
+        var right = Find<StationSearchBox>(dialog, "MySearch");
+        void Choose(bool isLeft, string code)
+        {
+            Find<Button>(dialog, isLeft ? "AvailableLanguageFilter" : "MyLanguageFilter").PerformClick();
+            Check(dialog.LanguageMenu.Visible && dialog.LanguageMenu.Items.Count == 4 && dialog.LanguageMenu.Width is >= 145 and <= 152,
+                $"Compact language popup opens under the external globe with four options (visible={dialog.LanguageMenu.Visible}, width={dialog.LanguageMenu.Width}, items={dialog.LanguageMenu.Items.Count})");
+            ((ToolStripMenuItem)dialog.LanguageMenu.Items.Find($"Language_{code}", false).Single()).PerformClick();
+            Check(!dialog.LanguageMenu.Visible, "Choosing language immediately closes the popup");
+        }
+        Check(dialog.AvailableStationsLanguageFilter == "" && dialog.MyStationsLanguageFilter == "" && available.Items.Count == 5,
+            "Both sides default to all languages, including null, empty and future language data");
+        Choose(true, "fr"); Choose(false, "zh");
+        Check(available.Items.Count == 1 && mine.Items.Count == 2 && dialog.AvailableStationsLanguageFilter == "fr" && dialog.MyStationsLanguageFilter == "zh",
+            "French available and Chinese favorites filter independently using metadata, not names");
+        var globe = Find<LanguageFilterButton>(dialog, "AvailableLanguageFilter");
+        Check(globe.AccessibleName == "語言：Français", "Active filter tooltip/accessibility label reports current language");
+        using (var pixels = new Bitmap(globe.Width, globe.Height))
+        {
+            globe.DrawToBitmap(pixels, globe.ClientRectangle);
+            Check(pixels.GetPixel(20, 7).ToArgb() == PlayerTheme.Dark.Accent.ToArgb(), "Active filter paints mint 5-DIP indicator dot");
+        }
+        Capture(dialog, "artifacts/station-manager-independent-languages.png");
+        globe.PerformClick();
+        Check(dialog.LanguageMenu.Items.Cast<ToolStripMenuItem>().Single(item => item.Checked).Name == "Language_fr",
+            "Popup marks exactly the current language as checked");
+        using (var menuPixels = new Bitmap(dialog.LanguageMenu.Width, dialog.LanguageMenu.Height))
+        {
+            dialog.LanguageMenu.DrawToBitmap(menuPixels, new Rectangle(Point.Empty, menuPixels.Size));
+            menuPixels.Save("artifacts/station-language-menu.png");
+        }
+        dialog.LanguageMenu.Close();
+        left.Query = "FRANCE ecoute";
+        Check(available.Items.Count == 1, "AND search ignores case and French accents");
+        left.Query = "FRANCE E\u0301COUTE";
+        Check(available.Items.Count == 1, "Decomposed Unicode accents also match");
+        left.Query = "BBC";
+        Check(available.Items.Count == 0, "Name match cannot bypass language condition");
+        left.Query = ""; available.SelectedIndex = 0;
+        Choose(true, "en");
+        Check(available.Items.Count == 1 && available.SelectedItems.Count == 0 && !Find<Button>(dialog, "AddStation").Enabled,
+            "Changing language clears hidden selections and prevents invisible transfers");
+        Choose(false, "en");
+        Check(mine.Items.Count == 1 && ((Station)mine.Items[0]).Id == "multi", "Multilingual station matches each explicit language code");
+        Choose(true, "fr"); available.SelectedIndex = 0; right.Query = "雙語";
+        Find<Button>(dialog, "AddStation").PerformClick();
+        Check(available.Items.Count == 0 && mine.Items.Count == 3 && right.Query == "" && dialog.MyStationsLanguageFilter == "" && dialog.AvailableStationsLanguageFilter == "fr",
+            "Add reveals transferred station by clearing only incompatible destination conditions");
+        Choose(true, "en"); left.Query = "BBC";
+        mine.SelectedItem = catalog[1]; Find<Button>(dialog, "RemoveStation").PerformClick();
+        Check(library.Mine.Count == 2 && available.Items.Count == 5 && left.Query == "" && dialog.AvailableStationsLanguageFilter == "",
+            "Remove restores catalog station and clears incompatible destination conditions");
+        Choose(true, "en"); left.Query = "BBC"; available.SelectedIndex = 0;
+        Choose(false, "zh"); right.Query = "POP";
+        Find<Button>(dialog, "AddStation").PerformClick();
+        Check(library.Mine.Count == 3 && mine.Items.Count == 3, "English station moves correctly even under Chinese destination filter");
+        Choose(false, "fr");
+        Check(mine.Items.Count == 0 && library.Mine.Count == 3 && settings.PlayCounts.Values.All(value => value == 0),
+            "Filtering to empty results never deletes favorites or changes play counts");
+        Choose(false, "en"); right.Query = "BBC"; mine.SelectedIndex = 0;
+        left.Query = "BBC";
+        Find<Button>(dialog, "RemoveStation").PerformClick();
+        Check(dialog.AvailableStationsLanguageFilter == "en" && left.Query == "BBC" && available.Items.Count == 1,
+            "Compatible destination language and text filters remain unchanged after transfer");
+        Choose(false, ""); right.Query = "";
+        mine.SelectedItem = catalog[0]; library.RecordSuccess("multi");
+        Check(((Station)mine.Items[0]).Id == "multi" && ((Station)mine.SelectedItem!).Id == "pop",
+            "Open manager immediately follows count sorting without changing selected station identity");
+        Check(StationLibrary.MatchesLanguage(catalog[6], "ja") && !StationLibrary.MatchesLanguage(catalog[4], "en"),
+            "Future languages need no classifier rewrite; unknown data is never guessed");
+        Find<Button>(dialog, "AvailableLanguageFilter").PerformClick();
+        var sharedMenu = dialog.LanguageMenu;
+        Find<Button>(dialog, "MyLanguageFilter").PerformClick();
+        Check(ReferenceEquals(sharedMenu, dialog.LanguageMenu) && sharedMenu.Visible && sharedMenu.AutoClose,
+            "Both sides share one auto-dismiss popup so two language menus cannot coexist");
+        sharedMenu.Close(ToolStripDropDownCloseReason.AppClicked);
+        Check(!sharedMenu.Visible, "Popup closes on an outside-click dismissal");
+        Choose(true, "");
+        using (var pixels = new Bitmap(globe.Width, globe.Height))
+        {
+            globe.DrawToBitmap(pixels, globe.ClientRectangle);
+            Check(pixels.GetPixel(20, 7).ToArgb() != PlayerTheme.Dark.Accent.ToArgb(), "All languages removes the mint active indicator");
+        }
+        Capture(dialog, "artifacts/station-manager-language-filters.png");
+        dialog.Close();
+
+        Check(StationCatalog.Load().Single(station => station.Id == "rfi-monde") is { Name: "RFI Monde", Languages: ["fr"] } &&
+            StationCatalog.Load().Single(station => station.Id == "pop-917").Languages!.Contains("zh"),
+            "Catalog explicitly records RFI French and POP Chinese without language suffixes");
+    }
+
+    private static async Task CheckStartupAutoplayAsync()
+    {
+        var settings = CatalogSettings();
+        settings.Volume = 42; settings.PlayCounts["best-989"] = 12; settings.PlayCounts["pop-917"] = 3;
+        var player = new FixturePlayer { IsMuted = true };
+        using (var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), settings))
+        {
+            Check(player.Plays == 0, "Constructing the window never connects before it is shown");
+            form.Show(); await Task.Delay(30);
+            Check(player.Plays == 1 && form.SelectedStationId == "best-989" && form.LatestStatus.State == AudioState.Opening,
+                "Startup selects and starts exactly the most successfully played favorite");
+            Check(Math.Abs(player.Volume - .42) < .001 && player.IsMuted && settings.PlayCounts["best-989"] == 12,
+                "Startup respects saved volume and existing mute before success; opening does not count");
+            player.Emit(AudioState.Playing); await form.StartupPlaybackTask;
+            player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
+            Check(form.PlayingStationId == "best-989" && settings.PlayCounts["best-989"] == 13 && player.Plays == 1,
+                "Automatic playback counts only its first real Playing event");
+            form.Hide(); form.ShowPlayer(); await Task.Delay(30);
+            Check(player.Plays == 1, "Hide and restore never repeat startup playback");
+            Find<Button>(form, "PlayButton").PerformClick();
+            form.Hide(); form.ShowPlayer(); await Task.Delay(30);
+            Check(player.Plays == 1 && form.LatestStatus.State == AudioState.Stopped,
+                "Restoring a manually stopped player does not auto-play again");
+            form.Close();
+        }
+        foreach (var count in new[] { 0L, 4L })
+        {
+            var tiedSettings = new ThemeSettings { MyStationIds = ["ufo-921", "best-989"], PlayCounts = { ["ufo-921"] = count, ["best-989"] = count } };
+            var tiedPlayer = new FixturePlayer();
+            using var tied = new MainForm(tiedPlayer, false, true, new FixtureResolver(), new FixtureMetadata(), tiedSettings);
+            tied.Show(); await Task.Delay(20);
+            Check(tiedPlayer.Plays == 1 && tied.SelectedStationId == "ufo-921", $"Startup ties ({count} plays) preserve existing favorite order");
+            tiedPlayer.Emit(AudioState.Playing); await tied.StartupPlaybackTask; tied.Close();
+        }
+        var failedSettings = CatalogSettings(); failedSettings.PlayCounts["kiss-999"] = 9;
+        var failedPlayer = new FixturePlayer(); var failedResolver = new FixtureResolver { Fail = true };
+        using var failed = new MainForm(failedPlayer, false, true, failedResolver, new FixtureMetadata(), failedSettings);
+        failed.Show(); await Task.Delay(30); await failed.StartupPlaybackTask;
+        Check(failed.LatestStatus.State == AudioState.Failed && failedResolver.Calls == 1 && failedPlayer.Plays == 0 && failedSettings.PlayCounts["kiss-999"] == 9,
+            $"Failed startup leaves retry UI without counting, looping or trying another station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
+        failed.Close();
+    }
+
+    private static async Task CheckCardVolumeAndTipsAsync()
+    {
+        var settings = CatalogSettings(); settings.Volume = 40;
+        var player = new FixturePlayer(); var metadata = new FixtureMetadata();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), metadata, settings, autoPlayOnStartup: false);
+        form.Show(); await Task.Delay(20);
+        var card = Find<Control>(form, "PlaybackCard");
+        var volume = Find<VolumeSlider>(form, "Volume");
+        var list = Find<StationListBox>(form, "StationList");
+        var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(tips.GetToolTip(volume) == "音量 40%", "Volume tooltip is correct even before the first adjustment");
+        var playback = form.PlayForProbeAsync("bcc-ilike"); player.Emit(AudioState.Playing); await playback;
+        metadata.Pending[0].SetResult(new(MetadataKind.Program, "測試節目", "測試主持人", DateTimeOffset.UtcNow.AddMinutes(1)));
+        await Task.Delay(20);
+        static IEnumerable<Control> Descendants(Control parent) => parent.Controls.Cast<Control>()
+            .SelectMany(child => new[] { child }.Concat(Descendants(child)));
+        var surfaces = Descendants(card).Prepend(card).Where(control => control.Visible && control.Width > 0 && control.Height > 0).ToArray();
+        Check(Descendants(card).Prepend(card).Where(control => !string.IsNullOrEmpty(tips.GetToolTip(control)))
+                .Select(control => control.Name).Order().SequenceEqual(new[] { "OfficialLink", "Volume" }),
+            "Only official website and volume have card tooltips, including visible metadata and playback state");
+        Check(!string.IsNullOrEmpty(tips.GetToolTip(Find<Label>(form, "AppTitle"))) && Find<Button>(form, "PlayButton").AccessibleName == "停止",
+            "Card tooltip removal preserves brand version and accessible playback actions");
+        Check(Descendants(card).OfType<Label>().All(label => label is CardTextLabel && label.AutoEllipsis),
+            "Card labels preserve ellipsis while suppressing WinForms' independent overflow tooltips");
+        async Task Wheel(Control target, Control hovered, int delta)
+        {
+            var screen = hovered.PointToScreen(new Point(hovered.Width / 2, hovered.Height / 2));
+            Check(PostMessage(target.Handle, 0x020A, new IntPtr(delta << 16), new IntPtr((screen.X & 0xffff) | ((screen.Y & 0xffff) << 16))), "Wheel message queued");
+            await Task.Delay(20);
+        }
+        list.Focus(); var top = list.TopIndex;
+        foreach (var surface in surfaces)
+        {
+            volume.Value = 50;
+            await Wheel(list, surface, 120);
+            Check(volume.Value == 55 && settings.Volume == 55 && Math.Abs(player.Volume - .55) < .001 && list.TopIndex == top,
+                $"Hover wheel on {surface.Name}/{surface.GetType().Name} adjusts and commits volume with focus elsewhere");
+        }
+        volume.Value = 50; volume.Focus();
+        await Wheel(volume, volume, 120);
+        Check(volume.Value == 55, "Slider wheel is consumed once, without native double adjustment");
+        await Wheel(volume, card, -240);
+        Check(volume.Value == 45, "Reverse and multi-notch wheel input use consistent five-percent steps");
+        await Wheel(list, card, 60);
+        Check(volume.Value == 45, "Partial wheel delta is accumulated without premature adjustment");
+        await Wheel(list, card, 60);
+        Check(volume.Value == 50, "Two half-notch inputs produce one volume step");
+        volume.Value = 98; await Wheel(list, card, 120);
+        Check(volume.Value == 100 && settings.Volume == 100, "Card wheel clamps and commits upper volume bound");
+        volume.Value = 2; await Wheel(list, card, -120);
+        Check(volume.Value == 0 && settings.Volume == 0, "Card wheel clamps and commits lower volume bound");
+        var mute = Find<CheckBox>(form, "Mute"); mute.Checked = true;
+        await Wheel(list, card, 120);
+        Check(volume.Value == 5 && player.IsMuted && tips.GetToolTip(volume) == "音量 5%", "Wheel updates tooltip without cancelling mute");
+        list.TopIndex = 0; await Wheel(list, list, -120);
+        Check(list.TopIndex > 0 && volume.Value == 5, "Hovering station list still scrolls stations without changing volume");
+        using (var other = new Form { StartPosition = FormStartPosition.Manual, Location = new Point(form.Right + 20, form.Top), Size = new Size(100, 100) })
+        {
+            other.Show(); await Wheel(other, card, 120);
+            Check(volume.Value == 5, "Wheel messages belonging to another window are never intercepted");
+            other.Close();
+        }
+        form.Enabled = false; await Wheel(list, card, 120);
+        Check(volume.Value == 5, "Disabled owner, such as during modal management, does not adjust volume behind dialog");
+        form.Enabled = true;
+        foreach (var dpi in new[] { 120, 144, 192, 96 })
+        {
+            SimulateDpi(form, dpi); await Task.Delay(20);
+            volume.Value = 50; await Wheel(list, Find<Label>(form, "Frequency"), 120);
+            Check(volume.Value == 55, $"DPI {dpi}: card hover wheel screen-coordinate routing remains aligned");
+        }
+        form.Close();
+    }
+
     private static async Task CheckStationInputAsync()
     {
         var player = new FixturePlayer();
-        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings());
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
         form.Show();
         await Task.Delay(30);
         var list = Find<ListBox>(form, "StationList");
@@ -524,7 +773,7 @@ internal static class UiChecks
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x23), IntPtr.Zero);
         Check(list.SelectedIndex == 6 && list.TopIndex == 2 && player.Plays == 3 && form.SelectedStationId == "rfi-monde", "Keyboard End scrolls to RFI and tunes it");
-        Check(Find<Label>(form, "Frequency").Text == "網路" && Find<Label>(form, "FrequencyUnit").Text == "",
+        Check(Find<Label>(form, "Frequency").Text == "WEB" && Find<Label>(form, "FrequencyUnit").Text == "",
             "RFI displays internet-only status without an FM unit");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x24), IntPtr.Zero);
@@ -558,15 +807,20 @@ internal static class UiChecks
     }
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
 
     private sealed class FixtureResolver : IStreamResolver
     {
         public TaskCompletionSource<ResolvedStream>? Pending { get; set; }
         public bool Fail { get; set; }
-        public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token) =>
-            Fail ? throw new SourceResolutionException("Fixture source unavailable") : Pending?.Task ??
-            Task.FromResult(new ResolvedStream(new Uri("https://example.invalid/audio"), station.PageUrl, "audio/aac"));
+        public int Calls { get; private set; }
+        public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token)
+        {
+            Calls++;
+            return Fail ? throw new SourceResolutionException("Fixture source unavailable") : Pending?.Task ??
+                Task.FromResult(new ResolvedStream(new Uri("https://example.invalid/audio"), station.PageUrl, "audio/aac"));
+        }
     }
     private sealed class FixturePlayer : IAudioPlayer
     {

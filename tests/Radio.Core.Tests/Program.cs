@@ -53,7 +53,7 @@ var rfiStream = await direct.ResolveAsync(rfi, default);
 Check(rfiStream.Uri == new Uri("https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3") &&
     rfiStream.MediaType == "audio/mpeg" && !rfiStream.IsHls && rfiStream.Referrer == rfi.PageUrl,
     "RFI Monde uses the official MP3 live stream, not Afrique or a replay");
-Check(!rfi.HasFrequency && rfi.FrequencyLabel == "網路" && !rfi.DisplayName.Contains("FM"),
+Check(!rfi.HasFrequency && rfi.FrequencyLabel == "WEB" && !rfi.DisplayName.Contains("FM"),
     "Internet-only RFI does not invent an FM frequency");
 await ExpectFailure(direct, rfi with { EndpointUrl = new Uri("https://other.example/live.mp3") }, "Direct RFI source still enforces the expected host");
 await ExpectFailure(Resolver(_ => Response("maintenance")), best, "Fail clearly when page layout changes");

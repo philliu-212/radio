@@ -28,7 +28,7 @@ internal static class Program
         }
         else
         {
-            try { Application.Run(new MainForm(PlayerBackend.Create(args))); }
+            try { Application.Run(new MainForm(PlayerBackend.Create(args), autoPlayOnStartup: !args.Contains("--no-autoplay"))); }
             catch (Exception error) when (error is FileNotFoundException or ArgumentException)
             {
                 MessageBox.Show(error.Message, "Radio", MessageBoxButtons.OK, MessageBoxIcon.Warning);

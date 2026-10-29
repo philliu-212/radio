@@ -12,6 +12,12 @@ internal sealed class StationManagerDialog : Form
     private readonly StationSearchBox _leftSearch = new() { Name = "AvailableSearch", Outlined = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly StationSearchBox _rightSearch = new() { Name = "MySearch", Outlined = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly ToolTip _tips = new();
+    private readonly LanguageFilterButton _leftLanguage;
+    private readonly LanguageFilterButton _rightLanguage;
+    private readonly ContextMenuStrip _languageMenu;
+    internal string AvailableStationsLanguageFilter => _leftLanguage.Language;
+    internal string MyStationsLanguageFilter => _rightLanguage.Language;
+    internal ContextMenuStrip LanguageMenu => _languageMenu;
     private Font _frequencyFont = new("Segoe UI", 8.5f);
     private readonly PlayerButton _add;
     private readonly PlayerButton _remove;
@@ -23,6 +29,9 @@ internal sealed class StationManagerDialog : Form
     public StationManagerDialog(StationLibrary library, PlayerTheme theme, Font font)
     {
         _library = library; _theme = theme;
+        _leftLanguage = new LanguageFilterButton(theme) { Name = "AvailableLanguageFilter" };
+        _rightLanguage = new LanguageFilterButton(theme) { Name = "MyLanguageFilter" };
+        _languageMenu = new ContextMenuStrip { Name = "LanguageMenu", Font = font, ShowImageMargin = false, ShowCheckMargin = false, Renderer = new LanguageMenuRenderer(theme) };
         DoubleBuffered = true;
         SetStyle(ControlStyles.ResizeRedraw, true);
         Name = "StationManager"; AccessibleName = "電台管理";
@@ -38,8 +47,8 @@ internal sealed class StationManagerDialog : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        layout.Controls.Add(BuildSide(_available, _leftSearch, PlayerGlyph.ListPlus, "可加入電台"), 0, 0);
-        layout.Controls.Add(BuildSide(_mine, _rightSearch, PlayerGlyph.BookmarkCheck, "我的電台"), 2, 0);
+        layout.Controls.Add(BuildSide(_available, _leftSearch, _leftLanguage, PlayerGlyph.ListPlus, "可加入電台"), 0, 0);
+        layout.Controls.Add(BuildSide(_mine, _rightSearch, _rightLanguage, PlayerGlyph.BookmarkCheck, "我的電台"), 2, 0);
         var arrows = _arrows = new TableLayoutPanel { Anchor = AnchorStyles.None, Size = new Size(30, 154), ColumnCount = 1, RowCount = 7, Margin = Padding.Empty };
         arrows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         foreach (var height in new[] { 30, 8, 30, 18, 30, 8, 30 }) arrows.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
@@ -62,6 +71,10 @@ internal sealed class StationManagerDialog : Form
         _addAll.Click += (_, _) => Transfer(_available, true, all: true);
         _removeAll.Click += (_, _) => Transfer(_mine, false, all: true);
         _leftSearch.QueryChanged += RefreshLists; _rightSearch.QueryChanged += RefreshLists;
+        _leftLanguage.Click += (_, _) => ShowLanguageMenu(_leftLanguage);
+        _rightLanguage.Click += (_, _) => ShowLanguageMenu(_rightLanguage);
+        UpdateLanguageButton(_leftLanguage); UpdateLanguageButton(_rightLanguage);
+        _library.OrderChanged += RefreshLists;
         _available.SelectedIndexChanged += (_, _) => UpdateButtons(); _mine.SelectedIndexChanged += (_, _) => UpdateButtons();
         EnableBackgroundDragging(this);
         RefreshLists();
@@ -98,19 +111,21 @@ internal sealed class StationManagerDialog : Form
         button.SetTheme(_theme); _tips.SetToolTip(button, tip); return button;
     }
 
-    private Control BuildSide(StationListBox list, StationSearchBox search, PlayerGlyph glyph, string tip)
+    private Control BuildSide(StationListBox list, StationSearchBox search, LanguageFilterButton language, PlayerGlyph glyph, string tip)
     {
         var side = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, RowCount = 3, ColumnCount = 1 };
         side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         side.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 7)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         // Reserve the same trailing 12 DIP as the list's overlay scrollbar gutter.
-        // The category icon aligns with the row's left edge; the pill ends at its right edge.
-        var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 12, 0) };
+        // Both icons are outside the complete search pill; globe ends at the row's right edge.
+        var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = new Padding(0, 0, 12, 0) };
         row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 9)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 6)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 34));
         var icon = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, AccessibleName = tip };
         icon.Paint += (_, e) => { var size = (int)Math.Round(16 * DeviceDpi / 96d); GlyphPainter.Draw(e.Graphics, glyph, new Rectangle(0, (icon.Height - size) / 2, size, size), _theme.Accent); };
         _tips.SetToolTip(icon, tip); row.Controls.Add(icon, 0, 0); row.Controls.Add(search, 2, 0);
+        row.Controls.Add(language, 4, 0);
         search.SetTheme(_theme);
         list.BackColor = _theme.Canvas; list.ForeColor = _theme.Text; list.ScrollbarColor = _theme.Track;
         list.SelectionMode = SelectionMode.MultiSimple;
@@ -133,13 +148,45 @@ internal sealed class StationManagerDialog : Form
         if (selected.Length == 0) return;
         foreach (var station in selected)
             if (add) _library.Add(station.Id); else _library.Remove(station.Id);
+        // Clear only destination conditions that would hide at least one moved station.
+        var search = add ? _rightSearch : _leftSearch;
+        var language = add ? _rightLanguage : _leftLanguage;
+        if (selected.Any(station => !StationLibrary.MatchesLanguage(station, language.Language)))
+        { language.Language = ""; UpdateLanguageButton(language); }
+        if (selected.Any(station => !StationLibrary.Matches(station, search.Query))) search.Query = "";
         RefreshLists(); MembershipChanged?.Invoke();
     }
     private void RefreshLists()
     {
-        Fill(_available, _library.Available.Where(s => StationLibrary.Matches(s, _leftSearch.Query)));
-        Fill(_mine, _library.Mine.Where(s => StationLibrary.Matches(s, _rightSearch.Query)));
+        Fill(_available, _library.Available.Where(s => StationLibrary.Matches(s, _leftSearch.Query) && StationLibrary.MatchesLanguage(s, AvailableStationsLanguageFilter)));
+        Fill(_mine, _library.Mine.Where(s => StationLibrary.Matches(s, _rightSearch.Query) && StationLibrary.MatchesLanguage(s, MyStationsLanguageFilter)));
         UpdateButtons();
+    }
+    private void UpdateLanguageButton(LanguageFilterButton button)
+    {
+        button.AccessibleName = $"語言：{button.LanguageLabel}";
+        _tips.SetToolTip(button, button.AccessibleName); button.Invalidate();
+    }
+    private void ShowLanguageMenu(LanguageFilterButton button)
+    {
+        _languageMenu.Close();
+        foreach (var item in _languageMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
+        _languageMenu.Items.Clear();
+        var scale = DeviceDpi / 96f;
+        _languageMenu.MinimumSize = new Size((int)(150 * scale), 0);
+        _languageMenu.MaximumSize = new Size((int)(150 * scale), 0);
+        foreach (var (code, label) in LanguageFilterButton.Options)
+        {
+            var item = new ToolStripMenuItem(label) { Name = $"Language_{code}", Checked = button.Language == code,
+                AutoSize = false, Size = new Size((int)(146 * scale), (int)(28 * scale)) };
+            item.Click += (_, _) =>
+            {
+                button.Language = code; UpdateLanguageButton(button);
+                RefreshLists(); _languageMenu.Close();
+            };
+            _languageMenu.Items.Add(item);
+        }
+        _languageMenu.Show(button, new Point(0, button.Height));
     }
     private static void Fill(StationListBox list, IEnumerable<Station> stations)
     {
@@ -210,7 +257,7 @@ internal sealed class StationManagerDialog : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _tips.Dispose(); _frequencyFont.Dispose(); }
+        if (disposing) { _library.OrderChanged -= RefreshLists; _languageMenu.Dispose(); _tips.Dispose(); _frequencyFont.Dispose(); }
         base.Dispose(disposing);
     }
 }

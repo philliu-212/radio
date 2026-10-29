@@ -103,6 +103,13 @@ internal sealed class PlayerCard : Panel
     }
 }
 
+internal sealed class CardTextLabel : Label
+{
+    // Label.AutoEllipsis normally shows its own tooltip for clipped text, even
+    // without a ToolTip component. Keep the ellipsis but suppress that popup.
+    protected override void OnMouseEnter(EventArgs e) { }
+}
+
 internal sealed class PlayerButton : Button
 {
     private PlayerTheme _theme = PlayerTheme.Dark;

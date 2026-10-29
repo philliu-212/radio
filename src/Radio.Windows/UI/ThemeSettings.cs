@@ -9,6 +9,7 @@ internal sealed class ThemeSettings
     public int? Volume { get; set; }
     public List<string> MyStationIds { get; set; } = [];
     public Dictionary<string, long> PlayCounts { get; set; } = [];
+    public bool StationSetupCompleted { get; set; }
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "radio.settings.json");
 
     internal static ThemeSettings Load(string? path = null)
