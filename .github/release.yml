@@ -1,0 +1,17 @@
+changelog:
+  categories:
+    - title: "新功能"
+      labels:
+        - enhancement
+    - title: "問題修正"
+      labels:
+        - bug
+    - title: "重構、建置與流程維護"
+      labels:
+        - maintenance
+    - title: "文件"
+      labels:
+        - documentation
+    - title: "其他變更"
+      labels:
+        - "*"
