@@ -6,7 +6,7 @@
 
 | 包 | 相依條件 | 啟動 |
 | --- | --- | --- |
-| Lite | Windows 10 2004 以上、.NET 8 Desktop Runtime x64 | 解壓完整資料夾，雙擊 `Radio.exe` |
+| Lite | Windows 10 2004 以上、.NET 8 Desktop Runtime x64 | 解壓完整資料夾，雙擊 `RadioMini.exe` |
 | Full | 同上 Windows，包內附 .NET runtime，不需另裝 .NET 或 SDK | 同上，必須保留整個資料夾 |
 
 兩包使用同一個 `src/Radio.Windows` 專案，功能相同，不包含 mpv／FFmpeg。仍依賴 Windows 媒體元件；Windows N 版本需 Media Feature Pack。不是單檔自解壓，也不使用 AppData／registry 存放偏好。
@@ -44,7 +44,7 @@ Full 另從實際 runtime 套件複製原始 LICENSE／NOTICE 到 `THIRD-PARTY/`
 ## 設定與驗收
 
 - `radio.settings.json` 位於程式同目錄；更新本機包時保留使用者原設定，ZIP 不附個人偏好、憑證或短效串流 URL。唯讀資料夾只支援當次調整。
-- 封裝驗收要執行解壓後的 `Radio.exe`，不是 `dotnet run`；Full 須確認實際使用包內 `coreclr.dll`。
+- 封裝驗收要執行解壓後的 `RadioMini.exe`，不是 `dotnet run`；Full 須確認實際使用包內 `coreclr.dll`。
 - 至少檢查啟動／退出、設定保存、系統匣及工作列最小化／還原；有聲播放、線上各台、長時間、睡眠／斷網恢復與實體多螢幕應依發行範圍另行驗收。
 - 開發用 console 回歸見根目錄 [README](../README.md)。離線假資料／靜音 WAV 與模擬 DPI 不替代線上串流、人工聽音或實體多螢幕驗收。
 - 不以已過期的 ZIP 大小、CPU／RAM 短測宣稱現行效能；不強制清空 working set 或 GC 美化數值。量測範圍及限制需隨當次結果交代。

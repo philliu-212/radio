@@ -15,7 +15,20 @@ using System.Drawing.Imaging;
 using System.IO;
 
 public static class RadioIconConverter {
-    private static Bitmap Resize(Bitmap source, int size) {
+    private static Rectangle ArtworkBounds(Bitmap source) {
+        int left=source.Width, top=source.Height, right=-1, bottom=-1;
+        for (int y=0; y<source.Height; y++) for (int x=0; x<source.Width; x++)
+            if (source.GetPixel(x,y).A >= 8) {
+                left=Math.Min(left,x); top=Math.Min(top,y); right=Math.Max(right,x); bottom=Math.Max(bottom,y);
+            }
+        if (right < left) throw new InvalidDataException("Source has no sufficiently visible artwork.");
+        // Ignore near-transparent outer padding only for ICO framing, not PNG
+        // pixels. One extra source pixel protects the visible antialiased edge.
+        return Rectangle.FromLTRB(Math.Max(0,left-1),Math.Max(0,top-1),
+            Math.Min(source.Width,right+2),Math.Min(source.Height,bottom+2));
+    }
+
+    private static Bitmap Resize(Bitmap source, Rectangle content, int size) {
         var result = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(result)) {
             graphics.Clear(Color.Transparent);
@@ -23,10 +36,10 @@ public static class RadioIconConverter {
             graphics.CompositingQuality = CompositingQuality.HighQuality;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            double scale = Math.Min((double)size / source.Width, (double)size / source.Height);
-            int width = Math.Max(1, (int)Math.Round(source.Width * scale));
-            int height = Math.Max(1, (int)Math.Round(source.Height * scale));
-            graphics.DrawImage(source, new Rectangle((size - width) / 2, (size - height) / 2, width, height));
+            float inset = Math.Max(.5f, size * .02f);
+            float scale = Math.Min((size - inset * 2) / content.Width, (size - inset * 2) / content.Height);
+            float width = content.Width * scale, height = content.Height * scale;
+            graphics.DrawImage(source, new RectangleF((size-width)/2, (size-height)/2, width, height), content, GraphicsUnit.Pixel);
         }
         return result;
     }
@@ -50,10 +63,11 @@ public static class RadioIconConverter {
             if (!String.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(pngPath), StringComparison.OrdinalIgnoreCase))
                 File.Copy(sourcePath, pngPath, true);
 
-            int[] sizes = { 16, 20, 24, 32, 48, 64, 128, 256 };
+            var content = ArtworkBounds(original);
+            int[] sizes = { 16, 20, 24, 32, 40, 48, 64, 128, 256 };
             var frames = new byte[sizes.Length][];
             for (int i = 0; i < sizes.Length; i++) {
-                using (var bitmap = Resize(original, sizes[i]))
+                using (var bitmap = Resize(original, content, sizes[i]))
                 using (var stream = new MemoryStream()) {
                     bitmap.Save(stream, ImageFormat.Png); frames[i] = stream.ToArray();
                 }
@@ -70,7 +84,7 @@ public static class RadioIconConverter {
                 }
                 foreach (var frame in frames) writer.Write(frame);
             }
-            Console.WriteLine("Preserved original RGBA PNG {0}x{1}; resized only eight ICO frames.", original.Width, original.Height);
+            Console.WriteLine("Preserved RGBA PNG {0}x{1}; artwork {2}; nine ICO frames with minimal transparent margins.", original.Width, original.Height, content);
         }
     }
 }

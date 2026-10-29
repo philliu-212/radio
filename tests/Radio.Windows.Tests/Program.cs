@@ -26,6 +26,13 @@ internal sealed class TestForm(string[] args) : Form
         Hide();
         try
         {
+            if (args.Contains("--icons"))
+            {
+                var index = Array.IndexOf(args, "--exe");
+                IconChecks.Run(index >= 0 && index + 1 < args.Length ? Path.GetFullPath(args[index + 1]) : null);
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--ui"))
             {
                 await UiChecks.RunAsync();
