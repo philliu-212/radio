@@ -311,12 +311,14 @@ internal static class UiChecks
         Check(ThemeSettings.Load(path) is { Volume: 73, Theme: "dark" }, "Changing theme does not reset persisted volume");
         File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"dark","Volume":200}""");
         Check(ThemeSettings.Load(path).Volume is null, "Invalid stored volume is ignored");
-        var settings = CatalogSettings(); settings.PlayCounts["pop-917"] = 12; settings.StationSetupCompleted = true;
+        var settings = CatalogSettings(); settings.PlayCounts["pop-917"] = 12; settings.StationSetupCompleted = true; settings.LastStationId = "pop-917";
         ThemeSettings.Save(settings, path);
         ThemeSettings.Save(false, 62, path);
         var restored = ThemeSettings.Load(path);
-        Check(restored.MyStationIds.SequenceEqual(settings.MyStationIds) && restored.PlayCounts["pop-917"] == 12 && restored.Volume == 62 && restored.StationSetupCompleted,
-            "Station membership, real counts and setup completion survive saving preferences and reloading");
+        Check(restored.MyStationIds.SequenceEqual(settings.MyStationIds) && restored.PlayCounts["pop-917"] == 12 && restored.Volume == 62 && restored.StationSetupCompleted && restored.LastStationId == "pop-917",
+            "Station membership, real counts, last station and setup completion survive saving preferences and reloading");
+        File.WriteAllText(path, """{"SchemaVersion":2,"Theme":"dark","LastStationId":"   "}""");
+        Check(ThemeSettings.Load(path).LastStationId is null, "Blank last station IDs are normalised away");
         restored.MyStationIds.Clear(); ThemeSettings.Save(restored, path);
         Check(ThemeSettings.Load(path).MyStationIds.Count == 0, "Explicit empty membership persists");
         File.WriteAllText(path, """{"SchemaVersion":1,"Theme":"light","Volume":45}""");
@@ -642,19 +644,20 @@ internal static class UiChecks
     {
         var settings = CatalogSettings();
         settings.Volume = 42; settings.PlayCounts["best-989"] = 12; settings.PlayCounts["pop-917"] = 3;
+        settings.LastStationId = "pop-917";
         var player = new FixturePlayer { IsMuted = true };
         using (var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), settings))
         {
             Check(player.Plays == 0, "Constructing the window never connects before it is shown");
             form.Show(); await Task.Delay(30);
-            Check(player.Plays == 1 && form.SelectedStationId == "best-989" && form.LatestStatus.State == AudioState.Opening,
-                "Startup selects and starts exactly the most successfully played favorite");
-            Check(Math.Abs(player.Volume - .42) < .001 && player.IsMuted && settings.PlayCounts["best-989"] == 12,
+            Check(player.Plays == 1 && form.SelectedStationId == "pop-917" && form.LatestStatus.State == AudioState.Opening,
+                "Startup resumes the last listened favorite even when another station has more plays");
+            Check(Math.Abs(player.Volume - .42) < .001 && player.IsMuted && settings.PlayCounts["pop-917"] == 3 && settings.PlayCounts["best-989"] == 12,
                 "Startup respects saved volume and existing mute before success; opening does not count");
             player.Emit(AudioState.Playing); await form.StartupPlaybackTask;
             player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
-            Check(form.PlayingStationId == "best-989" && settings.PlayCounts["best-989"] == 13 && player.Plays == 1,
-                "Automatic playback counts only its first real Playing event");
+            Check(form.PlayingStationId == "pop-917" && settings.PlayCounts["pop-917"] == 4 && settings.LastStationId == "pop-917" && player.Plays == 1,
+                "Automatic playback counts and records only its first real Playing event");
             form.Hide(); form.ShowPlayer(); await Task.Delay(30);
             Check(player.Plays == 1, "Hide and restore never repeat startup playback");
             Find<Button>(form, "PlayButton").PerformClick();
@@ -672,13 +675,37 @@ internal static class UiChecks
             Check(tiedPlayer.Plays == 1 && tied.SelectedStationId == "ufo-921", $"Startup ties ({count} plays) preserve existing favorite order");
             tiedPlayer.Emit(AudioState.Playing); await tied.StartupPlaybackTask; tied.Close();
         }
-        var failedSettings = CatalogSettings(); failedSettings.PlayCounts["kiss-999"] = 9;
+        var failedSettings = CatalogSettings(); failedSettings.PlayCounts["kiss-999"] = 9; failedSettings.LastStationId = "kiss-999";
         var failedPlayer = new FixturePlayer(); var failedResolver = new FixtureResolver { Fail = true };
         using var failed = new MainForm(failedPlayer, false, true, failedResolver, new FixtureMetadata(), failedSettings);
         failed.Show(); await Task.Delay(30); await failed.StartupPlaybackTask;
-        Check(failed.LatestStatus.State == AudioState.Failed && failedResolver.Calls == 1 && failedPlayer.Plays == 0 && failedSettings.PlayCounts["kiss-999"] == 9,
-            $"Failed startup leaves retry UI without counting, looping or trying another station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
+        Check(failed.LatestStatus.State == AudioState.Failed && failedResolver.Calls == 1 && failedPlayer.Plays == 0 &&
+            failedSettings.PlayCounts["kiss-999"] == 9 && failedSettings.LastStationId == "kiss-999",
+            $"Failed startup leaves retry UI without counting, looping or rewriting the last station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
         failed.Close();
+        var staleSettings = new ThemeSettings
+        {
+            MyStationIds = ["pop-917", "best-989"], PlayCounts = { ["pop-917"] = 3, ["best-989"] = 12 },
+            LastStationId = "ufo-921",
+        };
+        var stalePlayer = new FixturePlayer();
+        using var stale = new MainForm(stalePlayer, false, true, new FixtureResolver(), new FixtureMetadata(), staleSettings);
+        stale.Show(); await Task.Delay(20);
+        Check(stalePlayer.Plays == 1 && stale.SelectedStationId == "best-989",
+            "A last-station entry that is no longer a favorite falls back to the most played station");
+        stalePlayer.Emit(AudioState.Playing); await stale.StartupPlaybackTask;
+        Check(staleSettings.LastStationId == "best-989", "Successful fallback playback replaces the stale last-station reference");
+        stale.Close();
+        var followSettings = CatalogSettings();
+        var followPlayer = new FixturePlayer();
+        using (var follow = new MainForm(followPlayer, false, true, new FixtureResolver(), new FixtureMetadata(), followSettings, autoPlayOnStartup: false))
+        {
+            follow.Show(); await Task.Delay(20);
+            var playback = follow.PlayForProbeAsync("ufo-921"); followPlayer.Emit(AudioState.Playing); await playback;
+            Check(followSettings.LastStationId == "ufo-921" && followSettings.PlayCounts["ufo-921"] == 1,
+                "Any successful manual playback becomes the next startup station");
+            follow.Close();
+        }
     }
 
     private static async Task CheckCardVolumeAndTipsAsync()
