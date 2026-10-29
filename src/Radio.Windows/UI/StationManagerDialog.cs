@@ -115,7 +115,7 @@ internal sealed class StationManagerDialog : Form
     {
         var side = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, RowCount = 3, ColumnCount = 1 };
         side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 7)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 7)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         // Reserve the same trailing 12 DIP as the list's overlay scrollbar gutter.
         // Both icons are outside the complete search pill; globe ends at the row's right edge.
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = new Padding(0, 0, 12, 0) };
