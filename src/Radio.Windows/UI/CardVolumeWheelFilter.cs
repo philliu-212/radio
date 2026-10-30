@@ -20,7 +20,7 @@ internal sealed class CardVolumeWheelFilter(Control card, VolumeSlider volume, A
         _remainder %= 120;
         if (notches != 0)
         {
-            var next = Math.Clamp(volume.Value + notches * 5, volume.Minimum, volume.Maximum);
+            var next = Math.Clamp(volume.Value + notches * 2, volume.Minimum, volume.Maximum);
             if (next != volume.Value) { volume.Value = next; commit(); }
         }
         return true; // Do not also scroll the list or adjust the native TrackBar.
