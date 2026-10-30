@@ -29,6 +29,10 @@ internal sealed class StationManagerDialog : Form
 
     public StationManagerDialog(StationLibrary library, PlayerTheme theme, Font font)
     {
+        // Keep the 96-DPI baseline pending until the complete control tree exists.
+        // Otherwise ClientSize/Padding can consume initial DPI scaling before the
+        // absolute search rows/columns have been attached to the form.
+        SuspendLayout();
         _library = library; _theme = theme;
         _leftLanguage = new LanguageFilterButton(theme) { Name = "AvailableLanguageFilter" };
         _rightLanguage = new LanguageFilterButton(theme) { Name = "MyLanguageFilter" };
@@ -75,6 +79,7 @@ internal sealed class StationManagerDialog : Form
         };
         EnableBackgroundDragging(this);
         RefreshLists();
+        ResumeLayout(true);
     }
 
     // Only neutral surfaces initiate a move. Inputs, lists and buttons retain all

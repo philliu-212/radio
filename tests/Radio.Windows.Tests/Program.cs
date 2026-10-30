@@ -57,6 +57,12 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
+            if (args.Contains("--dpi-ui"))
+            {
+                await UiChecks.CheckStationManagerDpiAsync();
+                ResultExitCode = 0;
+                return;
+            }
             // Generate silence locally. These lifecycle tests never contact a radio station.
             var path = Path.GetFullPath("artifacts/playback-test.wav");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
