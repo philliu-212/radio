@@ -12,16 +12,41 @@ internal static class Program
     private static int Main(string[] args)
     {
         SetErrorMode(0x8003); // Do not let OS loader error dialogs block recovery.
-        var store = new Store(AppDomain.CurrentDomain.BaseDirectory);
+        if (args.Length != 2 || (args[0] != "--switch" && args[0] != "--worker")) return 2;
+        var requestPath = Path.GetFullPath(args[1]);
+        Store store = null;
         try
         {
-            Trace(store, "launcher started");
-            // Cross-process file locks also work for copies on separate desktops.
+            Store.RejectLinks(requestPath);
+            var request = Store.Read<SwitchRequest>(requestPath);
+            store = new Store(request.Root);
+            if (!requestPath.StartsWith(Path.Combine(store.Ota, "workers") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                Path.GetFileName(requestPath) != "request.json" || request.ParentId <= 0 || request.Arguments == null)
+                throw new InvalidDataException("Invalid switch request.");
+            if (args[0] == "--switch")
+            {
+                if (!String.Equals(Process.GetCurrentProcess().MainModule.FileName, store.UpdaterExe, StringComparison.OrdinalIgnoreCase)) return 2;
+                var worker = Path.Combine(Path.GetDirectoryName(requestPath), "updater.exe");
+                Store.RejectLinks(worker); File.Copy(store.UpdaterExe, worker, false);
+                Process.Start(new ProcessStartInfo(worker, "--worker " + Quote(requestPath)) { UseShellExecute = false, WorkingDirectory = store.Root }).Dispose();
+                return 0;
+            }
+            if (!String.Equals(Process.GetCurrentProcess().MainModule.FileName, Path.Combine(Path.GetDirectoryName(requestPath), "updater.exe"), StringComparison.OrdinalIgnoreCase)) return 2;
+            Trace(store, "switch worker started");
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(requestPath), "accepted"), "ready");
+            try
+            {
+                using (var parent = Process.GetProcessById(request.ParentId))
+                    if (parent.StartTime.ToUniversalTime().Ticks == request.ParentStart && !parent.WaitForExit(30000))
+                        throw new IOException("Player has not exited. No update applied.");
+            }
+            catch (ArgumentException) { }
             using (var launch = Acquire(store, "launch", 30000))
             {
-                if (launch == null) return 0;
-                using (var check = Acquire(store, "run", args.Contains("--restart-update") ? 30000 : 0))
-                    if (check == null) { FocusExisting(store); return 0; }
+                if (launch == null) throw new IOException("Another switch is active.");
+                using (var check = Acquire(store, "run", 30000))
+                    if (check == null) throw new IOException("Player is still running. No update applied.");
+                // The forwarding helper must exit before replacing bin/updater.exe.
                 WaitForOldChildren(store);
                 using (var update = Acquire(store, "update", 10000))
                 {
@@ -34,21 +59,22 @@ internal static class Program
                     try { store.Promote(state); }
                     catch (Exception error)
                     {
+                        Trace(store, "promotion failed: " + error);
                         if (!String.IsNullOrEmpty(state.Trial)) store.Rollback(state);
                         state.Pending = null; store.Save(state);
                         File.WriteAllText(Path.Combine(store.Ota, "last-error.txt"), "Could not promote pending package: " + error.Message);
                     }
-                    if (!Start(store, state.Current, args))
+                    if (!Start(store, state.Current, request.Arguments))
                     {
                         Trace(store, "startup failed; rolling back");
                         if (String.IsNullOrEmpty(state.Trial)) throw new IOException("Radio Mini failed to start. No trial version was installed.");
                         store.Rollback(state);
-                        if (!Start(store, state.Current, args)) throw new IOException("Both new and previous versions failed to start. Settings backup is in data/ota.");
+                        if (!Start(store, state.Current, request.Arguments)) throw new IOException("Both new and previous versions failed to start. Settings backup is in data/ota.");
                         File.WriteAllText(Path.Combine(store.Ota, "last-error.txt"), "New version failed its startup handshake; restored previous version and settings.");
                     }
-                    state.Trial = ""; store.Save(state);
+                    store.Confirm(state);
                     Trace(store, "healthy current=" + state.Current.Version);
-                    // Hashing, extraction and cleanup never occur on the switch path.
+                    // The window is already healthy; reclaim staging afterwards.
                     try { store.Cleanup(state); store.CleanupStaging(); } catch (IOException) { }
                 }
             }
@@ -56,7 +82,7 @@ internal static class Program
         }
         catch (Exception error)
         {
-            try { Directory.CreateDirectory(store.Ota); File.WriteAllText(Path.Combine(store.Ota, "launcher-error.txt"), error.ToString()); } catch { }
+            try { Directory.CreateDirectory(store.Ota); File.WriteAllText(Path.Combine(store.Ota, "updater-error.txt"), error.ToString()); } catch { }
             MessageBox.Show(error.Message, "Radio Mini", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return 1;
         }
@@ -72,13 +98,14 @@ internal static class Program
         Trace(store, "starting " + package.Version);
         var ready = Path.Combine(store.Ota, "ready-" + Guid.NewGuid().ToString("N"));
         Store.RejectLinks(ready);
-        var info = new ProcessStartInfo(Path.Combine(store.PackagePath(package), "RadioMini.exe"));
+        var info = new ProcessStartInfo(store.RootExe);
         info.UseShellExecute = false;
         info.ErrorDialog = false;
-        info.WorkingDirectory = store.PackagePath(package);
+        info.WorkingDirectory = store.Root;
         info.Arguments = String.Join(" ", args.Where(a => a != "--restart-update").Select(Quote));
-        info.EnvironmentVariables["RADIOMINI_ROOT"] = store.Root;
+        info.EnvironmentVariables["RADIOMINI_SWITCH"] = "1";
         info.EnvironmentVariables["RADIOMINI_READY"] = ready;
+        info.EnvironmentVariables["DOTNET_DISABLE_GUI_ERRORS"] = "1";
         Process process = null;
         try
         {
@@ -117,7 +144,7 @@ internal static class Program
     {
         try
         {
-            var path = Path.Combine(store.Ota, "launcher.log"); Store.RejectLinks(path);
+            var path = Path.Combine(store.Ota, "updater.log"); Store.RejectLinks(path);
             Directory.CreateDirectory(store.Ota);
             // Bound local diagnostics; no settings, stream URLs or credentials.
             if (File.Exists(path) && new FileInfo(path).Length > 262144) File.Delete(path);
@@ -128,13 +155,12 @@ internal static class Program
     private static void WaitForOldChildren(Store store)
     {
         var own = Process.GetCurrentProcess().Id;
-        foreach (var process in Process.GetProcessesByName("RadioMini"))
+        foreach (var process in Process.GetProcessesByName("updater"))
         {
             try
             {
-                if (process.Id != own && process.MainModule.FileName.StartsWith(store.Prefix, StringComparison.OrdinalIgnoreCase) &&
-                    !String.Equals(Path.GetDirectoryName(process.MainModule.FileName), store.Root, StringComparison.OrdinalIgnoreCase) && !process.WaitForExit(10000))
-                    throw new IOException("Old player process did not exit. No version was switched.");
+                if (process.Id != own && String.Equals(process.MainModule.FileName, store.UpdaterExe, StringComparison.OrdinalIgnoreCase) && !process.WaitForExit(10000))
+                    throw new IOException("Updater forwarding process did not exit.");
             }
             catch (System.ComponentModel.Win32Exception) { /* Unknown foreign/elevated processes are never killed. run.lock protects our managed owner. */ }
             catch (InvalidOperationException) { }
@@ -152,20 +178,5 @@ internal static class Program
         }
         result.Append('\\', slashes * 2); result.Append('"'); return result.ToString();
     }
-    private static void FocusExisting(Store store)
-    {
-        foreach (var process in Process.GetProcessesByName("RadioMini"))
-        {
-            try
-            {
-                if (process.MainModule.FileName.StartsWith(store.Prefix, StringComparison.OrdinalIgnoreCase) && process.MainWindowHandle != IntPtr.Zero)
-                { ShowWindow(process.MainWindowHandle, 9); SetForegroundWindow(process.MainWindowHandle); }
-            }
-            catch { }
-            finally { process.Dispose(); }
-        }
-    }
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, int command);
     [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint SetErrorMode(uint mode);
 }

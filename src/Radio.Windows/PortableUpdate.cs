@@ -74,7 +74,7 @@ internal sealed class PortableUpdate : IDisposable
             {
                 // Durable pending survives normal closes and reboots. Verify once
                 // per check in the background, never download the same ready build.
-                await Task.Run(() => _store.Verify(state.Pending), timeout.Token);
+                await Task.Run(() => { _store.Verify(state.Pending); _store.VerifyPreparedEntries(state.Pending); }, timeout.Token);
                 Publish(UpdatePhase.Ready, 100, "更新已備妥，重新啟動並更新"); return;
             }
             if (!_task.IsCompleted && _candidate is not null && _candidate.Version >= release.Version) return;
@@ -134,6 +134,7 @@ internal sealed class PortableUpdate : IDisposable
                     await Task.Run(() => _store.Verify(package), token);
                 }
                 else { Store.RejectLinks(target); Directory.Move(staged, target); }
+                _store.PrepareEntries(package, Path.Combine(work, "unpacked", "package"), Path.Combine(work, "entries"));
                 token.ThrowIfCancellationRequested();
                 state = _store.Load();
                 if (state.Current.Version != _current.ToString(3)) throw new InvalidDataException("Active version changed during preparation.");
@@ -143,6 +144,7 @@ internal sealed class PortableUpdate : IDisposable
                 { state.Pending = package; _store.Save(state); }
                 _pending = Version.Parse(state.Pending.Version);
                 await Task.Run(() => _store.Cleanup(state), token);
+                _store.CleanupEntryFiles(state);
                 Interlocked.Exchange(ref _failures, 0);
                 Publish(UpdatePhase.Ready, 100, "更新已備妥，重新啟動並更新");
             }
@@ -231,19 +233,21 @@ internal sealed class PortableUpdate : IDisposable
         }
         var packageRoot = Path.Combine(destination, "package");
         var folders = Directory.GetDirectories(packageRoot).Where(p => Regex.IsMatch(Path.GetFileName(p), "^[a-f0-9]{12}$")).ToArray();
-        if (folders.Length != 1 || !File.Exists(Path.Combine(packageRoot, "RadioMini.exe"))) throw new InvalidDataException("Not a launcher portable ZIP.");
+        if (folders.Length != 1 || !File.Exists(Path.Combine(packageRoot, "RadioMini.exe"))) throw new InvalidDataException("Not a direct-apphost portable ZIP.");
         var package = Store.Read<Package>(Path.Combine(folders[0], "package.json")); package.Validate();
         if (package.Version != release.Version.ToString(3) || package.Mode != release.Mode || Path.GetFileName(folders[0]) != package.DirectoryName) throw new InvalidDataException("ZIP version/mode/commit mismatch.");
         var allowed = package.Files.Select(f => package.DirectoryName + "/" + f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        allowed.UnionWith(["RadioMini.exe", "READ-ME.txt", "THIRD-PARTY-NOTICES.txt", "data/ota/state.json", package.DirectoryName + "/package.json"]);
+        allowed.UnionWith(["RadioMini.exe", "bin/updater.exe", "READ-ME.txt", "THIRD-PARTY-NOTICES.txt", "data/ota/state.json", package.DirectoryName + "/package.json"]);
         if (paths.Any(p => !allowed.Contains(p))) throw new InvalidDataException("Unlisted ZIP resource/data.");
         var extracted = new Store(packageRoot);
         var bootstrap = extracted.Load();
         if (bootstrap.Current.Commit != package.Commit || bootstrap.Current.Version != package.Version || bootstrap.Current.Mode != package.Mode ||
             bootstrap.Pending is not null || bootstrap.Previous is not null || !string.IsNullOrEmpty(bootstrap.Trial) ||
-            bootstrap.Current.Files.Count != package.Files.Count || package.Files.Any(file => !bootstrap.Current.Files.Any(other => other.Path == file.Path && other.Size == file.Size && other.Sha256 == file.Sha256)))
+            bootstrap.Current.Files.Count != package.Files.Count || package.Files.Any(file => !bootstrap.Current.Files.Any(other => other.Path == file.Path && other.Size == file.Size && other.Sha256 == file.Sha256)) ||
+            package.EntryFiles.Any(file => !bootstrap.Current.EntryFiles.Any(other => other.Path == file.Path && other.Size == file.Size && other.Sha256 == file.Sha256)))
             throw new InvalidDataException("Portable bootstrap state and resources differ.");
         extracted.Verify(package);
+        extracted.VerifyInstalledEntries(package);
         return package;
     }
     private static async Task<string> ReadBoundedAsync(HttpContent content, int limit, CancellationToken token)

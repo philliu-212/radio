@@ -39,6 +39,8 @@ internal static class UpdateChecks
                 var preparedMs = watch.Elapsed.TotalMilliseconds;
                 Check(updater.View.Phase == UpdatePhase.Ready && store.Load().Current.Version == "1.0.0" && store.Load().Pending.Version == "1.1.0", mode + ": 1.0 -> 1.1 prepared without switching running version");
                 Check(File.ReadAllText(store.Settings) == settings && Store.Hash(Path.Combine(store.PackagePath(first), "RadioMini.dll")) == first.Files.Single(f => f.Path == "RadioMini.dll").Sha256, mode + ": settings/running files unchanged while preparing");
+                store.VerifyInstalledEntries(first);
+                Check(true, mode + ": background preparation never replaces root apphost or installed updater");
                 var downloads = fixture.Downloads;
                 await updater.CheckNowAsync(); await updater.CheckNowAsync();
                 Check(fixture.Downloads == downloads, mode + ": ready build never downloaded repeatedly");
@@ -62,6 +64,8 @@ internal static class UpdateChecks
                 store.Rollback(saved);
                 Check(store.Load().Current.Version == "1.0.0" && File.ReadAllText(store.Settings) == settings, mode + ": unconfirmed startup/power loss rolls back package and exact data snapshot");
                 Check(File.ReadAllText(Path.Combine(store.Data, "personal.txt")) == "keep", mode + ": custom data remains intact");
+                store.VerifyInstalledEntries(first);
+                Check(true, mode + ": rollback restores both root apphost and updater bytes");
                 // Cancel an in-flight 1.1 when 1.2 appears, before there is a Ready.
                 fixture.Latest = second; fixture.Hold = true;
                 await updater.CheckNowAsync(); await fixture.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -75,7 +79,7 @@ internal static class UpdateChecks
                 }
                 // A broken newer archive and a protocol/schema mismatch must not
                 // modify data/current/pending, even when its ZIP checksum is valid.
-                foreach (var bad in new[] { "../escape", "settings", "duplicate", "symlink", "schema", "inventory" })
+                foreach (var bad in new[] { "../escape", "settings", "duplicate", "symlink", "schema", "inventory", "entry", "missing-updater" })
                 {
                     fixture.Latest = BadZip(fourth, bad);
                     await updater.CheckNowAsync(); await updater.Preparation;
@@ -104,6 +108,31 @@ internal static class UpdateChecks
                     try { using var duplicate = store.Lock("run"); throw new Exception("Duplicate process lock acquired"); }
                     catch (IOException) { Check(true, mode + ": single active data owner enforced"); }
                 }
+                state = store.Load();
+                var oldRoot = File.ReadAllBytes(store.RootExe);
+                // Permit backup reads but deny replacement of the second entry.
+                // The first entry will have changed when promotion fails.
+                using (var locked = new FileStream(store.UpdaterExe, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    try { store.Promote(state); throw new Exception("Locked updater replaced"); }
+                    catch (IOException) { store.Rollback(state); }
+                }
+                Check(File.ReadAllBytes(store.RootExe).SequenceEqual(oldRoot) && store.Load().Current.Version == "1.0.0",
+                    mode + ": second-entry replacement failure restores first entry and original state");
+                state.Pending = Store.Read<Package>(Path.Combine(store.Root, new string('c', 12), "package.json"));
+                store.Save(state); store.Promote(state); store.Confirm(state);
+                Check(state.Previous is null && state.Trial == "" && !Directory.Exists(store.PackagePath(first)) && !Directory.Exists(Path.Combine(store.Ota, "recovery")),
+                    mode + ": health confirmation removes old resources and temporary recovery entries");
+                File.WriteAllText(store.StatePath, "corrupt primary after confirmation");
+                Check(store.Load().Current.Version == "1.2.0" && store.Load().Previous is null && store.Load().Trial == "",
+                    mode + ": backup state cannot resurrect a deleted rollback package");
+                var agedWorker = Path.Combine(store.Ota, "workers", new string('a', 32));
+                var freshWorker = Path.Combine(store.Ota, "workers", new string('b', 32));
+                Directory.CreateDirectory(agedWorker); Directory.CreateDirectory(freshWorker);
+                File.WriteAllText(Path.Combine(agedWorker, "updater.exe"), "retired worker");
+                Directory.SetCreationTimeUtc(agedWorker, DateTime.UtcNow.AddDays(-2));
+                store.CleanupWorkers();
+                Check(!Directory.Exists(agedWorker) && Directory.Exists(freshWorker), mode + ": aged worker copies reclaimed without deleting fresh handoffs");
                 measurements.Add(new { Mode = mode, FixtureZipBytes = second.Bytes.Length, MemoryTransportDownloadAndPreparationMs = preparedMs,
                     StateSwitchOnlyMs = switchMs, DiskBytesBefore = before, DiskBytesAfter = DiskBytes(store.Root), Scope = "tiny offline fixture, not real portable/network/restart measurement" });
             }
@@ -121,11 +150,17 @@ internal static class UpdateChecks
     {
         var package = new Package { Version = version, Commit = commit, Mode = mode };
         var folder = Path.Combine(root, package.DirectoryName); Directory.CreateDirectory(folder);
-        foreach (var name in new[] { "RadioMini.exe", "RadioMini.dll", "RadioMini.deps.json", "RadioMini.runtimeconfig.json", "Radio.Core.dll" }.Concat(mode == "Full" ? ["coreclr.dll"] : Array.Empty<string>()))
+        foreach (var name in new[] { "RadioMini.dll", "RadioMini.deps.json", "RadioMini.runtimeconfig.json", "Radio.Core.dll" }.Concat(mode == "Full" ? ["coreclr.dll"] : Array.Empty<string>()))
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(name + version);
             File.WriteAllBytes(Path.Combine(folder, name), bytes);
             package.Files.Add(new PackageFile { Path = name, Size = bytes.Length, Sha256 = Hash(bytes) });
+        }
+        foreach (var name in new[] { "RadioMini.exe", "bin/updater.exe" })
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(name + version);
+            var path = Path.Combine(root, name); Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, bytes);
+            package.EntryFiles.Add(new PackageFile { Path = name, Size = bytes.Length, Sha256 = Hash(bytes) });
         }
         Store.Write(Path.Combine(folder, "package.json"), package); return package;
     }
@@ -139,7 +174,6 @@ internal static class UpdateChecks
     {
         Directory.CreateDirectory(directory); var root = Path.Combine(directory, "Portable"); Directory.CreateDirectory(root);
         var package = MakePackage(root, version, commit, mode);
-        File.WriteAllText(Path.Combine(root, "RadioMini.exe"), "fixture launcher");
         new Store(root).Save(new UpdateState { Current = package });
         var zip = Path.Combine(directory, "package.zip"); ZipFile.CreateFromDirectory(directory + "/Portable", zip, CompressionLevel.Optimal, true);
         return new(Version.Parse(version), mode, File.ReadAllBytes(zip));
@@ -149,7 +183,13 @@ internal static class UpdateChecks
         using var stream = new MemoryStream(); stream.Write(source.Bytes);
         using (var zip = new ZipArchive(stream, ZipArchiveMode.Update, true))
         {
-            if (kind == "schema" || kind == "inventory")
+            if (kind == "entry" || kind == "missing-updater")
+            {
+                var entry = zip.Entries.Single(e => e.FullName == (kind == "entry" ? "Portable/RadioMini.exe" : "Portable/bin/updater.exe"));
+                entry.Delete();
+                if (kind == "entry") { using var output = zip.CreateEntry("Portable/RadioMini.exe").Open(); output.WriteByte(0); }
+            }
+            else if (kind == "schema" || kind == "inventory")
             {
                 var entry = zip.Entries.Single(e => e.Name == "package.json");
                 Package package; using (var input = entry.Open()) package = (Package)new System.Runtime.Serialization.Json.DataContractJsonSerializer(typeof(Package)).ReadObject(input)!;
@@ -179,7 +219,7 @@ internal static class UpdateChecks
     {
         var old = Path.Combine(root, "old"); var target = Path.Combine(root, "new");
         Directory.CreateDirectory(old); Directory.CreateDirectory(target);
-        File.WriteAllText(Path.Combine(target, "RadioMini.exe"), "fixture launcher");
+        File.WriteAllText(Path.Combine(target, "RadioMini.exe"), "fixture apphost");
         var store = new Store(target); var package = MakePackage(target, "1.0.0", new string('a', 40), "Lite"); store.Save(new UpdateState { Current = package });
         var content = "{\"SchemaVersion\":1,\"Theme\":\"light\",\"Volume\":37,\"MyStationIds\":[\"pop-917\"],\"PlayCounts\":{\"pop-917\":9}}";
         File.WriteAllText(Path.Combine(old, "radio.settings.json"), content);

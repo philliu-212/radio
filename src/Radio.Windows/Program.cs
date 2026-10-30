@@ -7,7 +7,14 @@ internal static class Program
     {
         FileStream? runLease;
         try { if (!OtaRuntime.Initialize(args, out runLease)) return; }
-        catch (Exception error) { MessageBox.Show(error.Message, "Radio Mini", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+        catch (Exception error)
+        {
+            // A trial is supervised by the updater. Do not block its rollback
+            // with a modal startup error dialog.
+            if (Environment.GetEnvironmentVariable("RADIOMINI_READY") is null)
+                MessageBox.Show(error.Message, "Radio Mini", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Environment.ExitCode = 1; return;
+        }
         using var ownedRun = runLease;
         if (args.Contains("--probe"))
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);

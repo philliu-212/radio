@@ -22,14 +22,14 @@ Radio Portable Lite — Windows x64
 - 縮小收進系統匣並繼續播放，雙擊系統匣圖示可還原。
 - 關閉視窗會停止播放並退出。
 - 啟動及每 6 小時背景檢查正式新版，自動下載完整 Lite ZIP、驗證並準備，不影響收聽。已備妥時點箭頭「重新啟動並更新」，此時不下載、不解壓。
-- 永遠從最外層 RadioMini.exe 啟動；內層 commit hash 目錄保留完整播放器資源，不要任意移動 EXE／DLL。外層 Launcher 使用 Windows 內建 .NET Framework 4.x。
+- 最外層 RadioMini.exe 就是真正主程式；commit hash 目錄只放 DLL／資源，沒有另一個 RadioMini.exe。bin/updater.exe 僅切換時執行，使用 Windows 內建 .NET Framework 4.x。不要任意搬動檔案。
 - 設定在 data/radio.settings.json，狀態／備份／診斷在 data/ota/；保留整個 data。更新失敗保留舊版，啟動失敗可回復。程序資料夾須可寫，不提權、不安裝系統 runtime。
 
 極簡橫向介面，支援深／淺色切換。啟動播放策略等操作以該版本的專案 README／Release Notes 為準。
-主題、音量、收藏與播放次數保存在 data/radio.settings.json。首次從舊平面包升級請用新資料夾，將舊 radio.settings.json 複製到新包根目錄，首次 Launcher 會安全複製進 data，原檔保留。
+主題、音量、收藏與播放次數保存在 data/radio.settings.json。首次從舊平面包升級請用新資料夾，將舊 radio.settings.json 複製到新包根目錄，首次主程式會安全複製進 data，原檔保留。
 有官方資料時顯示節目／DJ 或預告歌曲；縮到系統匣後停止額外查詢。
 好事989 顯示依官方節目表推定的節目／DJ，非即時播出確認；歌名尚無可靠來源。
 系統匣選單可關閉資訊查詢。無資料時不顯示假內容。
 其中 Hit FM 使用 Windows 相容播放路徑，其餘使用 Windows 純音訊模式。
-不包含錄音、時移、背景分析或追蹤。背景準備不強制退出，使用者選擇重啟或下次從 Launcher 啟動才套用。
+不包含錄音、時移、背景分析或追蹤。背景準備不強制退出，選擇重啟或下次開啟主程式才套用；健康確認成功即刪除舊版及回復備份。
 本機驗證為短時間靜音測試，不代表已完成人工聽音與長時間穩定驗證。

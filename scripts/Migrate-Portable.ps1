@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $old = (Resolve-Path -LiteralPath $OldDirectory).Path.TrimEnd('\')
 $new = (Resolve-Path -LiteralPath $NewDirectory).Path.TrimEnd('\')
 if ($old -ieq $new -or $new.StartsWith($old + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Extract the new portable ZIP into a separate folder first.' }
-if (!(Test-Path -LiteralPath (Join-Path $new 'data/ota/state.json')) -or !(Test-Path -LiteralPath (Join-Path $new 'RadioMini.exe'))) { throw 'Destination is not a launcher portable package.' }
+if (!(Test-Path -LiteralPath (Join-Path $new 'data/ota/state.json')) -or !(Test-Path -LiteralPath (Join-Path $new 'RadioMini.exe'))) { throw 'Destination is not a portable package.' }
 $state = Get-Content -LiteralPath (Join-Path $new 'data/ota/state.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($state.Protocol -ne 1 -or $state.Current.DataSchema -ne 2) { throw 'Unsupported destination data schema.' }
 foreach ($process in Get-Process -Name RadioMini -ErrorAction SilentlyContinue) {

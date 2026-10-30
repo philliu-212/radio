@@ -21,6 +21,7 @@ while ($queue.Count) {
         if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Source contains a link.' }
         if ($file.PSIsContainer) { $queue.Enqueue($file.FullName); continue }
         $relative = $file.FullName.Substring($source.Length + 1).Replace('\','/')
+        if ($relative -eq 'RadioMini.exe') { continue }
         if ($relative.Length -gt 240 -or @($relative.Split('/') | Where-Object {
             $_ -notmatch '^[A-Za-z0-9_.-]+$' -or $_ -in @('.','..','radio.settings.json','package.json') -or $_.EndsWith('.') -or
             $_ -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)'
@@ -31,19 +32,24 @@ while ($queue.Count) {
         $entries += [ordered]@{ Path = $relative; Size = $file.Length; Sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
     }
 }
-foreach ($required in @('RadioMini.exe','RadioMini.dll','RadioMini.deps.json','RadioMini.runtimeconfig.json','Radio.Core.dll')) {
+foreach ($required in @('RadioMini.dll','RadioMini.deps.json','RadioMini.runtimeconfig.json','Radio.Core.dll')) {
     if ($required -notin $entries.Path) { throw "Missing resource: $required" }
 }
 if (($entries.Path -contains 'coreclr.dll') -ne ($Mode -eq 'Full')) { throw 'Publish mode mismatch.' }
 if ([Reflection.AssemblyName]::GetAssemblyName((Join-Path $target 'RadioMini.dll')).Version.ToString(3) -ne $Version) { throw 'App assembly and requested package version differ.' }
-$package = [ordered]@{ Protocol = 1; DataSchema = 2; Version = $Version; Commit = $Commit; Mode = $Mode; Files = @($entries | Sort-Object Path) }
+& (Join-Path $PSScriptRoot 'Build-AppHost.ps1') -OutputPath (Join-Path $OutputDirectory 'RadioMini.exe') -AssemblyPath (Join-Path $target 'RadioMini.dll') -RelativeDll "$hash/RadioMini.dll"
+& (Join-Path $PSScriptRoot 'Build-Updater.ps1') -OutputPath (Join-Path $OutputDirectory 'bin/updater.exe')
+$entryFiles = @(foreach ($relative in @('RadioMini.exe','bin/updater.exe')) {
+    $file = Get-Item -LiteralPath (Join-Path $OutputDirectory $relative)
+    [ordered]@{ Path = $relative; Size = $file.Length; Sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+})
+$package = [ordered]@{ Protocol = 1; DataSchema = 2; Version = $Version; Commit = $Commit; Mode = $Mode; Files = @($entries | Sort-Object Path); EntryFiles = $entryFiles }
 $state = [ordered]@{ Protocol = 1; Current = $package; Pending = $null; Previous = $null; Trial = '' }
 $ota = Join-Path $OutputDirectory 'data/ota'
 New-Item -ItemType Directory -Path $ota -Force | Out-Null
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $target 'package.json'), ($package | ConvertTo-Json -Depth 8), $utf8)
 [IO.File]::WriteAllText((Join-Path $ota 'state.json'), ($state | ConvertTo-Json -Depth 10), $utf8)
-& (Join-Path $PSScriptRoot 'Build-Launcher.ps1') -OutputPath (Join-Path $OutputDirectory 'RadioMini.exe')
 foreach ($doc in @('READ-ME.txt','THIRD-PARTY-NOTICES.txt')) {
     if (Test-Path -LiteralPath (Join-Path $source $doc)) { Copy-Item -LiteralPath (Join-Path $source $doc) -Destination (Join-Path $OutputDirectory $doc) }
 }

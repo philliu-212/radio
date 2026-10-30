@@ -1,10 +1,54 @@
 # OTA 驗收紀錄（v0.5.0 重作候選）
 
+## 2026-10-30：根主程式＋獨立 updater（本次驗收）
+
+本機 Windows x64；唯一入口為根 `RadioMini.exe`，沒有 Launcher 或內層同名播放器 EXE。根 EXE 為 222,208 bytes，內部 updater 為 94,720 bytes。兩個模式的根 ProductName／FileDescription 都是 `Radio Mini`，FileVersion 與播放器版本一致；平常啟動沒有 updater 程序，Full 實際從 hash 內載入 coreclr.dll。
+
+使用目前程式碼 publish 的 1.0／1.1／1.2 測試包及合成 identity，**不發行**。完整 ZIP 經 loopback TCP/HTTP，空收藏、`--no-autoplay --no-update-check`，不連線廣播；不是 GitHub WAN／人工聽音測試。
+
+| Latest Wins 1.0→待 1.1→待 1.2→直升 1.2 | Lite | Full |
+| --- | ---: | ---: |
+| 1.1 ZIP | 6,351,502 bytes | 76,319,262 bytes |
+| 1.1 背景下載＋SHA-256 驗證 | 0.402 秒 | 0.911 秒 |
+| 1.1 解壓＋完整檔案驗證＋準備 | 0.859 秒 | 9.870 秒 |
+| 1.2 ZIP | 6,351,510 bytes | 76,319,268 bytes |
+| 1.2 背景下載＋SHA-256 驗證 | 0.400 秒 | 0.906 秒 |
+| 1.2 解壓＋準備＋淘汰舊 Pending | 0.889 秒 | 10.563 秒 |
+| 重啟請求→新版主視窗 | **3.081 秒** | **2.954 秒** |
+| 初始磁碟用量 | 22,754,880 bytes | 190,793,201 bytes |
+| 最新 Pending 備妥 | 45,507,935 bytes | 381,527,653 bytes |
+| 健康成功後（已刪舊資源與回復備份） | 22,849,546 bytes | 190,859,405 bytes |
+
+另跑正常 1.0→1.1 兩模式皆通過，重啟為 Lite 3.766 秒／Full 3.630 秒；這是單機單輪量測，不是效能上限或統計分位數。
+
+四輪都驗證：背景不中止原程序／不替換根入口、重查零重複下載、單一資料 owner、名稱／版本同步、沒有內層播放器 EXE、成功刪舊版與設定保存，以及以下四種真實 updater 回復：
+
+- 無效 PE：換入的根 EXE 無法啟動，還原入口及設定。
+- 錯誤資源綁定：有效 apphost 載入另一個 package，managed 初始化拒絕，不誤判健康成功。
+- 缺少 managed DLL：換入的真實 apphost 指向已移除的 hash；關閉 .NET GUI error，偵測退出並回復。
+- 鎖住 bin/updater.exe：允許備份讀取但拒絕第二入口替換；第一入口已替換後仍能完整回復。
+
+原始報告不進 Git：`artifacts/ota-integration-<id>/result.json`。Latest Wins：Lite `71f0ca4f901047ff8932354d13ea05f0`、Full `a656e5ff7197406c923e0b4774b91dce`；正常：Lite `42960a6c2c7243018bde7585c3e0d7cf`、Full `65c413aef2ac4c94a933265c97340b89`。
+
+時間量測從腳本寫入相同 SwitchRequest／啟動 bin/updater.exe、關閉舊視窗，到新根程序 MainWindowHandle 非零；不是人工點擊或首幀追蹤。背景時間為狀態轉換 Stopwatch，磁碟為檔案長度總和，不含 NTFS allocation／尖峰 ZIP 空間。無效新包注入用於切換測試，不代表背景 verifier 會接受未通過雜湊的包。
+
+本次建置、Core console、Windows `--ui`／`--system`／`--updates` 均通過。新增離線測試覆蓋兩入口 SHA-256／缺少 updater、背景不替換入口、第二入口替換失敗、成功清除 Previous／備份、損毀主 state 不會從 `.bak` 復活已刪版本、延後回收舊 worker 副本。PowerShell 語法檢查通過。CI 已加入同樣兩模式整合流程，但尚未在 GitHub hosted runner 執行，不聲稱 CI 已通過。
+
+失敗輪次也保留在 artifacts：早期 `c042...`／`6438...` 的新寫入 PE 暫存目錄搬移被 Windows 拒絕；`9de9...` 的入口替換遇到檔案占用並回到舊版，不能算成功升級。加入有限次 I/O 重試、測試釋放已退出程序 handle 後重建並重跑，以上四輪才是最終通過結果；未停用安全軟體或停止使用者的既有包。
+
+限制仍見文末與 [ota.md](ota.md)：尤其無常駐 Launcher 時，斷電後若 apphost 在 managed 初始化前就載入失敗，需手動恢復已知良好 Portable；首次試啟有 updater 監督時可自動回復。這次未移動 v0.5.0 tag、未合併 PR、未公開 Release。
+
+---
+
+## 以下為 2026-10-29 舊 Launcher 候選的歷史紀錄（已被取代）
+
+**以下數字不是目前無 Launcher 架構的驗收，僅保留歷史重跑紀錄。**
+
 2026-10-29，本機 Windows x64。不是新的正式 Release，原 v0.5.0 已撤回 draft，未移動 tag。
 
 ## 真實 Portable／程序測試
 
-使用目前播放器原始碼另建 `1.0.0`／`1.1.0`／`1.2.0` 測試包（合成測試 identity，不發行），實際 .NET 8 WinForms＋穩定 .NET Framework Launcher。完整 ZIP 經 loopback TCP/HTTP 傳輸，**不是 GitHub WAN 速度**；空收藏、`--no-autoplay --no-update-check`，不連線廣播。
+使用當時播放器原始碼另建 `1.0.0`／`1.1.0`／`1.2.0` 測試包（合成測試 identity，不發行），實際 .NET 8 WinForms＋穩定 .NET Framework Launcher。完整 ZIP 經 loopback TCP/HTTP 傳輸，**不是 GitHub WAN 速度**；空收藏、`--no-autoplay --no-update-check`，不連線廣播。
 
 | 項目 | Lite | Full |
 | --- | ---: | ---: |
