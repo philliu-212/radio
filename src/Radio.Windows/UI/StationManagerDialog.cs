@@ -155,6 +155,7 @@ internal sealed class StationManagerDialog : Form
             var index = list.IndexFromPoint(0, single.Top + single.Height / 2);
             if (index < 0) return;
             var state = graphics.Save();
+            graphics.SetClip(single.ClientRectangle, System.Drawing.Drawing2D.CombineMode.Intersect);
             graphics.TranslateTransform(-single.Left, -single.Top);
             DrawStation(list, new DrawItemEventArgs(graphics, Font, list.GetItemRectangle(index), index,
                 list.GetSelected(index) ? DrawItemState.Selected : DrawItemState.None));
@@ -176,7 +177,13 @@ internal sealed class StationManagerDialog : Form
             if (index >= 0 && list.GetItemRectangle(index).Bottom > list.ClientSize.Height) index = -1;
             var hoveredId = index >= 0 ? ((Station)list.Items[index]).Id : null;
             var now = Environment.TickCount64;
-            if (animation.SetHovered(hoveredId, now)) _hoverTimer.Start();
+            if (animation.SetHovered(hoveredId, now))
+            {
+                _hoverTimer.Start();
+                // Hover owns the active row; moving the pointer must not transfer it.
+                list.ClearSelected();
+                if (index >= 0) list.SetSelected(index, true);
+            }
             if (hoveredId is not null) arrowStationId = hoveredId;
             var arrowIndex = list.Items.Cast<Station>().Select((station, i) => (station, i))
                 .Where(item => item.station.Id == arrowStationId).Select(item => item.i).DefaultIfEmpty(-1).First();
@@ -191,6 +198,22 @@ internal sealed class StationManagerDialog : Form
             single.Visible = true; single.BringToFront();
         }
         list.MouseMove += (_, _) => PositionArrows();
+        single.Click += (_, _) =>
+        {
+            var index = list.IndexFromPoint(single.Left + single.Width / 2, single.Top + single.Height / 2);
+            if (index < 0) return;
+            list.ClearSelected(); list.SetSelected(index, true);
+        };
+        list.MouseClick += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left || e.X >= list.ItemContentWidth) return;
+            var index = list.IndexFromPoint(e.Location);
+            if (index < 0 || !list.GetItemRectangle(index).Contains(e.Location)) return;
+            // Native MultiSimple may toggle the hovered row off on mouse-down.
+            // A row click always moves that one row, never another selection.
+            list.ClearSelected(); list.SetSelected(index, true);
+            Transfer(list, add);
+        };
         list.MouseLeave += (_, _) => PositionArrows();
         list.Invalidated += (_, _) => PositionArrows();
         single.MouseLeave += (_, _) => { list.RefreshPointerHover(); PositionArrows(); list.Invalidate(); };
@@ -270,7 +293,8 @@ internal sealed class StationManagerDialog : Form
         var selected = (e.State & DrawItemState.Selected) != 0;
         using var path = RoundedShape.Create(bounds, Dip(5));
         var progress = _hoverAnimations[list].Progress(station.Id, Environment.TickCount64);
-        using var brush = new SolidBrush(selected ? _theme.Selection : StationHoverAnimation.Blend(_theme.Row, _theme.Hover, progress));
+        using var brush = new SolidBrush(selected && !_hoverAnimations[list].IsHovered(station.Id)
+            ? _theme.Selection : StationHoverAnimation.Blend(_theme.Row, _theme.Hover, progress));
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias; e.Graphics.FillPath(brush, path);
         var extra = 18 * progress;
         var leading = list == _mine ? 6 + extra : 7;
@@ -278,18 +302,19 @@ internal sealed class StationManagerDialog : Form
         int Offset(double value) => (int)Math.Round(value * scale);
         TextRenderer.DrawText(e.Graphics, station.Id == "bcc-ilike" ? "中廣流行網" : station.Name, Font,
             new Rectangle(bounds.X + Offset(leading), bounds.Y, Math.Max(1, bounds.Width - Offset(leading + trailing + 35)), bounds.Height), _theme.Text,
-            TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+            TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine |
+            TextFormatFlags.PreserveGraphicsTranslateTransform | TextFormatFlags.PreserveGraphicsClipping);
         TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
             new Rectangle(bounds.Right - Offset(trailing + 34), bounds.Y, Dip(34), bounds.Height), _theme.Muted,
-            TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+            TextFormatFlags.PreserveGraphicsTranslateTransform | TextFormatFlags.PreserveGraphicsClipping);
         if (progress > 0)
         {
             var add = list == _available;
             var arrow = new Rectangle(add ? bounds.Right - Dip(19) : bounds.Left + Dip(7),
                 e.Bounds.Top + (e.Bounds.Height - Dip(15)) / 2, Dip(12), Dip(15));
-            var color = (add ? _add : _remove).Enabled ? _theme.Accent : _theme.Track;
             GlyphPainter.Draw(e.Graphics, add ? PlayerGlyph.ChevronRight : PlayerGlyph.ChevronLeft,
-                arrow, Color.FromArgb((int)Math.Round(255 * progress), color));
+                arrow, Color.FromArgb((int)Math.Round(255 * progress), _theme.Accent));
         }
     }
     protected override void OnShown(EventArgs e)
@@ -350,6 +375,8 @@ internal sealed class StationHoverAnimation
         var eased = 1 - Math.Pow(1 - t, 3); // Cubic ease-out, continuous on reversal.
         return row.From + (row.To - row.From) * eased;
     }
+
+    internal bool IsHovered(string id) => id == _hoveredId;
 
     internal bool IsAnimating(double now) => _rows.Values.Any(row => row.From != row.To && now - row.Started < DurationMilliseconds);
 
