@@ -5,6 +5,17 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        FileStream? runLease;
+        try { if (!OtaRuntime.Initialize(args, out runLease)) return; }
+        catch (Exception error)
+        {
+            // A trial is supervised by the updater. Do not block its rollback
+            // with a modal startup error dialog.
+            if (Environment.GetEnvironmentVariable("RADIOMINI_READY") is null)
+                MessageBox.Show(error.Message, "Radio Mini", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Environment.ExitCode = 1; return;
+        }
+        using var ownedRun = runLease;
         if (args.Contains("--probe"))
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         ApplicationConfiguration.Initialize();
@@ -13,6 +24,7 @@ internal static class Program
             try
             {
                 var probe = new ProbeForm(args);
+                probe.Shown += (_, _) => probe.BeginInvoke(OtaRuntime.Healthy);
                 Application.Run(probe);
                 Environment.ExitCode = probe.ResultExitCode;
             }
@@ -28,7 +40,12 @@ internal static class Program
         }
         else
         {
-            try { Application.Run(new MainForm(PlayerBackend.Create(args), autoPlayOnStartup: !args.Contains("--no-autoplay"))); }
+            try
+            {
+                using var form = new MainForm(PlayerBackend.Create(args), autoPlayOnStartup: !args.Contains("--no-autoplay"), checkUpdates: !args.Contains("--no-update-check"));
+                form.Shown += (_, _) => form.BeginInvoke(OtaRuntime.Healthy);
+                Application.Run(form);
+            }
             catch (Exception error) when (error is FileNotFoundException or ArgumentException)
             {
                 MessageBox.Show(error.Message, "Radio", MessageBoxButtons.OK, MessageBoxIcon.Warning);

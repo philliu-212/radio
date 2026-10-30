@@ -3,17 +3,19 @@ param([string]$ProjectRoot, [switch]$SelfContained)
 $ErrorActionPreference = 'Stop'
 if (!$ProjectRoot) { $ProjectRoot = Split-Path $PSScriptRoot -Parent }
 $mode = if ($SelfContained) { 'Full' } else { 'Lite' }
+$Commit = (& git -C $ProjectRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $Commit -notmatch '^[a-f0-9]{40}$') { throw 'A real Git commit is required.' }
+if (& git -C $ProjectRoot diff --name-only HEAD) { throw 'Commit tracked changes before release packaging.' }
 $project = Join-Path $ProjectRoot 'src/Radio.Windows/Radio.Windows.csproj'
 [xml]$projectXml = Get-Content -Raw -LiteralPath $project
 $version = [string]($projectXml.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Expected a major.minor.patch Version in the app project.' }
 $name = 'Radio-Portable-v' + $version + '-' + $mode + '-win-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 $output = Join-Path $ProjectRoot ('dist/' + $name)
-$updateOutput = Join-Path $ProjectRoot ('dist/Radio-Update-v' + $version + '-win-x64')
-if (Test-Path (Join-Path $updateOutput "Radio-Update-v$version-$mode-win-x64.json")) { throw 'Update assets for this version/mode already exist. Move the previous output before rebuilding.' }
+$payload = Join-Path $ProjectRoot ('artifacts/publish-payload/' + $mode + '-' + [Guid]::NewGuid().ToString('N'))
 if (Test-Path $output) { throw 'Output already exists. No files have been replaced.' }
 $arguments = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained',
-    $SelfContained.IsPresent.ToString().ToLowerInvariant(), '-o', $output,
+    $SelfContained.IsPresent.ToString().ToLowerInvariant(), '-o', $payload,
     '--artifacts-path', (Join-Path $ProjectRoot ('artifacts/release-build/' + $mode)),
     '-p:DebugType=None', '-p:DebugSymbols=false', '-p:PublishSingleFile=false', '--nologo')
 if ($SelfContained) {
@@ -23,8 +25,8 @@ if ($SelfContained) {
 & dotnet @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Portable publish failed.' }
 $readme = if ($SelfContained) { 'docs/portable-full-readme.txt' } else { 'docs/portable-readme.txt' }
-Copy-Item (Join-Path $ProjectRoot $readme) (Join-Path $output 'READ-ME.txt')
-Copy-Item (Join-Path $ProjectRoot 'docs/third-party-notices.txt') (Join-Path $output 'THIRD-PARTY-NOTICES.txt')
+Copy-Item (Join-Path $ProjectRoot $readme) (Join-Path $payload 'READ-ME.txt')
+Copy-Item (Join-Path $ProjectRoot 'docs/third-party-notices.txt') (Join-Path $payload 'THIRD-PARTY-NOTICES.txt')
 if ($SelfContained) {
     $assets = Get-Content -Raw (Join-Path $ProjectRoot ('artifacts/release-build/' + $mode + '/obj/Radio.Windows/project.assets.json')) | ConvertFrom-Json
     $cache = @($assets.packageFolders.PSObject.Properties.Name)[0]
@@ -32,19 +34,23 @@ if ($SelfContained) {
         $packagePath = Join-Path $cache ($id + '/' + $runtime.version)
         $notices = Get-ChildItem -LiteralPath $packagePath -File -ErrorAction Stop | Where-Object { $_.Name -match 'LICENSE|NOTICE' }
         if (!$notices) { throw "No original runtime notices found for $id." }
-        $noticeOutput = Join-Path $output ('THIRD-PARTY/' + $id)
+        $noticeOutput = Join-Path $payload ('THIRD-PARTY/' + $id)
         New-Item -ItemType Directory -Path $noticeOutput -Force | Out-Null
         $notices | Copy-Item -Destination $noticeOutput
     }
 }
-$unexpected = if (!$SelfContained) { Get-ChildItem -LiteralPath $output -File | Where-Object {
+$unexpected = if (!$SelfContained) { Get-ChildItem -LiteralPath $payload -File | Where-Object {
     $_.Name -notin @('RadioMini.exe', 'RadioMini.dll', 'RadioMini.deps.json', 'RadioMini.runtimeconfig.json', 'Radio.Core.dll',
         'Microsoft.Windows.SDK.NET.dll', 'WinRT.Runtime.dll', 'READ-ME.txt', 'THIRD-PARTY-NOTICES.txt')
 } }
 if ($unexpected) { throw 'Unexpected package files found. Inspect the output before distributing it.' }
-if (Test-Path (Join-Path $output 'mpv.exe')) { throw 'Portable packages must not contain mpv.' }
-& (Join-Path $PSScriptRoot 'New-UpdateAssets.ps1') -InputDirectory $output -OutputDirectory $updateOutput -Version $version -Mode $mode
+if (Test-Path (Join-Path $payload 'mpv.exe')) { throw 'Portable packages must not contain mpv.' }
+& (Join-Path $PSScriptRoot 'New-PortableLayout.ps1') -InputDirectory $payload -OutputDirectory $output -Version $version -Commit $Commit -Mode $mode
 Compress-Archive -LiteralPath $output -DestinationPath ($output + '.zip')
+$checksum = (Get-FileHash -LiteralPath ($output + '.zip') -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $name + '.zip'
+$sums = Join-Path $ProjectRoot ('dist/SHA256SUMS-v' + $version + '.txt')
+$previous = if (Test-Path -LiteralPath $sums) { @(Get-Content -LiteralPath $sums | Where-Object { $_ -notmatch ('Radio-Portable-v' + [regex]::Escape($version) + '-' + $mode + '-win-x64-') }) } else { @() }
+[IO.File]::WriteAllLines($sums, @($previous) + @($checksum), [Text.UTF8Encoding]::new($false))
 $size = (Get-ChildItem -LiteralPath $output -File -Recurse | Measure-Object Length -Sum).Sum
 Write-Output "Portable folder: $output"
 Write-Output "ZIP: $output.zip"

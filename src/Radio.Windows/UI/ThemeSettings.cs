@@ -13,7 +13,7 @@ internal sealed class ThemeSettings
     // startup; removed or unknown IDs fall back to the play-count ordering.
     public string? LastStationId { get; set; }
     public bool StationSetupCompleted { get; set; }
-    private static string FilePath => Path.Combine(AppContext.BaseDirectory, "radio.settings.json");
+    private static string FilePath => OtaRuntime.SettingsPath;
 
     internal static ThemeSettings Load(string? path = null)
     {

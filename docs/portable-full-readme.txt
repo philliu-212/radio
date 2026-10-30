@@ -19,12 +19,12 @@ Hit FM 使用 Windows 相容播放路徑，其餘使用 Windows 純音訊模式�
 播放中按方形停止會斷開來源，再次播放回到直播；不提供暫停時移。
 縮小會收進系統匣並繼續播放；雙擊系統匣圖示可還原。
 關閉視窗會停止並退出。
-有正式新版時右上角顯示下載箭頭；點擊後只下載 Full 清單中新增／修改／缺少的檔案，驗證並重啟，保留設定。runtime 沒變就不下載，不退回整包下載。下載期間繼續播放。
-只刪除上版 radio.update-manifest.json 追蹤且未被手動修改的過時檔案；請保留該清單。自建檔案與設定不刪除，修改過的待刪檔會提示先備份／移走。
-啟動及每小時背景檢查 GitHub Release；更新需要可寫資料夾及 Windows PowerShell。失敗可重試或手動下載，記錄位於 %TEMP%/RadioMini-update-*/result.txt。
+啟動及每 6 小時背景檢查正式新版，自動下載完整 Full ZIP、驗證並準備，不影響收聽。已備妥時點箭頭「重新啟動並更新」，此時不下載、不解壓。
+最外層 RadioMini.exe 就是真正主程式；commit hash 目錄只有 DLL／資源與 .NET runtime，沒有另一個 RadioMini.exe。bin/updater.exe 僅切換時執行，使用 Windows 內建 .NET Framework 4.x。不要任意搬動檔案。健康確認成功即刪除舊版及回復備份。
+設定在 data/radio.settings.json，狀態／備份／診斷在 data/ota/；保留整個 data。更新失敗保留舊版，啟動失敗可回復。資料夾須可寫，不提權。
 
 極簡橫向介面，支援深／淺色切換。啟動播放策略等操作以該版本的專案 README／Release Notes 為準。
-主題、音量、收藏與播放次數保存在同資料夾的 radio.settings.json；唯讀資料夾則僅當次有效。
+主題、音量、收藏與播放次數保存在 data/radio.settings.json。首次從舊平面包升級請用新資料夾，將舊 radio.settings.json 複製到新包根目錄，首次主程式會安全複製進 data，原檔保留。
 有官方資料時顯示節目／DJ 或預告歌曲；縮到系統匣後停止額外查詢。
 好事989 顯示依官方節目表推定的節目／DJ，非即時播出確認；歌名尚無可靠來源。
 系統匣選單可關閉資訊查詢。無資料時不顯示假內容。

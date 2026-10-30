@@ -26,6 +26,12 @@ internal sealed class TestForm(string[] args) : Form
         Hide();
         try
         {
+            if (args.Contains("--ota-stage"))
+            {
+                await OtaPackageChecks.StageAsync(args);
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--updates"))
             {
                 await UpdateChecks.RunAsync();

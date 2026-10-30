@@ -1,81 +1,92 @@
-# Windows portable 封裝指引
+# Windows Portable 與背景 OTA
 
-此文件只記錄現行封裝方式，不再混放歷代 UI 草稿、效能表或「尚未實作」的舊計畫。歷史驗證結果請查 Git／Issue／PR；本文件不是新版本已完成線上或人工驗收的宣告。
+播放器仍是 .NET 8 WinForms（Windows 10 2004+／Windows 11 x64，需媒體元件）；不是 single-file、不含 mpv／FFmpeg。
 
-## Lite 與 Full
-
-| 包 | 相依條件 | 啟動 |
+| 包 | 播放器相依 | 啟動 |
 | --- | --- | --- |
-| Lite | Windows 10 2004 以上、.NET 8 Desktop Runtime x64 | 解壓完整資料夾，雙擊 `RadioMini.exe` |
-| Full | 同上 Windows，包內附 .NET runtime，不需另裝 .NET 或 SDK | 同上，必須保留整個資料夾 |
+| Lite | 已安裝 .NET 8 Desktop Runtime x64 | 最外層 `RadioMini.exe` |
+| Full | hash 目錄內附 .NET runtime | 同上，保留整個資料夾 |
 
-兩包使用同一個 `src/Radio.Windows` 專案，功能相同，不包含 mpv／FFmpeg。仍依賴 Windows 媒體元件；Windows N 版本需 Media Feature Pack。不是單檔自解壓，也不使用 AppData／registry 存放偏好。Lite／Full 共用檔案級增量更新引擎，只用各自的檔案清單；Full 的 runtime 沒變就不下載，Lite 不會安裝系統 runtime。
+根 EXE 是真正的 .NET 8 原生 apphost，直接載入 hash 內 RadioMini.dll，圖示、產品名稱、描述與版本均屬 Radio Mini；沒有內層同名 EXE 或另一個 Launcher 版號。獨立 updater 只在切換時使用 Windows 內建 .NET Framework 4.x，不另帶 runtime、不需安裝或管理員權限。Full 從自己的 hash 目錄載入 runtime。Windows N 仍需 Media Feature Pack。資料夾須可寫；不改 AppData／registry 存放偏好。
 
-版號以 `src/Radio.Windows/Radio.Windows.csproj` 為準；Full runtime 版本／來源以 `scripts/runtime-package.json` 為準。**.NET 8 支援於 2026-11-10 結束**，長期發行前需另行升級受支援的 runtime，不把舊版實驗機的 runtime 當成發行版本。
+```text
+Radio-Portable-v0.5.0-Full-win-x64-時間/
+  RadioMini.exe                 # 真正主程式，捷徑指向這裡
+  bin/
+    updater.exe                 # 只在切換時執行
+  READ-ME.txt
+  THIRD-PARTY-NOTICES.txt
+  0123456789ab/                  # Git commit 前 12 碼，不是版號目錄
+    RadioMini.dll
+    RadioMini.deps.json
+    RadioMini.runtimeconfig.json
+    package.json                # 完整 commit、版本、模式、協定、資料 schema、檔案雜湊
+    ...                         # 原生相依、Full runtime、授權文件
+  data/
+    radio.settings.json
+    ota/
+      state.json                # Current／Pending；Previous／Trial 僅試啟期
+      state.json.bak
+      ...                       # lock、診斷、資料回復備份與 staging，全在此處
+```
 
-目前版號採 `major.feature.fix`：新增功能升第二碼，問題修正升第三碼；本次含增量更新功能的版本為 **v0.5.0**。
+## 建置與發行
 
-## 開發與發行分開
+版號採 `major.feature.fix`：新增功能升第二碼，修正升第三碼。版號以 `src/Radio.Windows/Radio.Windows.csproj` 為準。Full runtime 來源／版本以 `scripts/runtime-package.json` 為準；**.NET 8 於 2026-11-10 結束支援**，長期版本需另外升級，不把此 OTA 工作宣稱為 runtime 支援年限已解決。
 
-- 平常用根目錄 `Run.cmd` 建置並執行 Debug，不會產生發行包。
-- 只有收到發行授權才執行根目錄 `Release.cmd`；它依序產生 Lite／Full 資料夾與 ZIP，成功後開啟 `dist/`。不為一般開發自動封裝。
-- 中間產物在 `artifacts/release-build/`，不更新開發用 `bin`。新包使用含版號及時間的資料夾，不覆寫／刪除舊包或舊設定。
-- 舊 `Build-Portable.cmd`、`scripts/Publish-Portable.ps1` 與 `src/Radio.Portable` 已移除，不再使用。
-
-需要 .NET 8 SDK。可在已信任的 PowerShell 工作階段分別執行：
+- 平常 `Run.cmd`／`dotnet run` 保持原開發流程，不包版、不檢查 OTA。
+- 明確授權封裝後，先提交程式碼，再用 `Release.cmd`，或分別執行下列指令。不得有未提交的 tracked 修改；版本目錄名稱來自實際 `git rev-parse HEAD`。
+- `Publish-Release.ps1` 分別 publish Lite／Full 到 `artifacts/publish-payload/`；`New-PortableLayout.ps1` 產生 hash 資源目錄、Files／EntryFiles 清單及初始 state，`Build-AppHost.ps1` 呼叫 SDK HostWriter 產生根入口（相對 hash/DLL），`Build-Updater.ps1` 以 Windows Framework compiler 編譯切換工具，最後產生完整 ZIP 與 `SHA256SUMS-v版本.txt`。不覆蓋舊資料夾或設定。
 
 ```powershell
-# Lite
 powershell -NoProfile -File scripts/Publish-Release.ps1
-# Full
 powershell -NoProfile -File scripts/Publish-Release.ps1 -SelfContained
 ```
 
-不擅自修改全機 PowerShell 執行政策。失敗必須檢查輸出，不能把部分包當成成功發行。輸出格式為 `dist/Radio-Portable-v版本-{Lite|Full}-win-x64-時間/` 及同名 ZIP；產物不進 Git。
+Release **只有兩個完整 ZIP 與一份 SHA256SUMS**，不逐檔發布。ZIP 就是手動安裝與 OTA 共用的包，包含一個最外層資料夾。不提交 `dist/`／`artifacts/` 或使用者設定。
 
-### 增量更新資產（僅授權封裝時產生）
+`.github/workflows/portable-draft.yml` 只能手動觸發，對已授權建立的 tag 建置、測試，再呼叫 `Publish-GitHubRelease.ps1` 建立 **draft**；不自行建立／移動 tag、不公開 Release。若既有 tag／draft 指向別的建置或含舊協定資產，必須先由人確認如何處理，不會偷偷覆蓋。正式公開前核對兩個 ZIP／SHA256SUMS、GitHub ZIP `sha256:` digest，再另行授權設為 latest。
 
-`Publish-Release.ps1` 在 ZIP 前呼叫 `New-UpdateAssets.ps1`，並產生：
-
-- Portable 資料夾內的 `radio.update-manifest.json`：此包管理的檔案與 SHA-256 基準，包含在手動安裝 ZIP，不含設定、不自我引用。
-- 共用 `dist/Radio-Update-v版本-win-x64/`：`Radio-Update-v版本-Lite-win-x64.json`、`Radio-Update-v版本-Full-win-x64.json` 及 `Radio-File-<壓縮檔 SHA-256>.gz`。每個物件只有一個檔案，兩模式相同內容去重共用；清單記錄原檔及壓縮檔的大小、SHA-256、相對路徑與資產名。
-- 同版本／類型的既有清單不覆寫；重新打包前先移走舊的該版本更新輸出，避免混用不同建置。不能只替換清單而沿用不符的 ZIP。
-
-正式發行時，除了手動安裝 ZIP，**必須把共用更新資料夾內所有 JSON 和 GZ 檔以原檔名上傳到同一個 `v版本` GitHub Release 根層級資產**，不是再把該資料夾壓成一個 ZIP。確認 GitHub 清單資產已有 `sha256:` digest、兩模式清單版本正確，且引用的所有物件皆存在，才把 Release 設為 latest。使用者端沒有整包下載備援；缺清單則不顯示箭頭，缺物件則安全中止並保留舊版。
-
-`New-UpdateAssets.ps1` 可對小型離線 fixture 驗證清單／壓縮協定，不會執行建置或發行；這不等於已驗收完整 Lite／Full 封裝。
-
-## 必須保留的 docs 檔案
-
-`scripts/Publish-Release.ps1` 會依模式複製：
-
-- `docs/portable-readme.txt` → Lite 的 `READ-ME.txt`。
-- `docs/portable-full-readme.txt` → Full 的 `READ-ME.txt`。
-- `docs/third-party-notices.txt` → 兩包的 `THIRD-PARTY-NOTICES.txt`。
-
-Full 另從實際 runtime 套件複製原始 LICENSE／NOTICE 到 `THIRD-PARTY/`。不能只刪授權通知來縮小檔案，也不能因 `docs` 不是執行相依就整目錄刪除。
-
-## 設定與驗收
-
-- `radio.settings.json` 位於程式同目錄；更新本機包時保留使用者原設定，ZIP 不附個人偏好、憑證或短效串流 URL。唯讀資料夾只支援當次調整。
-- 封裝驗收要執行解壓後的 `RadioMini.exe`，不是 `dotnet run`；Full 須確認實際使用包內 `coreclr.dll`。
-- 至少檢查啟動／退出、設定保存、系統匣及工作列最小化／還原；有聲播放、線上各台、長時間、睡眠／斷網恢復與實體多螢幕應依發行範圍另行驗收。
-- 開發用 console 回歸見根目錄 [README](../README.md)。離線假資料／靜音 WAV 與模擬 DPI 不替代線上串流、人工聽音或實體多螢幕驗收。
-- 不以已過期的 ZIP 大小、CPU／RAM 短測宣稱現行效能；不強制清空 working set 或 GC 美化數值。量測範圍及限制需隨當次結果交代。
+封裝保留 Lite／Full readme、`THIRD-PARTY-NOTICES.txt`，Full 另保留實際 runtime 原始 LICENSE／NOTICE。不能以縮小體積為由刪除。
 
 ## 一鍵更新
 
-- 僅已封裝的 `RadioMini.exe`（不含開發用 PDB）自動檢查：啟動一次，之後每小時一次；開發模式、probe、離線 UI 測試不連線檢查更新。查詢本專案 GitHub `/releases/latest`，只接受較新的 `v主.次.修訂` 正式版，不接受 draft／prerelease 或降版。
-- 有可用更新時，右上角出現下載箭頭，懸浮顯示目標版本。無更新、無網路、API 限流或沒有符合安全條件的資產時不彈窗、不影響播放，下一小時再檢查。
-- 點擊後箭頭停用，先下載並以 GitHub 資產 `digest` 驗證同類型 x64 JSON 清單，再在背景計算本機檔案 SHA-256。**只下載新增、內容不同或缺少的檔案物件**，不下載完整 ZIP，也不對單檔做二進位差分。懸浮顯示所需物件的下載百分比；比對及下載期間仍可播放。優先依本機清單辨識 Full／Lite，沒有舊清單才以 `coreclr.dll` 是否存在判斷，不切換類型。Full 只有 runtime 內容變動／損壞／缺少時才下載相關 runtime 檔；Lite 不安裝／升級系統 .NET。若 runtime 損壞到程式已無法啟動，仍需手動修復。
-- JSON、原檔及 GZip 物件都有大小／SHA-256 驗證；拒絕版本／類型不符、設定檔、路徑穿越、連結、保留檔名、重複路徑、檔案／目錄衝突與不完整清單。來源限本專案 GitHub Release；不是額外的程式碼簽章機制，安全性仍依賴 GitHub 帳號與 HTTPS。
-- 暫存位於 `%TEMP%/RadioMini-update-<隨機值>/`。下載變更並驗證完成、外部更新程序回報就緒後，播放器保存設定並退出。程序在退出後再次核對所有未變動本機檔案、待寫入新檔與待刪舊檔，才備份／替換／刪除，完成後重啟 `RadioMini.exe`。未變動檔案不覆寫；每次一起更新同目錄的 `radio.update-manifest.json`。
-- 刪除只限**上版清單有追蹤、這版已移除且仍符合舊 SHA-256** 的檔案；已被手動修改的待刪檔會阻止更新，請先備份／移走後重試。設定檔與清單外自建檔案不刪除。有舊清單時，新增檔案若撞名未追蹤且內容不同的本機檔，也會阻止更新而非覆蓋。沒有舊清單的首次過渡更新不猜測舊檔歸屬，可能保留歷史殘留；不自動刪除空目錄。
-- 更新使用 Windows PowerShell 5.1，僅子程序帶 `-ExecutionPolicy Bypass`，不更改使用者或全機政策；組織政策仍可能禁止，這時請手動更新。程式資料夾須可寫，不提權；目的路徑有 junction／symlink 時拒絕安裝。請先關閉同資料夾的其他播放器實例。
-- 下載／驗證／啟動程序失敗：保留原播放器，可點擊重試或手動下載，**不自動降級成全量下載**。替換／刪除失敗：逐檔嘗試還原修改、刪除與清單，移除這次新增檔，保留備份並顯示錯誤提示。查看暫存目錄的 `result.txt`，確認後重新開啟舊版；若還原也被鎖檔阻擋，先關閉相關程序再從 `backup/` 還原。成功則清除 payload 與備份，保留清單、計畫及小型記錄；失敗暫存可在確認復原後手動刪除。
-- 不保證斷電／磁碟毀損下的跨檔案原子性，也無法判斷新版本啟動後是否正常播放。檔案與目錄互換的結構變更會停止並要求手動更新。新 Windows／runtime 相依條件改變時仍須依 Release 說明處理。
-- **v0.4.0 不含更新器**，第一次需手動下載含此功能的版本並保留原設定。此功能不會自行建立 Release；正式端到端更新必須在授權發布後，以兩個實際 portable 版本驗收。`--updates` 使用同一份資產產生腳本及實際外部程序，驗證 Lite／Full 選擇性下載、新增／修改／刪除／缺檔修復、設定保留、鎖檔還原與安全檢查；測試不重啟真實播放器，不代表 GitHub 發行與完整自我更新已驗收。
+啟動及每 6 小時檢查 GitHub 最新穩定 Release。背景下載完整同模式 ZIP，核對 API 提供的 SHA-256／大小，在 `data/ota/staging/隨機值/` 解壓、驗證全部清單檔案，再將 hash 資源目錄搬至 portable 根目錄、原子記錄 Pending。這些工作都在使用者仍可收聽時完成。
 
-### 發布後的真實更新驗收
+右上角沿用原箭頭，懸浮顯示背景下載百分比／準備中／已備妥／失敗重試；沒有大型更新視窗，不強制退出。Ready 時才提供「重新啟動並更新」。若仍在準備更高版本而已有較舊 Ready，可取消新任務並先套用已備妥者。失敗從約 15 秒開始指數退避，最高 15 分鐘；UI 輪詢每 30 秒，實際重試可能晚於計算時間。可點失敗箭頭手動重試。
 
-明確授權並發布 latest 正式 Release 後，可用 `scripts/Test-PortableUpdate.ps1 -BaselineZip <含更新器的較舊測試ZIP> -ExpectedVersion 0.5.0` 驗證。腳本只會在新建的 `artifacts/update-e2e-隨機值/` 解壓並啟動，透過 UI Automation 點實際箭頭，等待舊程序退出與新程序重啟，核對所有檔案雜湊、設定、自建檔及 Full 實際載入包內 runtime，結果存入該資料夾的 `result.json`。請勿把歷史正式 v0.4.0 當成含更新器的基準。測試使用空收藏避免連線電台，不代表已驗收有聲播放、長時間或實體多螢幕。失敗保留隔離資料供診斷，不更動原 ZIP 或使用者 portable 資料夾。
+重新啟動時 updater 從暫存副本執行，等待原程序完全結束、備份小型設定與兩個入口、原子記錄 Trial、替換根 EXE／updater，再啟動根主程式；不下載、不解壓、不雜湊整套 runtime。主視窗健康握手成功後自動刪除舊版及回復備份，不長期保留 Previous。未握手／程序提早退出／無法啟動則回復入口、上一版及設定；握手逾時 30 秒。正常退出後再開啟根主程式，也會請 updater 套用 Ready。無常駐 Launcher，跨斷電的自癒限制見 ota.md。
+
+Latest Wins、首次遷移、安全性、資料相容性、參考來源及完整測試範圍見 [ota.md](ota.md)。
+
+## 首次從舊平面 Portable 升級
+
+**正式 v0.4.0 沒有更新器，舊逐檔 v0.5.0 草稿也不支援新協定，不能假裝它們會自動遷移。**
+
+1. 關閉舊版的所有實例，將新 ZIP 解壓到**另一個新資料夾**，不原地覆蓋執行中的 EXE／DLL。
+2. 在專案內執行 `Migrate-Portable.ps1 -OldDirectory <舊資料夾> -NewDirectory <新資料夾>`。只複製並驗證既有設定，原資料夾不動；目的已有設定、程序仍在執行、資料 schema 不支援或含連結時拒絕覆蓋。
+3. 沒有腳本時，亦可將舊 `radio.settings.json` 複製到新包根目錄；首次主程式會複製到 `data/`，保留原檔。目的 `data/radio.settings.json` 已存在時不覆蓋。若來源是先前未發行的 Launcher 候選，請改複製其 `data/radio.settings.json`，不要把舊 OTA state 搬進新包。
+4. 捷徑指向新包**最外層** `RadioMini.exe`，不要釘選／直接指定某個 hash 子目錄。確認收藏、音量與主題後，再自行處理舊包。
+
+## 驗證
+
+離線 console 測試用 `dotnet run`，不是 `dotnet test`：
+
+```powershell
+dotnet build src/Radio.Windows -c Release
+dotnet run --project tests/Radio.Core.Tests -c Release
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --ui
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --updates
+```
+
+實際 portable／獨立 updater／跨版測試（只建立隔離測試資料，不發行）：
+
+```powershell
+powershell -NoProfile -File scripts/New-OtaTestPackages.ps1 -Mode Lite
+powershell -NoProfile -File scripts/New-OtaTestPackages.ps1 -Mode Full
+# 使用上一步輸出的 1.0.0／1.1.0／1.2.0 測試 ZIP：
+powershell -NoProfile -File scripts/Test-PortableUpdate.ps1 -BaselineZip <1.0.0.zip> -CandidateZip <1.1.0.zip> -SupersedingZip <1.2.0.zip>
+```
+
+整合腳本使用真實根 WinForms apphost／updater 及 loopback HTTP 的完整 ZIP，保持舊程序運行直到重啟，驗證 Latest Wins、沒有重複下載、程序鎖、兩入口與設定回復、成功刪舊版、根 EXE 名稱／版本及 Full runtime；結果與量測在 `artifacts/ota-integration-*/result.json`。這不是 GitHub WAN 實測，也不代替人工聽音、長時間、睡眠／斷網或實體多螢幕驗收。

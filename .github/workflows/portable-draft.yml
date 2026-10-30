@@ -1,0 +1,44 @@
+name: Build portable OTA draft
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing authorized tag (must match app version)
+        required: true
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet build src/Radio.Windows -c Release
+      - run: dotnet run --project tests/Radio.Core.Tests -c Release
+      - run: dotnet run --project tests/Radio.Windows.Tests -c Release -- --updates
+      - name: Exercise real root apphost and updater (loopback HTTP)
+        shell: powershell
+        run: |
+          foreach ($mode in @('Lite','Full')) {
+            ./scripts/New-OtaTestPackages.ps1 -Mode $mode
+            $packages = Get-ChildItem artifacts -Directory -Filter "ota-test-packages-$mode-*" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $baseline = (Get-ChildItem $packages.FullName -Filter '*v1.0.0-*.zip').FullName
+            $candidate = (Get-ChildItem $packages.FullName -Filter '*v1.1.0-*.zip').FullName
+            $latest = (Get-ChildItem $packages.FullName -Filter '*v1.2.0-*.zip').FullName
+            ./scripts/Test-PortableUpdate.ps1 -BaselineZip $baseline -CandidateZip $candidate
+            ./scripts/Test-PortableUpdate.ps1 -BaselineZip $baseline -CandidateZip $candidate -SupersedingZip $latest
+          }
+      - shell: powershell
+        run: |
+          ./scripts/Publish-Release.ps1
+          ./scripts/Publish-Release.ps1 -SelfContained
+      - shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: ./scripts/Publish-GitHubRelease.ps1 -Tag $env:RELEASE_TAG

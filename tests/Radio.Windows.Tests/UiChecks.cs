@@ -24,12 +24,14 @@ internal static class UiChecks
         var update = Find<PlayerButton>(form, "UpdateButton");
         var themePosition = Find<PlayerButton>(form, "ThemeToggle").Left;
         Check(!update.Visible, "Update arrow is hidden without a newer version");
-        form.ShowAvailableUpdate(new UpdateRelease(new Version(0, 5, 0), new Uri("https://example.invalid/update.json"), 100, new string('a', 64), "Lite"));
-        Check(update.Visible && update.Glyph == PlayerGlyph.Download && update.AccessibleName == "下載並更新" && update.Width > 0,
+        form.ShowUpdateView(new UpdateView(UpdatePhase.Downloading, null, 37, "背景下載更新中"));
+        Check(update.Visible && player.Plays == 0, "Background OTA status does not start/stop playback or close the player");
+        form.ShowUpdateView(new UpdateView(UpdatePhase.Ready, new Version(0, 6, 0), 100, "更新已備妥"));
+        Check(update.Visible && update.Glyph == PlayerGlyph.Download && update.AccessibleName == "重新啟動並更新" && update.Width > 0,
             "New release shows accessible download arrow");
         Check(Find<PlayerButton>(form, "ThemeToggle").Left == themePosition, "Update arrow does not displace window controls");
         Capture(form, "artifacts/update-available.png");
-        form.ShowAvailableUpdate(null);
+        form.ShowUpdateView(new UpdateView(UpdatePhase.Idle, null, 0, ""));
         Check(!update.Visible, "No release restores original header layout");
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
         Check(form.Text == "Radio Mini" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
@@ -69,6 +71,14 @@ internal static class UiChecks
         Check(form.LatestStatus.State == AudioState.Buffering, "Buffering reflects engine event");
         player.Emit(AudioState.Playing);
         await opening;
+        var stopsBeforeUpdate = player.Stops;
+        foreach (var phase in new[] { UpdatePhase.Downloading, UpdatePhase.Preparing, UpdatePhase.Ready, UpdatePhase.Failed })
+        {
+            form.ShowUpdateView(new UpdateView(phase, phase == UpdatePhase.Ready ? new Version(0, 6, 0) : null, 50, "OTA fixture"));
+            Check(form.Visible && form.LatestStatus.State == AudioState.Playing && player.Plays == 1 && player.Stops == stopsBeforeUpdate,
+                "OTA " + phase + " keeps existing playback and player window alive");
+        }
+        form.ShowUpdateView(new UpdateView(UpdatePhase.Idle, null, 0, ""));
         Check(settings.PlayCounts.GetValueOrDefault("bcc-ilike") == 1, "Only successful playback counts");
         Check(form.Text == "Radio Mini" && tray.Text == "Radio Mini · 中廣流行網", "Playback updates tray station name without adding a version to app titles");
         player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);

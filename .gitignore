@@ -2,7 +2,8 @@
 **/obj/
 .vs/
 artifacts/
-tools/
+tools/*
+!tools/Radio.AppHost.Build/
 dist/
 *.user
 *.suo

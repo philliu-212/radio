@@ -21,12 +21,10 @@ internal sealed class MainForm : Form
     private bool _countPending;
     private readonly PlayerButton _transport = new() { Name = "PlayButton", Primary = true, Glyph = PlayerGlyph.Play, AccessibleName = "播放", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _themeButton = new() { Name = "ThemeToggle", Glyph = PlayerGlyph.Theme, AccessibleName = "切換深淺色模式", Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly PlayerButton _updateButton = new() { Name = "UpdateButton", Glyph = PlayerGlyph.Download, Accent = true, AccessibleName = "下載並更新", Dock = DockStyle.Fill, Margin = Padding.Empty, Visible = false };
-    private readonly CancellationTokenSource _updateLifetime = new();
-    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 60 * 60 * 1000 };
+    private readonly PlayerButton _updateButton = new() { Name = "UpdateButton", Glyph = PlayerGlyph.Download, Accent = true, AccessibleName = "重新啟動並更新", Dock = DockStyle.Fill, Margin = Padding.Empty, Visible = false };
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 30_000 };
     private readonly PortableUpdate _updater = new();
-    private UpdateRelease? _availableUpdate;
-    private bool _checkingUpdate;
+    private UpdateView _updateView = new(UpdatePhase.Idle, null, 0, "");
     private bool _installingUpdate;
     private readonly PlayerButton _minimize = new() { Name = "MinimizeButton", Glyph = PlayerGlyph.Minimize, AccessibleName = "最小化", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerButton _close = new() { Name = "CloseButton", Glyph = PlayerGlyph.Close, AccessibleName = "關閉", Dock = DockStyle.Fill, Margin = Padding.Empty };
@@ -49,6 +47,7 @@ internal sealed class MainForm : Form
     private readonly ToolStripMenuItem _trayTransport;
     private readonly bool _persistPreferences;
     private readonly bool _autoPlayOnStartup;
+    private readonly bool _checkUpdates;
     private readonly CardVolumeWheelFilter _volumeWheel;
     private bool _startupHandled;
     private Font _frequencyFont;
@@ -87,13 +86,14 @@ internal sealed class MainForm : Form
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
-        bool autoPlayOnStartup = true)
+        bool autoPlayOnStartup = true, bool checkUpdates = true)
     {
         _player = player;
         _resolver = resolver ?? new OfficialStreamResolver();
         _metadataProvider = metadataProvider ?? new OfficialMetadataProvider();
         _persistPreferences = persistPreferences;
         _autoPlayOnStartup = autoPlayOnStartup;
+        _checkUpdates = checkUpdates;
         _settings = settings ?? (persistPreferences ? ThemeSettings.Load() : new ThemeSettings());
         _library = new StationLibrary(_settings);
         _darkMode = darkOverride ?? _settings.Theme != "light";
@@ -194,7 +194,17 @@ internal sealed class MainForm : Form
         _mute.CheckedChanged += (_, _) => { _player.IsMuted = _mute.Checked; _mute.Invalidate(); };
         _themeButton.Click += (_, _) => ToggleTheme();
         _updateButton.Click += async (_, _) => await InstallUpdateAsync();
-        _updateTimer.Tick += async (_, _) => await CheckForUpdateAsync();
+        _updateTimer.Tick += async (_, _) => await _updater.TickAsync();
+        _updater.Changed += view =>
+        {
+            if (_closing || IsDisposed) return;
+            if (InvokeRequired)
+            {
+                try { BeginInvoke(() => { if (!_closing) ShowUpdateView(view); }); }
+                catch (InvalidOperationException) { }
+            }
+            else ShowUpdateView(view);
+        };
         _minimize.Click += (_, _) => { WindowState = FormWindowState.Minimized; Hide(); };
         _close.Click += (_, _) => Close();
         _official.Click += (_, _) =>
@@ -620,10 +630,10 @@ internal sealed class MainForm : Form
         base.OnShown(e); ApplyDpiTypography(); UpdateWindowShape(); RefreshPresentation();
         if (_startupHandled) return;
         _startupHandled = true;
-        if (_persistPreferences && PortableUpdate.IsPortable)
+        if (_persistPreferences && _checkUpdates && PortableUpdate.IsPortable)
         {
             _updateTimer.Start();
-            _ = CheckForUpdateAsync();
+            _ = _updater.TickAsync();
         }
         if (!_settings.StationSetupCompleted && _library.Mine.Count == 0)
             BeginInvoke(() => { if (!_closing) OpenStationManager(); });
@@ -646,60 +656,43 @@ internal sealed class MainForm : Form
         return 0;
     }
 
-    private async Task CheckForUpdateAsync()
+    internal void ShowUpdateView(UpdateView view)
     {
-        if (_checkingUpdate || _installingUpdate || _closing) return;
-        _checkingUpdate = true;
-        try
-        {
-            var release = await _updater.CheckAsync(_updateLifetime.Token);
-            if (!_closing) ShowAvailableUpdate(release);
-        }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or InvalidOperationException or FormatException or KeyNotFoundException or IOException or InvalidDataException or UnauthorizedAccessException)
-        { /* Offline/rate-limited checks must not interrupt radio playback. Retry next hour. */ }
-        finally { _checkingUpdate = false; }
-    }
-
-    internal void ShowAvailableUpdate(UpdateRelease? release)
-    {
-        _availableUpdate = release;
-        _updateButton.Visible = release is not null;
-        ((TableLayoutPanel)_updateButton.Parent!).ColumnStyles[2].Width = release is null ? 0 : ScaleDip(25);
-        if (release is not null) _tips.SetToolTip(_updateButton, $"下載並更新至 v{release.Version.ToString(3)}（完成後重新啟動）");
+        _updateView = view;
+        var visible = view.Phase != UpdatePhase.Idle || view.Pending is not null;
+        _updateButton.Visible = visible;
+        _updateButton.Enabled = !_installingUpdate;
+        ((TableLayoutPanel)_updateButton.Parent!).ColumnStyles[2].Width = visible ? ScaleDip(25) : 0;
+        _updateButton.AccessibleName = view.Pending is not null ? "重新啟動並更新" : view.Message;
+        _tips.SetToolTip(_updateButton, view.Pending is not null
+            ? $"{view.Message} · 重新啟動並更新至 v{view.Pending.ToString(3)}"
+            : view.Message + (view.Phase == UpdatePhase.Downloading ? $" {view.Percent}%" : ""));
     }
 
     private async Task InstallUpdateAsync()
     {
-        if (_availableUpdate is not { } release || _installingUpdate) return;
+        if (_installingUpdate) return;
+        if (_updateView.Pending is null)
+        {
+            if (_updateView.Phase == UpdatePhase.Failed) await _updater.CheckNowAsync();
+            return;
+        }
         _installingUpdate = true;
         _updateButton.Enabled = false;
-        _updateButton.AccessibleName = "正在下載更新";
         try
         {
-            var progress = new Progress<int>(percent =>
-            {
-                if (!_closing) _tips.SetToolTip(_updateButton, $"正在下載更新 {percent}%");
-            });
-            var work = await _updater.PrepareAsync(release, progress, _updateLifetime.Token);
+            await _updater.StopPreparationAsync();
             if (_closing) return;
-            _tips.SetToolTip(_updateButton, "正在準備重新啟動…");
-            await PortableUpdate.StartInstallerAsync(work, _updateLifetime.Token);
-            if (!_closing) Close();
+            OtaRuntime.Restart(); Close();
         }
-        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
-        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or HttpRequestException or OperationCanceledException or System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException or NotSupportedException or System.Text.Json.JsonException or KeyNotFoundException or FormatException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            if (!_closing)
-            {
-                _tips.SetToolTip(_updateButton, "更新失敗，點擊重試");
-                MessageBox.Show(this, $"更新未完成，原版本仍可使用。\n{error.Message}\n\n也可從 {PortableUpdate.Repository}/releases/latest 手動下載。",
-                    AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+            if (!_closing) _tips.SetToolTip(_updateButton, "無法重新啟動，舊版仍可使用：" + error.Message);
         }
         finally
         {
             _installingUpdate = false;
-            if (!_closing) { _updateButton.Enabled = true; _updateButton.AccessibleName = "下載並更新"; }
+            if (!_closing) _updateButton.Enabled = true;
         }
     }
     private void DragWindow(object? sender, MouseEventArgs e)
@@ -718,7 +711,7 @@ internal sealed class MainForm : Form
     {
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
-        _updateTimer.Stop(); _updateTimer.Dispose(); _updateLifetime.Cancel(); _updater.Dispose();
+        _updateTimer.Stop(); _updateTimer.Dispose(); _updater.Dispose();
         _volumeWheel.Dispose();
         SavePreferences();
         _playRequest?.Cancel(); _playRequest = null;
