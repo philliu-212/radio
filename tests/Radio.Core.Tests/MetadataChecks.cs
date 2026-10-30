@@ -33,7 +33,8 @@ internal static class MetadataChecks
         Check(OfficialMetadataProvider.Parse("hit-north", """{"value2":null}""", now) is null, "Missing metadata stays empty");
         using var denied = new OfficialMetadataProvider(new Handler(HttpStatusCode.Forbidden));
         Check(await denied.GetAsync("kiss-999", default) is null, "Metadata HTTP refusal does not affect playback");
-        Check(!denied.Supports("pop-917") && await denied.GetAsync("pop-917", default) is null, "Unsupported stations do not request metadata");
+        Check(!denied.Supports("unknown") && await denied.GetAsync("unknown", default) is null, "Unsupported stations do not request metadata");
+        await ProgramPageChecks.RunAsync();
         CheckBestSchedule();
         var scheduleHandler = new ScheduleHandler();
         using var scheduleProvider = new OfficialMetadataProvider(scheduleHandler);
@@ -91,7 +92,7 @@ internal static class MetadataChecks
         var weekday = new DateTimeOffset(2026, 10, 28, 2, 0, 0, TimeSpan.Zero);
         var program = BestRadioSchedule.Parse(page, weekday);
         Check(program?.Kind == MetadataKind.ScheduledProgram && program.Title == "989陽光列車" && program.Person == "亭君" &&
-            program.FirstLine == "節目表：989陽光列車", "Best 989 uses Taiwan time and explicitly labels scheduled program, not song");
+            program.FirstLine == "節目表：989陽光列車" && program.TimeSlot == "09:00–12:00（台灣）", "Best 989 uses Taiwan time and explicitly labels scheduled program, not song");
         Check(BestRadioSchedule.Parse(page, weekday.AddDays(3))?.Person == "Aiine" &&
             BestRadioSchedule.Parse(page, weekday.AddDays(4))?.Person == "小嗨", "Best 989 distinguishes weekday/Saturday/Sunday schedule columns");
         Check(BestRadioSchedule.Parse(page, new DateTimeOffset(2026, 10, 31, 23, 0, 0, TimeSpan.Zero))?.Title == "週末共同節目",

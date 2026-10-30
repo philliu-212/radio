@@ -1,6 +1,27 @@
 using System.Net;
 using Radio.Core;
 
+if (args.Contains("--metadata-live") || args.Contains("--metadata-rfi-live"))
+{
+    var rfiOnly = args.Contains("--metadata-rfi-live");
+    using var provider = new OfficialMetadataProvider();
+    foreach (var station in StationCatalog.Load().Where(station => rfiOnly ? station.Id == "rfi-monde" : station.Id != "kiss-999"))
+    {
+        try
+        {
+            var metadata = await provider.GetAsync(station.Id, default);
+            Console.WriteLine($"{station.Id}: {System.Text.Json.JsonSerializer.Serialize(metadata)}");
+            if (rfiOnly && metadata is null) Environment.ExitCode = 1;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException)
+        {
+            Console.WriteLine($"{station.Id}: unavailable ({ex.GetType().Name})");
+            if (rfiOnly) Environment.ExitCode = 1;
+        }
+    }
+    return;
+}
+
 if (args.Contains("--metadata-best-live"))
 {
     using var provider = new OfficialMetadataProvider();

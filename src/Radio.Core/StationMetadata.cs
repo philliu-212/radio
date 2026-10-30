@@ -11,6 +11,8 @@ public sealed record StationMetadata(MetadataKind Kind, string? Title, string? P
 {
     public string? ProgramTitle { get; init; }
     public string? Presenter { get; init; }
+    public string? TimeSlot { get; init; }
+    public string? NextProgram { get; init; }
     public string? FirstLine => Title is null ? null : Kind switch
     {
         MetadataKind.CurrentSong => $"現在播放：{Title}",
@@ -21,7 +23,9 @@ public sealed record StationMetadata(MetadataKind Kind, string? Title, string? P
     };
     public string? SecondLine => string.Join(" ｜ ", new[] { PersonLine,
         Presenter is null ? null : $"DJ：{Presenter}",
-        ProgramTitle is null ? null : $"節目：{ProgramTitle}" }.Where(text => text is not null)) is { Length: > 0 } line ? line : null;
+        ProgramTitle is null ? null : $"節目：{ProgramTitle}",
+        TimeSlot is null ? null : $"時段：{TimeSlot}",
+        NextProgram is null ? null : $"接下來：{NextProgram}" }.Where(text => text is not null)) is { Length: > 0 } line ? line : null;
     private string? PersonLine => Person is null ? null : Kind switch
     {
         MetadataKind.Program or MetadataKind.Presenter or MetadataKind.ScheduledProgram => $"DJ：{Person}",
@@ -45,13 +49,28 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
     {
         _client = handler is null ? new HttpClient() : new HttpClient(handler);
         _client.Timeout = TimeSpan.FromSeconds(10);
-        _client.MaxResponseContentBufferSize = 256 * 1024;
+        // RFI includes inline styles; still bounded, and never loads linked resources.
+        _client.MaxResponseContentBufferSize = 1024 * 1024;
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("LightweightRadio/0.3");
     }
-    public bool Supports(string stationId) => stationId is "best-989" or "bcc-ilike" or "hit-north" or "kiss-999";
+    public bool Supports(string stationId) => stationId is "best-989" or "bcc-ilike" or "hit-north" or "kiss-999" or "pop-917" or "ufo-921" or "rfi-monde";
     public async Task<StationMetadata?> GetAsync(string stationId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (stationId is "pop-917" or "ufo-921" or "rfi-monde")
+        {
+            var pageUrl = stationId switch
+            {
+                "pop-917" => "https://www.pop917.com/",
+                "ufo-921" => "https://www.uforadio.com.tw/",
+                _ => "https://www.rfi.fr/fr/grille-des-programmes/monde"
+            };
+            using var page = await _client.GetAsync(pageUrl, cancellationToken);
+            if (!page.IsSuccessStatusCode) return null;
+            var html = await page.Content.ReadAsStringAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return OfficialProgramPages.Parse(stationId, html, DateTimeOffset.UtcNow);
+        }
         if (stationId == "best-989")
         {
             var now = DateTimeOffset.UtcNow;
@@ -119,13 +138,24 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
                     expiry = now.AddSeconds(Math.Min(90, ttl));
                 }
                 var title = Text(item, "program"); var dj = Text(item, "dj");
-                return title is null && dj is null ? null : new(MetadataKind.Program, title, dj, expiry);
+                var time = Text(item, "time");
+                if (time is not null)
+                {
+                    if (!OfficialProgramPages.TrySlot(time, now, out var end, out var label)) return null;
+                    if (end < expiry) expiry = end;
+                    time = label;
+                }
+                return title is null && dj is null ? null : new(MetadataKind.Program, title, dj, expiry) { TimeSlot = time };
             }
         }
         if (stationId == "hit-north")
         {
             var dj = Text(root, "value2");
-            return dj is null ? null : new(MetadataKind.Presenter, null, dj, expiry);
+            if (dj is null) return null;
+            // The endpoint returns a combined official label, not just a person's name.
+            var parts = Regex.Match(dj, @"^(.+?DJ)\s*[-－]\s*(.+)$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+            return parts.Success ? new(MetadataKind.Program, parts.Groups[1].Value.Trim(), parts.Groups[2].Value.Trim(), expiry)
+                : new(MetadataKind.Presenter, null, dj, expiry);
         }
         if (stationId == "kiss-999" && Text(root, "now_playing") is { } value)
         {
