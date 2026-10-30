@@ -533,6 +533,7 @@ internal sealed class MainForm : Form
     private void SetMetadataLabel(Label label, string? value)
     {
         label.Text = value ?? ""; label.Visible = value is not null;
+        if (_tips.GetToolTip(label) != value) _tips.SetToolTip(label, value);
     }
 
     private void StartMetadata()

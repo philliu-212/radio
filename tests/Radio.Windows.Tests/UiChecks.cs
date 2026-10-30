@@ -105,6 +105,8 @@ internal static class UiChecks
         await Task.Delay(50);
         Check(Find<Label>(form, "MetadataTitle").Text == "" && Find<Label>(form, "MetadataPerson").Text == "DJ：測試主持人",
             "Late old-station metadata is discarded; single DJ field is supported");
+        Check(tips.GetToolTip(Find<Label>(form, "MetadataPerson")) == "DJ：測試主持人",
+            "Metadata tooltip exposes the full text without changing the two-line layout");
         mute.Checked = true; volume.Value = 63;
         Check(player.IsMuted && Math.Abs(player.Volume - .63) < .001, "Mute is independent of remembered per-player volume");
         mute.Checked = false;

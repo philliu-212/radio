@@ -4,19 +4,25 @@ using System.Text.RegularExpressions;
 
 namespace Radio.Core;
 
-public enum MetadataKind { Song, UpcomingSong, Program, Presenter, ScheduledProgram }
+public enum MetadataKind { Song, UpcomingSong, Program, Presenter, ScheduledProgram, CurrentSong }
 
 public sealed record StationMetadata(MetadataKind Kind, string? Title, string? Person,
     DateTimeOffset ExpiresAt)
 {
+    public string? ProgramTitle { get; init; }
+    public string? Presenter { get; init; }
     public string? FirstLine => Title is null ? null : Kind switch
     {
+        MetadataKind.CurrentSong => $"現在播放：{Title}",
         MetadataKind.UpcomingSong => $"即將播放：{Title}",
         MetadataKind.Program => $"節目：{Title}",
         MetadataKind.ScheduledProgram => $"節目表：{Title}",
         _ => Title
     };
-    public string? SecondLine => Person is null ? null : Kind switch
+    public string? SecondLine => string.Join(" ｜ ", new[] { PersonLine,
+        Presenter is null ? null : $"DJ：{Presenter}",
+        ProgramTitle is null ? null : $"節目：{ProgramTitle}" }.Where(text => text is not null)) is { Length: > 0 } line ? line : null;
+    private string? PersonLine => Person is null ? null : Kind switch
     {
         MetadataKind.Program or MetadataKind.Presenter or MetadataKind.ScheduledProgram => $"DJ：{Person}",
         _ => Person
@@ -73,7 +79,28 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
         // Public endpoint refusal is not a reason to bypass access controls or fail playback.
         if (!response.IsSuccessStatusCode) return null;
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        return Parse(stationId, json, DateTimeOffset.UtcNow);
+        var metadata = Parse(stationId, json, DateTimeOffset.UtcNow);
+        if (stationId != "kiss-999") return metadata;
+        try
+        {
+            // Fetch text only: never load the homepage's scripts, images, iframes or audio.
+            using var page = await _client.GetAsync("https://www.kiss.com.tw/", cancellationToken);
+            if (!page.IsSuccessStatusCode) return metadata;
+            var html = await page.Content.ReadAsStringAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var program = KissRadioProgram.Parse(html, DateTimeOffset.UtcNow);
+            if (program is null) return metadata;
+            return metadata is null ? program : metadata with
+            {
+                ProgramTitle = program.Title, Presenter = program.Person,
+                ExpiresAt = metadata.ExpiresAt < program.ExpiresAt ? metadata.ExpiresAt : program.ExpiresAt
+            };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or RegexMatchTimeoutException ||
+            ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return metadata;
+        }
     }
 
     internal static StationMetadata? Parse(string stationId, string json, DateTimeOffset now)
@@ -102,15 +129,16 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
         }
         if (stationId == "kiss-999" && Text(root, "now_playing") is { } value)
         {
-            // The observed contract is explicitly upcoming, never silently promote it to current song.
-            var match = Regex.Match(value, @"^(\d{2}):(\d{2})\s+即將播放[：:]\s*(.+?)\s+-\s+(.+)$",
+            // Preserve the official state; upcoming is never promoted to current.
+            var match = Regex.Match(value, @"^(\d{2}):(\d{2})\s+(即將播放|現在播放)[：:]\s*(.+?)\s+-\s+(.+)$",
                 RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
             if (!match.Success || !int.TryParse(match.Groups[1].Value, out var hour) || hour > 23 ||
                 !int.TryParse(match.Groups[2].Value, out var minute) || minute > 59) return null;
             var taiwan = now.ToOffset(TimeSpan.FromHours(8));
             var distance = Math.Abs(taiwan.TimeOfDay.TotalMinutes - hour * 60 - minute);
             if (Math.Min(distance, 1440 - distance) > 5) return null;
-            return new(MetadataKind.UpcomingSong, match.Groups[4].Value, match.Groups[3].Value, expiry);
+            return new(match.Groups[3].Value == "現在播放" ? MetadataKind.CurrentSong : MetadataKind.UpcomingSong,
+                match.Groups[5].Value, match.Groups[4].Value, expiry);
         }
         return null;
     }
