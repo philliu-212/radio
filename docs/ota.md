@@ -19,6 +19,8 @@
 
 Radio Mini 不採 Electron／Inno Setup。唯一根入口是真正的 .NET 8 原生 apphost；`bin/updater.exe` 為 Windows 內建 .NET Framework 4.x 的小型工具，共用 C# 5 相容 `PortableStore.cs`。只在切換時執行，沒有播放器視窗，不常駐，不另帶 runtime。所有捷徑繼續指向根 `RadioMini.exe`。
 
+Updater 不嵌入 Radio Mini 的應用程式圖示，避免與播放器混淆。`bin/` 是內部工具共用目錄，不是 updater 專屬子目錄；未來有實際需要時可放其他 helper，不預先新增空目錄。維持 EXE 而非 PowerShell／批次腳本，以避免執行政策、Shell 引數轉義與主控台視窗干擾，並可靠地處理程序等待、檔案鎖與交易回復；這不是程式碼簽章或不被安全軟體攔截的保證。
+
 ## 狀態及 Latest Wins
 
 `data/ota/state.json` 有 Protocol、Current、Pending、Previous、Trial，各 package 記完整 40 碼 commit／版本／模式／檔案清單。hash 目錄採 commit 前 12 碼；前綴碰撞會核對完整 identity，拒絕覆寫。
