@@ -10,6 +10,7 @@ internal static class UiChecks
     {
         PlaybackRecoveryChecks.Run();
         IconChecks.Run();
+        await CheckStationManagerDpiAsync();
         await CaptureFourArrowPreviewAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
             MediaEngineAudioPlayer.PlaybackStateForEvent(12) == AudioState.Buffering && MediaEngineAudioPlayer.PlaybackStateForEvent(13) == AudioState.Playing,
@@ -491,6 +492,70 @@ internal static class UiChecks
         dialog.Close();
         Check(!timer.Enabled, "Closing during an animation disposes the hover timer");
         Cursor.Position = new Point(0, 0);
+    }
+
+    internal static async Task CheckStationManagerDpiAsync()
+    {
+        // .NET 8 initializes uncreated controls from this cached system DPI.
+        // Override it only during synchronous, handle-free construction, then
+        // restore it even on failure. No OS display settings are changed.
+        var dpiType = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("System.Windows.Forms.DpiHelper")).First(t => t is not null)!;
+        var dpiField = dpiType.GetField("<DeviceDpi>k__BackingField", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Update the initial-DPI fixture for this WinForms runtime.");
+        var originalDpi = dpiField.GetValue(null);
+        try
+        {
+            foreach (var dpi in new[] { 192, 96, 120, 144 })
+            {
+                dpiField.SetValue(null, dpi);
+                using var startupFont = new Font("Microsoft JhengHei UI", 10f * dpi / 72f, FontStyle.Regular, GraphicsUnit.Pixel);
+                using var startup = new StationManagerDialog(new StationLibrary(new ThemeSettings()), PlayerTheme.Dark, startupFont);
+                Check(!startup.IsHandleCreated && startup.DeviceDpi == dpi &&
+                    startup.ClientSize == new Size((int)Math.Round(580 * dpi / 96d), (int)Math.Round(289 * dpi / 96d)),
+                    $"Initial DPI {dpi}: completed dialog scales once before native window creation");
+                foreach (var name in new[] { "AvailableSearch", "MySearch" })
+                {
+                    var search = Find<StationSearchBox>(startup, name);
+                    var input = (TextBox)search.Controls[0];
+                    var row = (TableLayoutPanel)search.Parent!;
+                    Check(Math.Abs(search.Height - 26 * dpi / 96d) <= 1 && input.Bottom <= search.Height &&
+                        row.GetColumnWidths()[0] == (int)Math.Round(16 * dpi / 96d) &&
+                        Math.Abs(row.GetColumnWidths()[4] - 34 * dpi / 96d) <= 1,
+                        $"Initial DPI {dpi}: {name} scales its row/columns and contains input {input.Bounds}");
+                }
+            }
+        }
+        finally { dpiField.SetValue(null, originalDpi); }
+        // Exercise a hidden newly-created dialog as well as repeated transitions.
+        // WM_DPICHANGED is a calculation regression, not a real high-DPI startup
+        // or physical multi-monitor acceptance check.
+        using var font = new Font("Microsoft JhengHei UI", 10f);
+        using var dialog = new StationManagerDialog(new StationLibrary(new ThemeSettings()), PlayerTheme.Dark, font);
+        _ = dialog.Handle;
+        foreach (var dpi in new[] { 192, 96, 120, 144, 192, 96 })
+        {
+            SimulateDpi(dialog, dpi, 289);
+            if (!dialog.Visible) dialog.Show();
+            await Task.Delay(30);
+            foreach (var name in new[] { "AvailableSearch", "MySearch" })
+            {
+                var search = Find<StationSearchBox>(dialog, name);
+                var row = (TableLayoutPanel)search.Parent!;
+                var input = (TextBox)search.Controls[0];
+                var scale = dpi / 96d;
+                Check(Math.Abs(search.Height - 26 * scale) <= 1 && input.Top >= 0 && input.Bottom <= search.Height,
+                    $"Manager DPI {dpi}: {name} contains its native input (pill={search.Height}, input={input.Bounds})");
+                Check(Math.Abs(row.GetColumnWidths()[0] - 16 * scale) <= 1 &&
+                    Math.Abs(row.GetColumnWidths()[4] - 34 * scale) <= 1,
+                    $"Manager DPI {dpi}: category and globe columns contain their scaled glyphs");
+                Check(input.Left >= 24 * scale && input.Width > 0 && input.Right <= search.Width,
+                    $"Manager DPI {dpi}: search input stays clear of the magnifier and right edge");
+                search.Query = "KISS";
+                Check(input.Text == "KISS", $"Manager DPI {dpi}: search remains editable");
+                search.Query = "";
+            }
+            Capture(dialog, $"artifacts/station-manager-search-dpi-{dpi}.png");
+        }
     }
 
     private static async Task CheckStationManagementAsync()
