@@ -23,7 +23,6 @@ internal sealed class StationManagerDialog : Form
     private readonly PlayerButton _remove;
     private readonly PlayerButton _addAll;
     private readonly PlayerButton _removeAll;
-    private readonly TableLayoutPanel _arrows;
     public event Action? MembershipChanged;
 
     public StationManagerDialog(StationLibrary library, PlayerTheme theme, Font font)
@@ -39,29 +38,20 @@ internal sealed class StationManagerDialog : Form
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.CenterParent;
         // Let the form alone own the entire rounded perimeter, with no outline.
-        // Total content inset stays 16 DIP; only its ownership changes.
-        ClientSize = new Size(690, 293); Padding = new Padding(14);
+        // Keep the 16-DIP top/side inset, with a smaller 10-DIP bottom inset.
+        ClientSize = new Size(580, 289); Padding = new Padding(14, 14, 14, 8);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(2), ColumnCount = 3, RowCount = 2, Margin = Padding.Empty };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 56));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        layout.Controls.Add(BuildSide(_available, _leftSearch, _leftLanguage, PlayerGlyph.ListPlus, "可加入電台"), 0, 0);
-        layout.Controls.Add(BuildSide(_mine, _rightSearch, _rightLanguage, PlayerGlyph.BookmarkCheck, "我的電台"), 2, 0);
-        var arrows = _arrows = new TableLayoutPanel { Anchor = AnchorStyles.None, Size = new Size(30, 154), ColumnCount = 1, RowCount = 7, Margin = Padding.Empty };
-        arrows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var height in new[] { 30, 8, 30, 18, 30, 8, 30 }) arrows.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-        _add = Button("AddStation", PlayerGlyph.ChevronRight, "加入選取電台", framed: true);
-        _remove = Button("RemoveStation", PlayerGlyph.ChevronLeft, "移除選取電台", framed: true);
-        _addAll = Button("AddAllStations", PlayerGlyph.DoubleChevronRight, "加入全部搜尋結果", framed: true);
-        _removeAll = Button("RemoveAllStations", PlayerGlyph.DoubleChevronLeft, "移除全部搜尋結果", framed: true);
-        arrows.Controls.Add(_add, 0, 0); arrows.Controls.Add(_remove, 0, 2);
-        arrows.Controls.Add(_addAll, 0, 4); arrows.Controls.Add(_removeAll, 0, 6);
-        var transferColumn = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
-        transferColumn.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        transferColumn.RowStyles.Add(new RowStyle(SizeType.Absolute, 39)); transferColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        transferColumn.Controls.Add(arrows, 0, 1); layout.Controls.Add(transferColumn, 1, 0);
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        _add = Button("AddStation", PlayerGlyph.ChevronRight, "加入選取電台");
+        _remove = Button("RemoveStation", PlayerGlyph.ChevronLeft, "移除選取電台");
+        _addAll = Button("AddAllStations", PlayerGlyph.DoubleChevronRight, "加入全部搜尋結果");
+        _removeAll = Button("RemoveAllStations", PlayerGlyph.DoubleChevronLeft, "移除全部搜尋結果");
+        layout.Controls.Add(BuildSide(_available, _leftSearch, _leftLanguage, PlayerGlyph.ListPlus, "可加入電台", _add, _addAll, true), 0, 0);
+        layout.Controls.Add(BuildSide(_mine, _rightSearch, _rightLanguage, PlayerGlyph.BookmarkCheck, "我的電台", _remove, _removeAll, false), 2, 0);
         var done = Button("DoneButton", PlayerGlyph.Check, "完成");
         done.Dock = DockStyle.None; done.Size = new Size(26, 26); done.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
         done.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
@@ -105,17 +95,22 @@ internal sealed class StationManagerDialog : Form
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
 
-    private PlayerButton Button(string name, PlayerGlyph glyph, string tip, bool framed = false)
+    private PlayerButton Button(string name, PlayerGlyph glyph, string tip)
     {
-        var button = new PlayerButton { Name = name, Glyph = glyph, Accent = true, Framed = framed, AccessibleName = tip, Dock = DockStyle.Fill, Margin = Padding.Empty };
-        button.SetTheme(_theme); _tips.SetToolTip(button, tip); return button;
+        var button = new PlayerButton { Name = name, Glyph = glyph, Accent = true, AccessibleName = tip, Dock = DockStyle.Fill, Margin = Padding.Empty };
+        button.SetTheme(_theme);
+        if (glyph == PlayerGlyph.Check) _tips.SetToolTip(button, tip);
+        return button;
     }
 
-    private Control BuildSide(StationListBox list, StationSearchBox search, LanguageFilterButton language, PlayerGlyph glyph, string tip)
+    private Control BuildSide(StationListBox list, StationSearchBox search, LanguageFilterButton language, PlayerGlyph glyph, string tip,
+        PlayerButton single, PlayerButton batch, bool add)
     {
-        var side = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, RowCount = 3, ColumnCount = 1 };
+        var side = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, RowCount = 5, ColumnCount = 1 };
         side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 7)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 7)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 185));
+        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
+        side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         // Reserve the same trailing 12 DIP as the list's overlay scrollbar gutter.
         // Both icons are outside the complete search pill; globe ends at the row's right edge.
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = new Padding(0, 0, 12, 0) };
@@ -139,7 +134,36 @@ internal sealed class StationManagerDialog : Form
             }
         };
         list.DisplayMember = nameof(Station.DisplayName); list.DrawItem += DrawStation;
-        side.Controls.Add(row, 0, 0); side.Controls.Add(list, 0, 2); return side;
+        var footer = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
+        single.Dock = batch.Dock = DockStyle.None;
+        single.Visible = false;
+        list.Controls.Add(single); footer.Controls.Add(batch);
+        void PositionArrows()
+        {
+            int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+            // Keep the footer just below the last visible row even for short results.
+            var listHeight = Math.Min(5, list.Items.Count) * Dip(37);
+            if (side.RowStyles[2].Height != listHeight) side.RowStyles[2].Height = listHeight;
+            single.Size = new Size(Dip(12), Dip(15)); batch.Size = new Size(Dip(17), Dip(15));
+            // For rightward movement the rear chevron is the left one; for leftward
+            // movement it is the right one. Its viewport aligns with the row arrow.
+            var x = add ? list.ItemContentWidth - Dip(19) : Dip(7);
+            batch.Location = new Point(add ? x : x - Dip(5), 0);
+            var point = list.PointToClient(Cursor.Position);
+            var index = list.ClientRectangle.Contains(point) && point.X < list.ItemContentWidth ? list.IndexFromPoint(point) : -1;
+            if (index < 0) { single.Visible = false; return; }
+            var bounds = list.GetItemRectangle(index);
+            if (bounds.Bottom > list.ClientSize.Height) { single.Visible = false; return; }
+            single.Location = new Point(x, bounds.Top + (bounds.Height - single.Height) / 2);
+            single.BackColor = list.GetSelected(index) ? _theme.Selection : _theme.Hover;
+            single.Visible = true; single.BringToFront();
+        }
+        list.MouseMove += (_, _) => PositionArrows();
+        list.MouseLeave += (_, _) => PositionArrows();
+        list.Invalidated += (_, _) => PositionArrows();
+        single.MouseLeave += (_, _) => { list.RefreshPointerHover(); PositionArrows(); list.Invalidate(); };
+        footer.SizeChanged += (_, _) => PositionArrows();
+        side.Controls.Add(row, 0, 0); side.Controls.Add(list, 0, 2); side.Controls.Add(footer, 0, 3); return side;
     }
 
     private void Transfer(StationListBox source, bool add, bool all = false)
@@ -215,11 +239,13 @@ internal sealed class StationManagerDialog : Form
         using var path = RoundedShape.Create(bounds, Dip(5));
         using var brush = new SolidBrush(selected ? _theme.Selection : e.Index == list.HoverIndex ? _theme.Hover : _theme.Row);
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias; e.Graphics.FillPath(brush, path);
+        var leading = list == _mine ? 24 : 7;
+        var trailing = list == _available ? 24 : 6;
         TextRenderer.DrawText(e.Graphics, station.Id == "bcc-ilike" ? "中廣流行網" : station.Name, Font,
-            new Rectangle(bounds.X + Dip(7), bounds.Y, Math.Max(1, bounds.Width - Dip(48)), bounds.Height), _theme.Text,
+            new Rectangle(bounds.X + Dip(leading), bounds.Y, Math.Max(1, bounds.Width - Dip(leading + trailing + 35)), bounds.Height), _theme.Text,
             TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
-            new Rectangle(bounds.Right - Dip(40), bounds.Y, Dip(34), bounds.Height), _theme.Muted,
+            new Rectangle(bounds.Right - Dip(trailing + 34), bounds.Y, Dip(34), bounds.Height), _theme.Muted,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
     }
     protected override void OnShown(EventArgs e)
@@ -237,13 +263,8 @@ internal sealed class StationManagerDialog : Form
     }
     private void UpdateDpiPresentation()
     {
-        int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96d);
-        var rows = new[] { Dip(30), Dip(8), Dip(30), Dip(18), Dip(30), Dip(8), Dip(30) };
-        // Round each row once and size the stack to that exact sum. Scaling the
-        // total separately can clip the fourth button at fractional display DPI.
-        for (var i = 0; i < rows.Length; i++) _arrows.RowStyles[i].Height = rows[i];
-        _arrows.Size = new Size(Dip(30), rows.Sum());
-        Padding = new Padding((int)Math.Round(14 * DeviceDpi / 96f));
+        var inset = (int)Math.Round(14 * DeviceDpi / 96f);
+        Padding = new Padding(inset, inset, inset, (int)Math.Round(8 * DeviceDpi / 96f));
         var previous = _frequencyFont;
         _frequencyFont = new Font("Segoe UI", 8.5f * DeviceDpi / 72f, FontStyle.Regular, GraphicsUnit.Pixel);
         previous.Dispose();
