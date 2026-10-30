@@ -289,6 +289,7 @@ internal static class UiChecks
         Check(player.Disposed && metadata.Disposed, "Window close releases playback, metadata and tray ownership");
         CheckPreferences();
         await CheckStationInputAsync();
+        await CheckStationHoverAnimationAsync();
         await CheckStationManagementAsync();
         await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
@@ -366,10 +367,131 @@ internal static class UiChecks
         var mine = Find<ListBox>(dialog, "MyStations");
         available.SetSelected(0, true); available.SetSelected(2, true); mine.SetSelected(1, true);
         Capture(dialog, "artifacts/station-manager-four-arrows.png");
+        HoverTransfer(Find<Button>(dialog, "AddStation"));
+        await Task.Delay(180);
+        Capture(dialog, "artifacts/station-manager-inline-right.png");
+        HoverTransfer(Find<Button>(dialog, "RemoveStation"));
+        await Task.Delay(180);
+        Check(Find<Button>(dialog, "RemoveStation").Visible && !Find<Button>(dialog, "AddStation").Visible,
+            "Moving between lists reveals only the hovered row's matching inline arrow");
+        Capture(dialog, "artifacts/station-manager-inline-left.png");
+        Cursor.Position = new Point(0, 0);
+        await Task.Delay(30);
         dialog.Close();
     }
 
     private static ThemeSettings CatalogSettings() => new() { MyStationIds = StationCatalog.Load().Select(s => s.Id).ToList() };
+
+    private static void HoverTransfer(Button button)
+    {
+        var list = (StationListBox)button.Parent!;
+        var index = Math.Max(list.TopIndex, list.SelectedIndex);
+        if (index >= list.TopIndex + list.VisibleRows) index = list.TopIndex;
+        var row = list.GetItemRectangle(index);
+        Cursor.Position = list.PointToScreen(new Point(30, row.Top + row.Height / 2));
+        SendMouse(list, 0x0200, 30, row.Top + row.Height / 2);
+    }
+
+    private static void ClickTransfer(Button button)
+    {
+        HoverTransfer(button);
+        button.PerformClick();
+    }
+
+    private static async Task CheckStationHoverAnimationAsync()
+    {
+        var animation = new StationHoverAnimation();
+        animation.SetHovered("first", 0);
+        Check(animation.Progress("first", 0) == 0 && animation.Progress("first", 60) == .875 &&
+            animation.Progress("first", 120) == 1 && !animation.IsAnimating(120),
+            "Hover uses a 120ms cubic ease-out from transparent to fully visible");
+        animation.SetHovered(null, 120);
+        Check(animation.Progress("first", 120) == 1 && animation.Progress("first", 180) == .125 &&
+            animation.Progress("first", 240) == 0, "Leaving reverses opacity, content offset and background over 120ms");
+        animation.SetHovered("first", 240);
+        var partial = animation.Progress("first", 280);
+        animation.SetHovered("second", 280);
+        Check(animation.Progress("first", 280) == partial && animation.Progress("second", 280) == 0 &&
+            animation.Progress("first", 340) < partial && animation.Progress("second", 340) > 0,
+            "Rapid row changes fade the old row out independently without snapping");
+        var reversed = animation.Progress("first", 340);
+        animation.SetHovered("first", 340);
+        Check(animation.Progress("first", 340) == reversed && animation.Progress("first", 460) == 1,
+            "Re-entering mid-fade continues from the current visual state");
+        Check(StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 0) == PlayerTheme.Dark.Row &&
+            StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 1) == PlayerTheme.Dark.Hover &&
+            StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, .5) != PlayerTheme.Dark.Row,
+            "Hover background interpolates between the existing theme colors");
+
+        using var dialog = new StationManagerDialog(new StationLibrary(new ThemeSettings { MyStationIds = ["best-989"] }), PlayerTheme.Dark, SystemFonts.MessageBoxFont!);
+        Cursor.Position = new Point(0, 0);
+        dialog.Show(); await Task.Delay(180);
+        foreach (var isLeft in new[] { true, false })
+        {
+            var list = Find<StationListBox>(dialog, isLeft ? "AvailableStations" : "MyStations");
+            var button = Find<PlayerButton>(dialog, isLeft ? "AddStation" : "RemoveStation");
+            var batch = Find<PlayerButton>(dialog, isLeft ? "AddAllStations" : "RemoveAllStations");
+            var listBounds = list.Bounds; var rowBounds = list.GetItemRectangle(0); var batchBounds = batch.Bounds;
+            using var resting = new Bitmap(list.Width, list.Height);
+            list.DrawToBitmap(resting, list.ClientRectangle);
+            HoverTransfer(button);
+            var arrowBounds = button.Bounds;
+            await Task.Delay(240);
+            using var hovered = new Bitmap(list.Width, list.Height);
+            list.DrawToBitmap(hovered, list.ClientRectangle);
+            hovered.Save($"artifacts/station-manager-hover-{list.Name}.png");
+            var color = isLeft ? PlayerTheme.Dark.Muted : PlayerTheme.Dark.Text;
+            int InkLeft(Bitmap bitmap)
+            {
+                for (var x = 0; x < list.ItemContentWidth; x++)
+                    for (var y = 3; y < list.ItemHeight - 3; y++)
+                        if (bitmap.GetPixel(x, y).ToArgb() == color.ToArgb()) return x;
+                throw new Exception("Station text pixels not found");
+            }
+            Check(InkLeft(hovered) - InkLeft(resting) == (isLeft ? -18 : 18),
+                $"{list.Name}: frequency/name smoothly makes 18 DIP of room for its arrow (rest={InkLeft(resting)}, hover={InkLeft(hovered)}, visible={button.Visible}, selected={list.SelectedIndex}, pointer={list.PointToClient(Cursor.Position)})");
+            Check(hovered.GetPixel(2, list.ItemHeight / 2).ToArgb() == PlayerTheme.Dark.Hover.ToArgb() && button.Visible,
+                $"{list.Name}: row background and arrow reach the hover endpoint");
+            var arrow = button.Bounds;
+            var strayMint = 0; var arrowMint = 0;
+            var strayLocations = new List<Point>();
+            var nativePath = $"artifacts/station-manager-native-hover-{list.Name}.png";
+            Capture(dialog, nativePath);
+            using var native = new Bitmap(nativePath);
+            var origin = dialog.PointToClient(list.PointToScreen(Point.Empty));
+            var nativeStrayMint = 0;
+            for (var y = 0; y < list.ItemHeight; y++)
+                for (var x = isLeft ? list.ItemContentWidth - 19 : 0; x < (isLeft ? list.Width : 22); x++)
+                {
+                    var pixel = hovered.GetPixel(x, y);
+                    var nativePixel = native.GetPixel(origin.X + x, origin.Y + y);
+                    if (!arrow.Contains(x, y) && nativePixel.G > 100 && nativePixel.G - nativePixel.R > 20 && nativePixel.B > nativePixel.R)
+                        nativeStrayMint++;
+                    if (pixel.G <= 100 || pixel.G - pixel.R <= 20 || pixel.B <= pixel.R) continue;
+                    if (arrow.Contains(x, y)) arrowMint++; else { strayMint++; strayLocations.Add(new Point(x, y)); }
+                }
+            Check(arrowMint > 0 && strayMint == 0 && nativeStrayMint == 0,
+                $"{list.Name}: green pixels are confined to the arrow, with no lower-right dot (arrow={arrow}, ink={arrowMint}, stray={string.Join(",", strayLocations)})");
+            Check(list.Bounds == listBounds && list.GetItemRectangle(0) == rowBounds && button.Bounds == arrowBounds &&
+                batch.Bounds == batchBounds && batch.PaintSurface is null && list.SelectedIndex == 0 && button.Enabled,
+                $"{list.Name}: hover selects its row and enables the arrow without changing geometry or batch arrows");
+            Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+            SendMouse(list, 0x02A3, 0, 0);
+            await Task.Delay(240);
+            using var restored = new Bitmap(list.Width, list.Height);
+            list.DrawToBitmap(restored, list.ClientRectangle);
+            Check(!button.Visible && InkLeft(restored) == InkLeft(resting) &&
+                restored.GetPixel(2, list.ItemHeight / 2).ToArgb() == PlayerTheme.Dark.Row.ToArgb(),
+                $"{list.Name}: fade-out restores text and background and hides the arrow (visible={button.Visible}, text={InkLeft(restored)}/{InkLeft(resting)}, background={restored.GetPixel(2, list.ItemHeight / 2)})");
+        }
+        var timer = (System.Windows.Forms.Timer)typeof(StationManagerDialog)
+            .GetField("_hoverTimer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(dialog)!;
+        Check(!timer.Enabled, "Hover animation timer stops once both lists settle");
+        HoverTransfer(Find<Button>(dialog, "AddStation"));
+        dialog.Close();
+        Check(!timer.Enabled, "Closing during an animation disposes the hover timer");
+        Cursor.Position = new Point(0, 0);
+    }
 
     private static async Task CheckStationManagementAsync()
     {
@@ -377,6 +499,7 @@ internal static class UiChecks
         var library = new StationLibrary(settings);
         using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
         {
+            Cursor.Position = new Point(0, 0);
             dialog.Show(); await Task.Delay(30);
             var available = Find<ListBox>(dialog, "AvailableStations");
             var mine = Find<ListBox>(dialog, "MyStations");
@@ -391,38 +514,65 @@ internal static class UiChecks
                 leftLanguage.Parent == left.Parent && left.Height == 26 && right.Height == 26,
                 "Independent globe buttons sit outside both complete 26-DIP search pills");
             var addButton = Find<PlayerButton>(dialog, "AddStation");
-            Check(addButton.Framed && addButton.Size == new Size(30, 30) && Find<PlayerButton>(dialog, "RemoveStation").Framed,
-                "Transfer arrows use compact framed 30-DIP buttons");
+            Check(!addButton.Framed && addButton.Size == new Size(12, 15) && !addButton.Visible && addButton.Parent == available &&
+                Find<PlayerButton>(dialog, "RemoveStation").Parent == mine && dialog.ClientSize.Width == 580 &&
+                mine.Left == available.Left && mine.PointToScreen(Point.Empty).X - available.PointToScreen(new Point(available.Width, 0)).X == 30,
+                "580-DIP manager has hidden, unframed 12x15 inline arrows and a 30-DIP list gap");
+            HoverTransfer(addButton);
+            Check(addButton.Visible && addButton.Enabled && available.SelectedIndex == 0, "Hovering selects the station and enables its inline arrow immediately");
+            var batchButton = Find<Button>(dialog, "AddAllStations");
+            Check(batchButton.Parent != available && batchButton.Size == new Size(17, 15) &&
+                batchButton.PointToScreen(Point.Empty).X == addButton.PointToScreen(Point.Empty).X,
+                "Fixed footer double arrow aligns its rear viewport with the inline arrow");
+            var tips = (ToolTip)typeof(StationManagerDialog).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(dialog)!;
+            Check(new[] { "AddStation", "RemoveStation", "AddAllStations", "RemoveAllStations" }
+                .All(name => string.IsNullOrEmpty(tips.GetToolTip(Find<Button>(dialog, name)))), "All transfer arrows have no tooltip");
+            Cursor.Position = addButton.PointToScreen(new Point(6, 7)); await Task.Delay(30);
+            Check(addButton.Visible && ((StationListBox)available).ScrollbarVisible && available.SelectedIndex == 0,
+                "Hovering an inline arrow preserves list hover, scrollbar and its active selection");
+            var footerPosition = batchButton.PointToScreen(Point.Empty);
+            available.TopIndex = 2; available.Refresh();
+            Check(batchButton.PointToScreen(Point.Empty) == footerPosition, "Footer arrows do not move when the list scrolls");
+            available.TopIndex = 0;
+            Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+            SendMouse(available, 0x02A3, 0, 0); await Task.Delay(180);
+            Check(!addButton.Visible, "Inline arrow hides when the pointer leaves the station");
             Check(HitTest(dialog, dialog.PointToScreen(new Point(100, dialog.ClientSize.Height - 10))) == 2,
                 "Dialog background exposes native caption hit testing for window dragging");
             Check(HitTest(dialog, left.PointToScreen(new Point(left.Width / 2, left.Height / 2))) == 1 &&
                 HitTest(dialog, available.PointToScreen(new Point(50, 20))) == 1 &&
-                HitTest(dialog, addButton.PointToScreen(new Point(15, 15))) == 1,
+                HitTest(dialog, addButton.PointToScreen(new Point(6, 7))) == 1,
                 "Search, station rows and transfer buttons are not draggable surfaces");
             CheckNoStationFocusFrame((StationListBox)available, left.Controls[0]);
             left.Query = "91.7"; right.Query = "KISS";
             Check(available.Items.Count == 1 && mine.Items.Count == 0, "Manager searches are independent");
-            available.SelectedIndex = 0; Find<Button>(dialog, "AddStation").PerformClick();
+            available.SelectedIndex = 0; ClickTransfer(Find<Button>(dialog, "AddStation"));
             Check(available.Items.Count == 0 && mine.Items.Count == 1 && library.Mine.Count == 1 && right.Query == "", "Adding clears incompatible destination search to reveal the moved station");
             right.Query = "POP";
             Check(mine.Items.Count == 1 && library.Count("pop-917") == 0, "Name search finds newly added station with zero count");
+            var removeButton = Find<Button>(dialog, "RemoveStation");
+            HoverTransfer(removeButton);
+            var removeAllButton = Find<Button>(dialog, "RemoveAllStations");
+            Check(removeAllButton.PointToScreen(Point.Empty).X + 5 == removeButton.PointToScreen(Point.Empty).X &&
+                removeAllButton.PointToScreen(Point.Empty).Y == mine.PointToScreen(new Point(0, mine.ItemHeight)).Y,
+                "Short results place the fixed footer immediately below the final row, with rear left chevron aligned");
             library.Add("pop-917"); Check(library.Mine.Count == 1, "Duplicate membership rejected");
-            mine.SelectedIndex = 0; Find<Button>(dialog, "RemoveStation").PerformClick();
+            mine.SelectedIndex = 0; ClickTransfer(Find<Button>(dialog, "RemoveStation"));
             Check(mine.Items.Count == 0 && available.Items.Count == 1, "Removing returns station to available catalog");
             left.Query = "";
             Capture(dialog, "artifacts/station-manager-empty.png");
             CheckLayout(dialog);
             foreach (var dpi in new[] { 120, 144, 192, 96 })
             {
-                SimulateDpi(dialog, dpi, 293); await Task.Delay(30);
+                SimulateDpi(dialog, dpi, 289); await Task.Delay(30);
                 CheckLayout(dialog);
                 Check(new[] { "AddStation", "RemoveStation", "AddAllStations", "RemoveAllStations" }
-                    .Select(name => Find<Button>(dialog, name)).All(button => button.Width == (int)Math.Round(30 * dpi / 96d) && button.Height == (int)Math.Round(30 * dpi / 96d)),
-                    $"Manager DPI {dpi}: all four action buttons keep their compact square size");
+                    .Select(name => Find<Button>(dialog, name)).All(button => button.Width == (int)Math.Round((button.Name.Contains("All") ? 17 : 12) * dpi / 96d) && button.Height == (int)Math.Round(15 * dpi / 96d)),
+                    $"Manager DPI {dpi}: single and double arrow viewports scale without changing shape");
                 var content = dialog.Controls[0];
                 var corner = (int)Math.Ceiling(12 * dpi / 96d);
                 Check(content.Left >= corner && content.Top >= corner &&
-                    content.Right <= dialog.ClientSize.Width - corner && content.Bottom <= dialog.ClientSize.Height - corner,
+                    content.Right <= dialog.ClientSize.Width - corner && content.Bottom <= dialog.ClientSize.Height - (int)Math.Round(8 * dpi / 96d),
                     $"Manager DPI {dpi}: child windows cannot overlap any rounded perimeter edge");
                 Check(dialog.Region!.IsVisible(dialog.ClientSize.Width - 20, dialog.ClientSize.Height / 2), $"Manager DPI {dpi}: rounded window region follows full dialog size");
                 Check(available.ItemHeight == (int)Math.Round(37 * dpi / 96d), $"Manager DPI {dpi}: row height scales without clipping search or actions");
@@ -460,14 +610,14 @@ internal static class UiChecks
             if (opened is 2 or 4)
             {
                 var available = Find<ListBox>(manager, "AvailableStations"); available.SelectedIndex = 0;
-                Find<Button>(manager, "AddStation").PerformClick();
+                ClickTransfer(Find<Button>(manager, "AddStation"));
                 available.SelectedIndex = 0;
                 Capture(manager, "artifacts/station-manager-added.png");
             }
             if (opened == 3)
             {
                 var mine = Find<ListBox>(manager, "MyStations"); mine.SelectedIndex = 0;
-                Find<Button>(manager, "RemoveStation").PerformClick();
+                ClickTransfer(Find<Button>(manager, "RemoveStation"));
                 Check(form.PlayingStationId == "pop-917", "Managing membership does not interrupt audio before completion");
             }
             Find<Button>(manager, "DoneButton").PerformClick();
@@ -504,6 +654,7 @@ internal static class UiChecks
         var library = new StationLibrary(settings);
         using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
         {
+            Cursor.Position = new Point(0, 0);
             dialog.Show(); await Task.Delay(30);
             var available = Find<StationListBox>(dialog, "AvailableStations");
             var mine = Find<StationListBox>(dialog, "MyStations");
@@ -511,32 +662,37 @@ internal static class UiChecks
             var right = Find<StationSearchBox>(dialog, "MySearch");
             var add = Find<Button>(dialog, "AddStation"); var remove = Find<Button>(dialog, "RemoveStation");
             var addAll = Find<Button>(dialog, "AddAllStations"); var removeAll = Find<Button>(dialog, "RemoveAllStations");
-            void ClickRow(StationListBox list, int index)
+            void ClickRow(StationListBox list, int index, int x = 50)
             {
                 var y = list.GetItemRectangle(index).Top + list.ItemHeight / 2;
-                SendMouse(list, 0x0201, 50, y); SendMouse(list, 0x0202, 50, y);
+                Cursor.Position = list.PointToScreen(new Point(x, y));
+                SendMouse(list, 0x0200, x, y);
+                SendMouse(list, 0x0201, x, y); SendMouse(list, 0x0202, x, y);
             }
             Check(!add.Enabled && !remove.Enabled && addAll.Enabled && !removeAll.Enabled,
                 "Selected and all-result actions have independent empty-state availability");
-            ClickRow(available, 0); ClickRow(available, 2);
-            Check(available.SelectedIndices.Cast<int>().SequenceEqual(new[] { 0, 2 }), "Plain clicks select multiple rows without Ctrl");
-            var selectedDrawn = new HashSet<int>();
-            void RecordSelection(object? sender, DrawItemEventArgs e) { if ((e.State & DrawItemState.Selected) != 0) selectedDrawn.Add(e.Index); }
-            available.DrawItem += RecordSelection; available.Refresh(); available.DrawItem -= RecordSelection;
-            Check(selectedDrawn.SetEquals(new[] { 0, 2 }), "All selected rows receive the selection background");
-            ClickRow(available, 0);
-            Check(available.SelectedIndices.Cast<int>().SequenceEqual(new[] { 2 }), "Clicking an already selected row toggles only that row off");
-            var beforeScroll = available.SelectedItems.Cast<Station>().Select(s => s.Id).ToArray();
-            SendMessage(available.Handle, 0x020A, new IntPtr(-120 << 16), IntPtr.Zero);
-            Check(available.SelectedItems.Cast<Station>().Select(s => s.Id).SequenceEqual(beforeScroll), "Multi-select scrolling does not alter selections");
-            available.TopIndex = 0;
-            ClickRow(available, 0); ClickRow(available, 1);
             var notifications = 0; dialog.MembershipChanged += () => notifications++;
-            add.PerformClick();
-            Check(library.Mine.Count == 3 && library.Available.Count == 4 && notifications == 1,
-                "Single chevron transfers all selected rows in one batch");
-            mine.SetSelected(0, true); mine.SetSelected(1, true); remove.PerformClick();
-            Check(library.Mine.Count == 1 && notifications == 2, "Left single chevron removes multiple selected rows in one batch");
+            HoverTransfer(add);
+            Check(add.Enabled && available.SelectedIndex == 0 && library.Mine.Count == 0 && notifications == 0,
+                "Hover alone selects and enables the green arrow without moving any station");
+            SendMouse(available, 0x0204, 50, 18); SendMouse(available, 0x0205, 50, 18);
+            SendMouse(available, 0x0201, available.Width - 4, 20); SendMouse(available, 0x0202, available.Width - 4, 20);
+            Check(library.Mine.Count == 0 && notifications == 0, "Right-click and scrollbar gutter clicks never transfer stations");
+            available.TopIndex = 0;
+            ClickRow(available, 0);
+            Check(library.Mine.Count == 1 && library.Mine[0].Id == "pop-917" && notifications == 1,
+                "One click on a station name immediately transfers exactly that row once");
+            ClickRow(available, 0, available.ItemContentWidth - 35);
+            Check(library.Mine.Count == 2 && library.Mine.Any(station => station.Id == "ufo-921") && notifications == 2,
+                "One click on the frequency immediately transfers that row once");
+            HoverTransfer(add);
+            Cursor.Position = add.PointToScreen(new Point(6, 7));
+            SendMouse(add, 0x0201, 6, 7); SendMouse(add, 0x0202, 6, 7);
+            Check(library.Mine.Count == 3 && library.Available.Count == 4 && notifications == 3,
+                "The inline arrow still transfers its hovered row exactly once");
+            ClickRow(mine, 0); ClickRow(mine, 0, mine.ItemContentWidth - 35);
+            Check(library.Mine.Count == 1 && library.Mine[0].Id == "bcc-ilike" && notifications == 5,
+                "Right-list name and frequency clicks return their hovered stations directly");
             left.Query = "91.7"; addAll.PerformClick();
             Check(library.Mine.Count == 2 && available.Items.Count == 0 && !addAll.Enabled,
                 "Double right chevron adds only visible search results without prior selection");
@@ -639,26 +795,28 @@ internal static class UiChecks
         Choose(false, "en");
         Check(mine.Items.Count == 1 && ((Station)mine.Items[0]).Id == "multi", "Multilingual station matches each explicit language code");
         Choose(true, "fr"); available.SelectedIndex = 0; right.Query = "雙語";
-        Find<Button>(dialog, "AddStation").PerformClick();
+        ClickTransfer(Find<Button>(dialog, "AddStation"));
         Check(available.Items.Count == 0 && mine.Items.Count == 3 && right.Query == "" && dialog.MyStationsLanguageFilter == "" && dialog.AvailableStationsLanguageFilter == "fr",
             "Add reveals transferred station by clearing only incompatible destination conditions");
         Choose(true, "en"); left.Query = "BBC";
-        mine.SelectedItem = catalog[1]; Find<Button>(dialog, "RemoveStation").PerformClick();
+        mine.SelectedItem = catalog[1]; ClickTransfer(Find<Button>(dialog, "RemoveStation"));
         Check(library.Mine.Count == 2 && available.Items.Count == 5 && left.Query == "" && dialog.AvailableStationsLanguageFilter == "",
             "Remove restores catalog station and clears incompatible destination conditions");
         Choose(true, "en"); left.Query = "BBC"; available.SelectedIndex = 0;
         Choose(false, "zh"); right.Query = "POP";
-        Find<Button>(dialog, "AddStation").PerformClick();
+        ClickTransfer(Find<Button>(dialog, "AddStation"));
         Check(library.Mine.Count == 3 && mine.Items.Count == 3, "English station moves correctly even under Chinese destination filter");
         Choose(false, "fr");
         Check(mine.Items.Count == 0 && library.Mine.Count == 3 && settings.PlayCounts.Values.All(value => value == 0),
             "Filtering to empty results never deletes favorites or changes play counts");
         Choose(false, "en"); right.Query = "BBC"; mine.SelectedIndex = 0;
         left.Query = "BBC";
-        Find<Button>(dialog, "RemoveStation").PerformClick();
+        ClickTransfer(Find<Button>(dialog, "RemoveStation"));
         Check(dialog.AvailableStationsLanguageFilter == "en" && left.Query == "BBC" && available.Items.Count == 1,
             "Compatible destination language and text filters remain unchanged after transfer");
         Choose(false, ""); right.Query = "";
+        Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+        SendMouse(mine, 0x02A3, 0, 0);
         mine.SelectedItem = catalog[0]; library.RecordSuccess("multi");
         Check(((Station)mine.Items[0]).Id == "multi" && ((Station)mine.SelectedItem!).Id == "pop",
             "Open manager immediately follows count sorting without changing selected station identity");
@@ -871,7 +1029,7 @@ internal static class UiChecks
     }
     private static void SimulateDpi(Form form, int dpi, int height = 271)
     {
-        var width = form is StationManagerDialog ? 690 : 554;
+        var width = form is StationManagerDialog ? 580 : 554;
         var rect = new NativeRect { Left = form.Left, Top = form.Top, Right = form.Left + width * dpi / 96, Bottom = form.Top + height * dpi / 96 };
         var ptr = Marshal.AllocHGlobal(Marshal.SizeOf<NativeRect>());
         try { Marshal.StructureToPtr(rect, ptr, false); SendMessage(form.Handle, 0x02E0, new IntPtr(dpi | dpi << 16), ptr); }

@@ -27,21 +27,35 @@ internal static class GlyphPainter
     {
         var state = graphics.Save();
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        if (glyph is PlayerGlyph.ChevronRight or PlayerGlyph.ChevronLeft or PlayerGlyph.DoubleChevronRight or PlayerGlyph.DoubleChevronLeft)
+        {
+            // SVG viewBox="0 0 24 24", rendered in identical 12 x 15 DIP viewports.
+            var left = glyph is PlayerGlyph.ChevronLeft or PlayerGlyph.DoubleChevronLeft;
+            var count = glyph is PlayerGlyph.DoubleChevronRight or PlayerGlyph.DoubleChevronLeft ? 2 : 1;
+            var width = count == 2 ? (float)Math.Round(bounds.Width * 12 / 17d) : bounds.Width;
+            var scale = Math.Min(width, bounds.Height) / 24f;
+            using var stroke = new Pen(color, 1.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+            for (var i = 0; i < count; i++)
+            {
+                var viewport = graphics.Save();
+                graphics.TranslateTransform(bounds.X + i * (bounds.Width - width) + (width - 24 * scale) / 2,
+                    bounds.Y + (bounds.Height - 24 * scale) / 2);
+                graphics.ScaleTransform(scale, scale);
+                // m10 5 6 7-6 7 / m14 5-6 7 6 7; second viewport overlaps by 7 DIP.
+                graphics.DrawLines(stroke, left
+                    ? new Point[] { new(14, 5), new(8, 12), new(14, 19) }
+                    : new Point[] { new(10, 5), new(16, 12), new(10, 19) });
+                graphics.Restore(viewport);
+            }
+            graphics.Restore(state);
+            return;
+        }
         graphics.TranslateTransform(bounds.X, bounds.Y);
         graphics.ScaleTransform(bounds.Width / 20f, bounds.Height / 20f);
         using var pen = new Pen(color, 1.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         using var brush = new SolidBrush(color);
         switch (glyph)
         {
-            case PlayerGlyph.ChevronRight:
-            case PlayerGlyph.ChevronLeft:
-            case PlayerGlyph.DoubleChevronRight:
-            case PlayerGlyph.DoubleChevronLeft:
-                if (glyph is PlayerGlyph.ChevronLeft or PlayerGlyph.DoubleChevronLeft)
-                { graphics.TranslateTransform(20, 0); graphics.ScaleTransform(-1, 1); }
-                foreach (var x in glyph is PlayerGlyph.DoubleChevronRight or PlayerGlyph.DoubleChevronLeft ? new[] { 3, 11 } : new[] { 7 })
-                    graphics.DrawLines(pen, new Point[] { new(x, 4), new(x + 5, 10), new(x, 16) });
-                break;
             case PlayerGlyph.Search:
                 graphics.DrawEllipse(pen, 3, 3, 10, 10); graphics.DrawLine(pen, 12, 12, 17, 17); break;
             case PlayerGlyph.Plus:
@@ -124,6 +138,7 @@ internal sealed class PlayerButton : Button
     public bool Circular { get; init; }
     public bool Framed { get; init; }
     public PlayerGlyph Glyph { get; set; }
+    internal Action<Graphics>? PaintSurface { get; set; }
     public PlayerButton()
     {
         FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0;
@@ -135,8 +150,15 @@ internal sealed class PlayerButton : Button
     protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnPaint(PaintEventArgs e)
     {
+        if (PaintSurface is not null) { PaintSurface(e.Graphics); return; }
         e.Graphics.Clear(Parent?.BackColor ?? _theme.Canvas);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        if (Glyph is PlayerGlyph.ChevronRight or PlayerGlyph.ChevronLeft or PlayerGlyph.DoubleChevronRight or PlayerGlyph.DoubleChevronLeft)
+        {
+            e.Graphics.Clear(BackColor);
+            GlyphPainter.Draw(e.Graphics, Glyph, ClientRectangle, Enabled ? _theme.Accent : _theme.Track);
+            return;
+        }
         if (Primary || _hover || Framed)
         {
             var scale = (FindForm()?.DeviceDpi ?? DeviceDpi) / 96f;
@@ -303,7 +325,18 @@ internal sealed class StationListBox : ListBox
         base.OnMouseMove(e);
     }
     protected override void OnMouseEnter(EventArgs e) { UpdateHover(HoverIndex, true); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { UpdateHover(-1, false); base.OnMouseLeave(e); }
+    internal void RefreshPointerHover()
+    {
+        var point = PointToClient(Cursor.Position);
+        var inside = ClientRectangle.Contains(point);
+        UpdateHover(inside && point.X < ItemContentWidth ? IndexFromPoint(point) : -1, inside);
+    }
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        // Entering an inline child button is still hovering the station list.
+        if (Controls.Count > 0) RefreshPointerHover(); else UpdateHover(-1, false);
+        base.OnMouseLeave(e);
+    }
     protected override void OnVisibleChanged(EventArgs e)
     {
         if (!Visible)
