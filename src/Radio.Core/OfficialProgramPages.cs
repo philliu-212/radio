@@ -101,8 +101,7 @@ internal static class OfficialProgramPages
         // Reject redirects/fallbacks to Afrique or a replay grid even if their markup is identical.
         if (!Match(html, "<link\\b(?=[^>]*\\brel=[\"']canonical[\"'])(?=[^>]*\\bhref=[\"']https://www\\.rfi\\.fr/fr/grille-des-programmes/monde[\"'])[^>]*>").Success) return null;
         var date = Field(html, "span", "m-calendar-date__date");
-        if (!DateOnly.TryParseExact(date, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day) ||
-            day != DateOnly.FromDateTime(now.UtcDateTime)) return null;
+        if (!DateOnly.TryParseExact(date, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)) return null;
         var blocks = Regex.Matches(html, "<div\\b[^>]*class=[\"']m-item-program-grid[\"'][^>]*>(.*?)(?=<div\\b[^>]*class=[\"']m-item-program-grid[\"']|$)", Options, TimeSpan.FromMilliseconds(100));
         StationMetadata? result = null;
         foreach (Match block in blocks)
@@ -113,19 +112,20 @@ internal static class OfficialProgramPages
             if (result is not null) return null;
             var title = Field(content, "p", "m-item-program-grid__infos__program-title");
             var author = Field(content, "p", "m-item-program-grid__infos__edition-authors");
-            var time = Field(content, "time", "m-item-program-grid__timeline__time");
-            var clock = time is null ? System.Text.RegularExpressions.Match.Empty : Match(time, @"^(\d{2}):(\d{2}) TU$");
-            if (title is null || !clock.Success || int.Parse(clock.Groups[1].Value) > 23 || int.Parse(clock.Groups[2].Value) > 59) return null;
-            // Visible TU and datetime offsets disagree on the official site. Preserve the stated
-            // start in UTC, use only its explicit live marker, and label this as schedule information.
-            var start = new DateTimeOffset(day.Year, day.Month, day.Day, int.Parse(clock.Groups[1].Value), int.Parse(clock.Groups[2].Value), 0, TimeSpan.Zero);
+            var time = Match(content, "<time\\b(?=[^>]*\\bclass=[\"']m-item-program-grid__timeline__time[\"'])[^>]*\\bdatetime=[\"']([^\"']+)[\"'][^>]*>");
+            var stamp = time.Groups[1].Value;
+            // The visible "TU" clock can actually be local time. The machine-readable ISO
+            // timestamp has the explicit offset; do not reinterpret it as UTC or guess DST.
+            if (title is null || !time.Success || !Match(stamp, @"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})$").Success ||
+                !DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.None, out var start) ||
+                DateOnly.FromDateTime(start.DateTime) != day || DateOnly.FromDateTime(now.ToOffset(start.Offset).DateTime) != day || start > now) return null;
             var expiry = now.AddSeconds(90);
-            var midnight = new DateTimeOffset(day.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-            if (start > now || now - start >= TimeSpan.FromHours(1)) return null;
-            if (start.AddHours(1) < expiry) expiry = start.AddHours(1);
+            // A live marker is the official current selection. Neither an invented one-hour
+            // duration nor the next listed magazine can tell us when it ends.
+            var midnight = new DateTimeOffset(day.AddDays(1).ToDateTime(TimeOnly.MinValue), start.Offset);
             if (midnight < expiry) expiry = midnight;
             result = new(MetadataKind.ScheduledProgram, title, author is null ? null : Clean(Replace(author, @"^Par\s*:\s*", "")), expiry)
-            { TimeSlot = $"{clock.Groups[1].Value}:{clock.Groups[2].Value} UTC 起" };
+            { TimeSlot = $"{start.UtcDateTime.ToString("HH:mm", CultureInfo.InvariantCulture)} UTC 起" };
         }
         return result;
     }

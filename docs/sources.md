@@ -37,13 +37,15 @@
 | Hit FM 北部 | `https://www.hitoradio.com/newweb/onair_n_ajax_cname.php` | 將官方「不累DJ - Bibi趙之璧」類標籤分為節目與主持人；無明確 DJ 分隔格式則保留原文字，不猜分割點。HTML 當文字，不渲染。 |
 | POP Radio | `https://www.pop917.com/` 的 `liveBox2` | 僅選北北基 FM91.7，讀取節目／主持人／台灣時段／NEXT；允許輪播相同副本，衝突或時段不符留白，不混入 FM90.7 或排行榜。 |
 | 飛碟電台 | `https://www.uforadio.com.tw/` 的 `#stream` | 核對播放器為已知飛碟來源，只讀節目／主持人／台灣時段，不把宣傳區或排行榜當直播資訊。 |
-| RFI Monde | `https://www.rfi.fr/fr/grille-des-programmes/monde` | 僅讀當日 UTC 日期、唯一官方 `En Direct` 標記的節目／主持人與可見 TU 開始時間，明確標示「節目表」；不從相鄰節目推論結束時間。可見 TU 與 HTML datetime offset 有不一致，因此不使用 datetime 推算；可見時間在未來或距今滿一小時即留白（保守新鮮度上限，不代表節目長度），跨 UTC 日期清除。403、版型變動或無有效標記也留白。 |
+| RFI Monde | `https://www.rfi.fr/fr/grille-des-programmes/monde` | 核對 Monde canonical、頁面日期與唯一官方 `En Direct` 標記，取得節目／主持人；採用 `<time datetime>` 的完整 ISO 時間與明確 offset 換算 UTC，不把可見「TU」文字直接當 UTC。頁面日期依該 offset 比對目前日期及節目日期；在實際未開始、日期過期、403、版型變動或無有效標記時留白。標示「節目表」，不從相鄰節目或自訂一小時推論結束，最多保留 90 秒並於頁面當地午夜清除，沿用可見時查詢的既有更新週期。 |
 
 上述非 KISS 電台本次未確認可用的即時歌曲／歌手來源。Hit FM 的 `search.php` 是需姓名、email 與驗證碼、由人員回覆的三日內查歌表單，不是即時歌單 API；POP 的歌單連結目前被註解。RFI 直播頁的 emission.title 為空，同頁 podcasts 為重播，不能冒充直播。
 
 時段與 NEXT 共用既有第二行，長文字可由既有 tooltip 看完整內容，不改 UI 字級或版型。節目／時段不承諾與音訊同步。POP、飛碟時段支援台灣時間跨日，於時段結束清除。
 
-線上文字抽查指令：`dotnet run --project tests/Radio.Core.Tests -c Release -- --metadata-live`（排除 KISS、不開音訊、不保存帶 token 的 URL）。2026-10-30 抽查 POP、飛碟、中廣、好事與 Hit FM 均取得有效節目／主持人；RFI 回傳空值，未列為線上成功。研究工具可讀 RFI 節目表，但本機 PowerShell 曾遭拒絕，不能以研究工具可達代替播放器環境可用。
+線上文字抽查指令：`dotnet run --project tests/Radio.Core.Tests -c Release -- --metadata-live`（排除 KISS、不開音訊、不保存帶 token 的 URL）；單獨驗證 RFI 可用 `--metadata-rfi-live`，資料空白或請求失敗時回傳非零 exit code。2026-10-30 抽查 POP、飛碟、中廣、好事與 Hit FM 均取得有效節目／主持人；同日 09:39 UTC，修正後的本機 .NET provider 也成功取得 RFI「8 milliards de voisins」、主持人 Emmanuelle Bastide、09:10 UTC 起。
+
+RFI 初次回傳 null 的解析問題已修正：真實頁面 live 項目顯示 `10:10 TU`，但 machine-readable datetime 為 `2026-10-30T10:10:30+01:00`（09:10:30 UTC）。舊程式忽略 offset，把顯示文字當 UTC，誤判為未來；且自行設定的一小時上限可能丟棄有效 live marker，現已移除。真實回應精簡 fixture 重現舊版失敗，並覆蓋時區／當地日期跨 UTC 午夜／實際開始邊界與缺 offset。網站確實有有效資料，不能把初次 null 說成不存在；網路抽查另曾逾時或遭拒，仍須正常處理暫時失敗，不宣稱永久可達或與音訊同步。
 
 - 僅對實際播放中的受支援電台在視窗可見時查詢；切台、停止、最小化會取消額外查詢，舊回應不能套到新電台。
 - 查詢逾時、格式變動、HTTP 拒絕或 TTL 到期只清除附加資訊，不影響音訊；節目表快取也須依目前時間重新計算時段。

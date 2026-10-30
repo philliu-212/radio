@@ -13,12 +13,19 @@ internal static class ProgramPageChecks
         <div id="stream"><div class="sm-host"><a>主持甲、主持乙</a></div><div class="sm-time">16:00 - 17:00</div><div class="sm-program"><a>測試晚報</a></div>
         <source src="https://stream.rcs.revma.com/em90w4aeewzuv"></div><footer>ignore</footer>
         """;
+    // Reduced official 2026-10-30 09:33 UTC response: the visible "TU" disagrees with
+    // datetime's explicit +01:00. Keep the real shape/time to catch the original regression.
     private const string Rfi = """
         <link rel="canonical" href="https://www.rfi.fr/fr/grille-des-programmes/monde">
         <span class="m-calendar-date__date">30/10/2026</span>
-        <div class="m-item-program-grid"><time datetime="2026-10-30T08:10:30+01:00" class="m-item-program-grid__timeline__time">08:10 TU</time>
-        <div class="m-item-program-grid__timeline__live">En Direct</div><p class="m-item-program-grid__infos__program-title">Émission &amp; test</p><p class="m-item-program-grid__infos__edition-authors">Par : Présentatrice</p></div>
-        <div class="m-item-program-grid"><time class="m-item-program-grid__timeline__time">10:10 TU</time><p class="m-item-program-grid__infos__program-title">Future</p></div>
+        <div class="m-item-program-grid"><div class="m-item-program-grid__wrapper">
+        <div class="m-item-program-grid__timeline m-item-program-grid__timeline--is-live">
+        <time datetime="2026-10-30T10:10:30+01:00" class="m-item-program-grid__timeline__time">10:10 TU</time>
+        <div class="m-item-program-grid__timeline__live-wrapper"><div class="m-item-program-grid__timeline__live">En Direct</div></div></div>
+        <div class="m-item-program-grid__infos"><div class="m-item-program-grid__infos__titles"><a href="/fr/podcasts/8-milliards-voisins/">
+        <p class="m-item-program-grid__infos__program-title">8 milliards de voisins</p><p class="m-item-program-grid__infos__edition-authors">Par : Emmanuelle Bastide</p>
+        </a></div></div></div></div>
+        <div class="m-item-program-grid"><time datetime="2026-10-30T13:30:30+01:00" class="m-item-program-grid__timeline__time">13:30 TU</time><p class="m-item-program-grid__infos__program-title">Littérature sans frontières</p></div>
         """;
 
     public static async Task RunAsync()
@@ -36,22 +43,32 @@ internal static class ProgramPageChecks
         Check(OfficialProgramPages.Parse("ufo-921", Ufo, Now.AddMinutes(29).AddSeconds(59))?.ExpiresAt == Now.AddMinutes(30), "UFO expiry capped at slot end");
         Check(!OfficialProgramPages.TrySlot("24:00–25:00", Now, out _, out _) &&
             !OfficialProgramPages.TrySlot("16:00-16:00", Now, out _, out _), "Invalid and ambiguous time slots rejected");
-        var rfi = OfficialProgramPages.Parse("rfi-monde", Rfi, Now);
-        Check(rfi is { Kind: MetadataKind.ScheduledProgram, Title: "Émission & test", Person: "Présentatrice", TimeSlot: "08:10 UTC 起" }, "RFI uses dated Monde live marker and visible UTC, not datetime offset or future program");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("30/10/2026", "29/10/2026"), Now) is null, "RFI stale UTC date rejected");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("/monde", "/afrique"), Now) is null, "RFI rejects Afrique page with otherwise identical markup");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("30/10/2026", "31/10/2026"), Now.AddHours(8)) is null, "RFI UTC date is not Taiwan date");
-        var rfiMidnight = Rfi.Replace("08:10 TU", "23:10 TU");
-        Check(OfficialProgramPages.Parse("rfi-monde", rfiMidnight, new DateTimeOffset(2026, 10, 30, 23, 59, 59, TimeSpan.Zero))?.ExpiresAt ==
-            new DateTimeOffset(2026, 10, 31, 0, 0, 0, TimeSpan.Zero), "RFI expires at UTC midnight");
-        Check(OfficialProgramPages.Parse("rfi-monde", "<style>" + new string('x', 300 * 1024) + "</style>" + Rfi, Now)?.Title == rfi?.Title,
+        var rfiNow = new DateTimeOffset(2026, 10, 30, 9, 33, 15, TimeSpan.Zero);
+        var rfi = OfficialProgramPages.Parse("rfi-monde", Rfi, rfiNow);
+        Check(rfi is { Kind: MetadataKind.ScheduledProgram, Title: "8 milliards de voisins", Person: "Emmanuelle Bastide", TimeSlot: "09:10 UTC 起" }, "RFI real live response uses explicit datetime offset, not mislabeled visible TU");
+        Check(rfi?.ExpiresAt == rfiNow.AddSeconds(90), "RFI metadata retains bounded refresh expiry");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("30/10/2026", "29/10/2026"), rfiNow) is null, "RFI calendar date must match the timestamp date");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi, rfiNow.AddDays(1)) is null, "RFI yesterday's live marker rejected");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("/monde", "/afrique"), rfiNow) is null, "RFI rejects Afrique page with otherwise identical markup");
+        var nextLocalDay = Rfi.Replace("30/10/2026", "31/10/2026").Replace("2026-10-30T10:10:30+01:00", "2026-10-31T00:10:30+01:00").Replace("10:10 TU", "00:10 TU");
+        Check(OfficialProgramPages.Parse("rfi-monde", nextLocalDay, new DateTimeOffset(2026, 10, 30, 23, 30, 0, TimeSpan.Zero))?.TimeSlot == "23:10 UTC 起", "RFI local date can be tomorrow while UTC is still today");
+        Check(OfficialProgramPages.Parse("rfi-monde", nextLocalDay, new DateTimeOffset(2026, 10, 30, 23, 59, 59, TimeSpan.Zero)) is not null, "RFI remains valid across UTC midnight within its official local date");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi, new DateTimeOffset(2026, 10, 30, 22, 59, 59, TimeSpan.Zero))?.ExpiresAt ==
+            new DateTimeOffset(2026, 10, 30, 23, 0, 0, TimeSpan.Zero), "RFI clears dated page at official offset midnight");
+        Check(OfficialProgramPages.Parse("rfi-monde", "<style>" + new string('x', 300 * 1024) + "</style>" + Rfi, rfiNow)?.Title == rfi?.Title,
             "RFI bounded large inline styles do not block text parsing");
         Check(OfficialProgramPages.Parse("rfi-monde", new string('x', 1024 * 1024 + 1), Now) is null &&
             OfficialProgramPages.Parse("pop-917", new string('x', 256 * 1024 + 1), Now) is null, "Oversized metadata pages rejected");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("En Direct", ""), Now) is null, "RFI never infers current program from gaps in schedule");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("08:10 TU", "09:10 TU"), Now) is null, "RFI future visible UTC slot fails closed even with live marker");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi, Now.AddMinutes(40)) is null, "RFI live marker cannot extend through long unlisted gaps");
-        Check(OfficialProgramPages.Parse("rfi-monde", Rfi + Rfi, Now) is null, "RFI ambiguous live markers rejected");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("En Direct", ""), rfiNow) is null, "RFI never infers current program from gaps in schedule");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi, new DateTimeOffset(2026, 10, 30, 9, 10, 29, TimeSpan.Zero)) is null, "RFI actual future start is rejected down to the second");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi, new DateTimeOffset(2026, 10, 30, 9, 10, 30, TimeSpan.Zero)) is not null, "RFI accepts exact actual start boundary");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi, rfiNow.AddHours(1))?.Title == rfi?.Title, "RFI explicit current marker is not discarded by an invented one-hour duration");
+        foreach (var invalid in new[] { "2026-10-30T10:10:30", "2026-10-30T25:10:30+01:00", "2026-10-30T10:10:30+25:00", "not-a-date" })
+            Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("2026-10-30T10:10:30+01:00", invalid), rfiNow) is null, "RFI missing offset or invalid ISO timestamp fails closed");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("10:10:30+01:00", "09:10:30Z"), rfiNow)?.TimeSlot == "09:10 UTC 起", "RFI supports explicit Z UTC timestamps");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("10:10:30+01:00", "10:10:30+02:00"), rfiNow)?.TimeSlot == "08:10 UTC 起", "RFI honors supplied summer offset without a hard-coded Paris or Taiwan offset");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi.Replace("class=\"m-item-program-grid__infos__edition-authors\"", "class=\"missing\""), rfiNow) is { Title: "8 milliards de voisins", Person: null }, "RFI missing author does not hide valid official program or invent a presenter");
+        Check(OfficialProgramPages.Parse("rfi-monde", Rfi + Rfi, rfiNow) is null, "RFI ambiguous live markers rejected");
         foreach (var id in new[] { "pop-917", "ufo-921", "rfi-monde" })
         {
             Check(OfficialProgramPages.Parse(id, "<html>changed</html>", Now) is null &&
@@ -60,7 +77,9 @@ internal static class ProgramPageChecks
             using var denied = new OfficialMetadataProvider(new PageHandler(id, HttpStatusCode.Forbidden));
             Check(denied.Supports(id) && await denied.GetAsync(id, default) is null, $"{id} HTTP refusal returns empty");
             using var valid = new OfficialMetadataProvider(new PageHandler(id, HttpStatusCode.OK));
-            await valid.GetAsync(id, default); // Fixed fixture may be out of slot in real time; request contract is independent.
+            var data = await valid.GetAsync(id, default); // POP/UFO fixed fixtures may be out of slot in real time.
+            if (id == "rfi-monde") Check(data is { Title: "8 milliards de voisins", Person: "Emmanuelle Bastide", Kind: MetadataKind.ScheduledProgram },
+                "RFI provider accepts realistic current HTTP fixture end to end");
             using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
             try { await valid.GetAsync(id, cancelled.Token); throw new Exception("Cancellation ignored"); }
             catch (OperationCanceledException) { Check(true, $"{id} cancellation respected"); }
@@ -85,7 +104,15 @@ internal static class ProgramPageChecks
             var expected = id switch { "pop-917" => "https://www.pop917.com/", "ufo-921" => "https://www.uforadio.com.tw/", _ => "https://www.rfi.fr/fr/grille-des-programmes/monde" };
             Check(request.Method == HttpMethod.Get && request.RequestUri?.AbsoluteUri == expected && request.Content is null,
                 $"{id} requests official text page only");
-            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(id == "pop-917" ? Pop : id == "ufo-921" ? Ufo : Rfi) });
+            var page = id == "pop-917" ? Pop : id == "ufo-921" ? Ufo : Rfi;
+            if (id == "rfi-monde")
+            {
+                var local = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(1));
+                var start = new DateTimeOffset(local.Year, local.Month, local.Day, local.Hour, local.Minute, 0, local.Offset);
+                page = page.Replace("30/10/2026", local.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture))
+                    .Replace("2026-10-30T10:10:30+01:00", start.ToString("yyyy-MM-dd'T'HH:mm:sszzz", System.Globalization.CultureInfo.InvariantCulture));
+            }
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(page) });
         }
     }
 }
