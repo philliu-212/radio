@@ -138,6 +138,7 @@ internal sealed class PlayerButton : Button
     public bool Circular { get; init; }
     public bool Framed { get; init; }
     public PlayerGlyph Glyph { get; set; }
+    internal Action<Graphics>? PaintSurface { get; set; }
     public PlayerButton()
     {
         FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0;
@@ -149,6 +150,7 @@ internal sealed class PlayerButton : Button
     protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnPaint(PaintEventArgs e)
     {
+        if (PaintSurface is not null) { PaintSurface(e.Graphics); return; }
         e.Graphics.Clear(Parent?.BackColor ?? _theme.Canvas);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         if (Glyph is PlayerGlyph.ChevronRight or PlayerGlyph.ChevronLeft or PlayerGlyph.DoubleChevronRight or PlayerGlyph.DoubleChevronLeft)

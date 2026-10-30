@@ -23,6 +23,8 @@ internal sealed class StationManagerDialog : Form
     private readonly PlayerButton _remove;
     private readonly PlayerButton _addAll;
     private readonly PlayerButton _removeAll;
+    private readonly Dictionary<StationListBox, StationHoverAnimation> _hoverAnimations = new();
+    private readonly System.Windows.Forms.Timer _hoverTimer = new() { Interval = 15 };
     public event Action? MembershipChanged;
 
     public StationManagerDialog(StationLibrary library, PlayerTheme theme, Font font)
@@ -66,6 +68,11 @@ internal sealed class StationManagerDialog : Form
         UpdateLanguageButton(_leftLanguage); UpdateLanguageButton(_rightLanguage);
         _library.OrderChanged += RefreshLists;
         _available.SelectedIndexChanged += (_, _) => UpdateButtons(); _mine.SelectedIndexChanged += (_, _) => UpdateButtons();
+        _hoverTimer.Tick += (_, _) =>
+        {
+            _available.Invalidate(); _mine.Invalidate();
+            if (!_hoverAnimations.Values.Any(animation => animation.IsAnimating(Environment.TickCount64))) _hoverTimer.Stop();
+        };
         EnableBackgroundDragging(this);
         RefreshLists();
     }
@@ -138,6 +145,21 @@ internal sealed class StationManagerDialog : Form
         single.Dock = batch.Dock = DockStyle.None;
         single.Visible = false;
         list.Controls.Add(single); footer.Controls.Add(batch);
+        var animation = new StationHoverAnimation();
+        _hoverAnimations.Add(list, animation);
+        string? arrowStationId = null;
+        single.PaintSurface = graphics =>
+        {
+            // Native child buttons are opaque. Repaint the row beneath this hit area
+            // so an almost-transparent arrow cannot erase text that is still moving.
+            var index = list.IndexFromPoint(0, single.Top + single.Height / 2);
+            if (index < 0) return;
+            var state = graphics.Save();
+            graphics.TranslateTransform(-single.Left, -single.Top);
+            DrawStation(list, new DrawItemEventArgs(graphics, Font, list.GetItemRectangle(index), index,
+                list.GetSelected(index) ? DrawItemState.Selected : DrawItemState.None));
+            graphics.Restore(state);
+        };
         void PositionArrows()
         {
             int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96d);
@@ -151,11 +173,21 @@ internal sealed class StationManagerDialog : Form
             batch.Location = new Point(add ? x : x - Dip(5), 0);
             var point = list.PointToClient(Cursor.Position);
             var index = list.ClientRectangle.Contains(point) && point.X < list.ItemContentWidth ? list.IndexFromPoint(point) : -1;
-            if (index < 0) { single.Visible = false; return; }
-            var bounds = list.GetItemRectangle(index);
-            if (bounds.Bottom > list.ClientSize.Height) { single.Visible = false; return; }
+            if (index >= 0 && list.GetItemRectangle(index).Bottom > list.ClientSize.Height) index = -1;
+            var hoveredId = index >= 0 ? ((Station)list.Items[index]).Id : null;
+            var now = Environment.TickCount64;
+            if (animation.SetHovered(hoveredId, now)) _hoverTimer.Start();
+            if (hoveredId is not null) arrowStationId = hoveredId;
+            var arrowIndex = list.Items.Cast<Station>().Select((station, i) => (station, i))
+                .Where(item => item.station.Id == arrowStationId).Select(item => item.i).DefaultIfEmpty(-1).First();
+            var progress = arrowStationId is null ? 0 : animation.Progress(arrowStationId, now);
+            // Keep the outgoing arrow at its fixed row coordinates until its fade finishes.
+            if (arrowIndex < 0 || (hoveredId is null && progress == 0)) { single.Visible = false; return; }
+            var bounds = list.GetItemRectangle(arrowIndex);
+            if (bounds.Top < 0 || bounds.Bottom > list.ClientSize.Height) { single.Visible = false; return; }
             single.Location = new Point(x, bounds.Top + (bounds.Height - single.Height) / 2);
-            single.BackColor = list.GetSelected(index) ? _theme.Selection : _theme.Hover;
+            single.BackColor = list.GetSelected(arrowIndex) ? _theme.Selection : StationHoverAnimation.Blend(_theme.Row, _theme.Hover, progress);
+            single.Invalidate();
             single.Visible = true; single.BringToFront();
         }
         list.MouseMove += (_, _) => PositionArrows();
@@ -237,16 +269,28 @@ internal sealed class StationManagerDialog : Form
         var bounds = new Rectangle(e.Bounds.X, e.Bounds.Y + Dip(3), list.ItemContentWidth, e.Bounds.Height - Dip(6));
         var selected = (e.State & DrawItemState.Selected) != 0;
         using var path = RoundedShape.Create(bounds, Dip(5));
-        using var brush = new SolidBrush(selected ? _theme.Selection : e.Index == list.HoverIndex ? _theme.Hover : _theme.Row);
+        var progress = _hoverAnimations[list].Progress(station.Id, Environment.TickCount64);
+        using var brush = new SolidBrush(selected ? _theme.Selection : StationHoverAnimation.Blend(_theme.Row, _theme.Hover, progress));
         e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias; e.Graphics.FillPath(brush, path);
-        var leading = list == _mine ? 24 : 7;
-        var trailing = list == _available ? 24 : 6;
+        var extra = 18 * progress;
+        var leading = list == _mine ? 6 + extra : 7;
+        var trailing = list == _available ? 6 + extra : 6;
+        int Offset(double value) => (int)Math.Round(value * scale);
         TextRenderer.DrawText(e.Graphics, station.Id == "bcc-ilike" ? "中廣流行網" : station.Name, Font,
-            new Rectangle(bounds.X + Dip(leading), bounds.Y, Math.Max(1, bounds.Width - Dip(leading + trailing + 35)), bounds.Height), _theme.Text,
+            new Rectangle(bounds.X + Offset(leading), bounds.Y, Math.Max(1, bounds.Width - Offset(leading + trailing + 35)), bounds.Height), _theme.Text,
             TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
-            new Rectangle(bounds.Right - Dip(trailing + 34), bounds.Y, Dip(34), bounds.Height), _theme.Muted,
+            new Rectangle(bounds.Right - Offset(trailing + 34), bounds.Y, Dip(34), bounds.Height), _theme.Muted,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        if (progress > 0)
+        {
+            var add = list == _available;
+            var arrow = new Rectangle(add ? bounds.Right - Dip(19) : bounds.Left + Dip(7),
+                e.Bounds.Top + (e.Bounds.Height - Dip(15)) / 2, Dip(12), Dip(15));
+            var color = (add ? _add : _remove).Enabled ? _theme.Accent : _theme.Track;
+            GlyphPainter.Draw(e.Graphics, add ? PlayerGlyph.ChevronRight : PlayerGlyph.ChevronLeft,
+                arrow, Color.FromArgb((int)Math.Round(255 * progress), color));
+        }
     }
     protected override void OnShown(EventArgs e)
     {
@@ -278,7 +322,39 @@ internal sealed class StationManagerDialog : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _library.OrderChanged -= RefreshLists; _languageMenu.Dispose(); _tips.Dispose(); _frequencyFont.Dispose(); }
+        if (disposing) { _hoverTimer.Dispose(); _library.OrderChanged -= RefreshLists; _languageMenu.Dispose(); _tips.Dispose(); _frequencyFont.Dispose(); }
         base.Dispose(disposing);
     }
+}
+
+// Presentation only: each row can finish fading out while another starts fading in.
+internal sealed class StationHoverAnimation
+{
+    internal const double DurationMilliseconds = 120;
+    private readonly Dictionary<string, (double From, double To, double Started)> _rows = new();
+    private string? _hoveredId;
+
+    internal bool SetHovered(string? id, double now)
+    {
+        if (id == _hoveredId) return false;
+        if (_hoveredId is not null) _rows[_hoveredId] = (Progress(_hoveredId, now), 0, now);
+        if (id is not null) _rows[id] = (Progress(id, now), 1, now);
+        _hoveredId = id;
+        return true;
+    }
+
+    internal double Progress(string id, double now)
+    {
+        if (!_rows.TryGetValue(id, out var row)) return 0;
+        var t = Math.Clamp((now - row.Started) / DurationMilliseconds, 0, 1);
+        var eased = 1 - Math.Pow(1 - t, 3); // Cubic ease-out, continuous on reversal.
+        return row.From + (row.To - row.From) * eased;
+    }
+
+    internal bool IsAnimating(double now) => _rows.Values.Any(row => row.From != row.To && now - row.Started < DurationMilliseconds);
+
+    internal static Color Blend(Color from, Color to, double progress) => Color.FromArgb(
+        (int)Math.Round(from.R + (to.R - from.R) * progress),
+        (int)Math.Round(from.G + (to.G - from.G) * progress),
+        (int)Math.Round(from.B + (to.B - from.B) * progress));
 }

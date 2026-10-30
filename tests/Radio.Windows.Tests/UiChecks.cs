@@ -289,6 +289,7 @@ internal static class UiChecks
         Check(player.Disposed && metadata.Disposed, "Window close releases playback, metadata and tray ownership");
         CheckPreferences();
         await CheckStationInputAsync();
+        await CheckStationHoverAnimationAsync();
         await CheckStationManagementAsync();
         await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
@@ -367,13 +368,15 @@ internal static class UiChecks
         available.SetSelected(0, true); available.SetSelected(2, true); mine.SetSelected(1, true);
         Capture(dialog, "artifacts/station-manager-four-arrows.png");
         HoverTransfer(Find<Button>(dialog, "AddStation"));
-        await Task.Delay(30);
+        await Task.Delay(180);
         Capture(dialog, "artifacts/station-manager-inline-right.png");
         HoverTransfer(Find<Button>(dialog, "RemoveStation"));
-        await Task.Delay(30);
+        await Task.Delay(180);
         Check(Find<Button>(dialog, "RemoveStation").Visible && !Find<Button>(dialog, "AddStation").Visible,
             "Moving between lists reveals only the hovered row's matching inline arrow");
         Capture(dialog, "artifacts/station-manager-inline-left.png");
+        Cursor.Position = new Point(0, 0);
+        await Task.Delay(30);
         dialog.Close();
     }
 
@@ -395,12 +398,87 @@ internal static class UiChecks
         button.PerformClick();
     }
 
+    private static async Task CheckStationHoverAnimationAsync()
+    {
+        var animation = new StationHoverAnimation();
+        animation.SetHovered("first", 0);
+        Check(animation.Progress("first", 0) == 0 && animation.Progress("first", 60) == .875 &&
+            animation.Progress("first", 120) == 1 && !animation.IsAnimating(120),
+            "Hover uses a 120ms cubic ease-out from transparent to fully visible");
+        animation.SetHovered(null, 120);
+        Check(animation.Progress("first", 120) == 1 && animation.Progress("first", 180) == .125 &&
+            animation.Progress("first", 240) == 0, "Leaving reverses opacity, content offset and background over 120ms");
+        animation.SetHovered("first", 240);
+        var partial = animation.Progress("first", 280);
+        animation.SetHovered("second", 280);
+        Check(animation.Progress("first", 280) == partial && animation.Progress("second", 280) == 0 &&
+            animation.Progress("first", 340) < partial && animation.Progress("second", 340) > 0,
+            "Rapid row changes fade the old row out independently without snapping");
+        var reversed = animation.Progress("first", 340);
+        animation.SetHovered("first", 340);
+        Check(animation.Progress("first", 340) == reversed && animation.Progress("first", 460) == 1,
+            "Re-entering mid-fade continues from the current visual state");
+        Check(StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 0) == PlayerTheme.Dark.Row &&
+            StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 1) == PlayerTheme.Dark.Hover &&
+            StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, .5) != PlayerTheme.Dark.Row,
+            "Hover background interpolates between the existing theme colors");
+
+        using var dialog = new StationManagerDialog(new StationLibrary(new ThemeSettings { MyStationIds = ["best-989"] }), PlayerTheme.Dark, SystemFonts.MessageBoxFont!);
+        Cursor.Position = new Point(0, 0);
+        dialog.Show(); await Task.Delay(180);
+        foreach (var isLeft in new[] { true, false })
+        {
+            var list = Find<StationListBox>(dialog, isLeft ? "AvailableStations" : "MyStations");
+            var button = Find<PlayerButton>(dialog, isLeft ? "AddStation" : "RemoveStation");
+            var batch = Find<PlayerButton>(dialog, isLeft ? "AddAllStations" : "RemoveAllStations");
+            var listBounds = list.Bounds; var rowBounds = list.GetItemRectangle(0); var batchBounds = batch.Bounds;
+            using var resting = new Bitmap(list.Width, list.Height);
+            list.DrawToBitmap(resting, list.ClientRectangle);
+            HoverTransfer(button);
+            var arrowBounds = button.Bounds;
+            await Task.Delay(180);
+            using var hovered = new Bitmap(list.Width, list.Height);
+            list.DrawToBitmap(hovered, list.ClientRectangle);
+            var color = isLeft ? PlayerTheme.Dark.Muted : PlayerTheme.Dark.Text;
+            int InkLeft(Bitmap bitmap)
+            {
+                for (var x = 0; x < list.ItemContentWidth; x++)
+                    for (var y = 3; y < list.ItemHeight - 3; y++)
+                        if (bitmap.GetPixel(x, y).ToArgb() == color.ToArgb()) return x;
+                throw new Exception("Station text pixels not found");
+            }
+            Check(InkLeft(hovered) - InkLeft(resting) == (isLeft ? -18 : 18),
+                $"{list.Name}: frequency/name smoothly makes 18 DIP of room for its arrow");
+            Check(hovered.GetPixel(2, list.ItemHeight / 2).ToArgb() == PlayerTheme.Dark.Hover.ToArgb() && button.Visible,
+                $"{list.Name}: row background and arrow reach the hover endpoint");
+            Check(list.Bounds == listBounds && list.GetItemRectangle(0) == rowBounds && button.Bounds == arrowBounds &&
+                batch.Bounds == batchBounds && batch.PaintSurface is null && list.SelectedItems.Count == 0,
+                $"{list.Name}: animation leaves row geometry, arrow positions, batch arrows and selection unchanged");
+            Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+            SendMouse(list, 0x02A3, 0, 0);
+            await Task.Delay(180);
+            using var restored = new Bitmap(list.Width, list.Height);
+            list.DrawToBitmap(restored, list.ClientRectangle);
+            Check(!button.Visible && InkLeft(restored) == InkLeft(resting) &&
+                restored.GetPixel(2, list.ItemHeight / 2).ToArgb() == PlayerTheme.Dark.Row.ToArgb(),
+                $"{list.Name}: fade-out restores text and background and hides the arrow (visible={button.Visible}, text={InkLeft(restored)}/{InkLeft(resting)}, background={restored.GetPixel(2, list.ItemHeight / 2)})");
+        }
+        var timer = (System.Windows.Forms.Timer)typeof(StationManagerDialog)
+            .GetField("_hoverTimer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(dialog)!;
+        Check(!timer.Enabled, "Hover animation timer stops once both lists settle");
+        HoverTransfer(Find<Button>(dialog, "AddStation"));
+        dialog.Close();
+        Check(!timer.Enabled, "Closing during an animation disposes the hover timer");
+        Cursor.Position = new Point(0, 0);
+    }
+
     private static async Task CheckStationManagementAsync()
     {
         var settings = new ThemeSettings();
         var library = new StationLibrary(settings);
         using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
         {
+            Cursor.Position = new Point(0, 0);
             dialog.Show(); await Task.Delay(30);
             var available = Find<ListBox>(dialog, "AvailableStations");
             var mine = Find<ListBox>(dialog, "MyStations");
@@ -436,7 +514,8 @@ internal static class UiChecks
             available.TopIndex = 2; available.Refresh();
             Check(batchButton.PointToScreen(Point.Empty) == footerPosition, "Footer arrows do not move when the list scrolls");
             available.TopIndex = 0;
-            Cursor.Position = dialog.PointToScreen(new Point(290, 270)); await Task.Delay(30);
+            Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+            SendMouse(available, 0x02A3, 0, 0); await Task.Delay(180);
             Check(!addButton.Visible, "Inline arrow hides when the pointer leaves the station");
             Check(HitTest(dialog, dialog.PointToScreen(new Point(100, dialog.ClientSize.Height - 10))) == 2,
                 "Dialog background exposes native caption hit testing for window dragging");
