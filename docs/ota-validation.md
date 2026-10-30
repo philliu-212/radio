@@ -38,6 +38,15 @@
 
 限制仍見文末與 [ota.md](ota.md)：尤其無常駐 Launcher 時，斷電後若 apphost 在 managed 初始化前就載入失敗，需手動恢復已知良好 Portable；首次試啟有 updater 監督時可自動回復。這次未移動 v0.5.0 tag、未合併 PR、未公開 Release。
 
+### 正式封裝腳本的本機 smoke（不發布）
+
+在實作提交 `62f6d12` 執行 `Publish-Release.ps1` 的 Lite／Full，沒有改動執行中的舊 dist 包。新候選：
+
+- `dist/Radio-Portable-v0.5.0-Lite-win-x64-20261030-103017.zip`：6,357,422 bytes。
+- `dist/Radio-Portable-v0.5.0-Full-win-x64-20261030-103038.zip`：76,350,248 bytes。
+
+兩個 ZIP 都另解壓到 artifacts，沒有設定舊 proof 的 `RADIOMINI_ROOT` 繞過環境變數；根程序本身直接顯示視窗、平常無 updater、內層無 RadioMini.exe、入口清單 SHA-256／大小、ProductName／FileDescription=Radio Mini、FileVersion=0.5.0.0、原根設定複製到 data 且保留原檔、偏好與次數保存、正常退出及 Full 包內 runtime 均通過。`SHA256SUMS-v0.5.0.txt` 兩筆符合實際 ZIP。記錄：`artifacts/direct-production-smoke-results.json`，不進 Git。候選包含使用說明及原始授權通知，因此大小與上方測試 ZIP 不同。
+
 ---
 
 ## 以下為 2026-10-29 舊 Launcher 候選的歷史紀錄（已被取代）
