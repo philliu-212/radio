@@ -523,7 +523,7 @@ internal static class UiChecks
                     var row = (TableLayoutPanel)search.Parent!;
                     Check(Math.Abs(search.Height - 26 * dpi / 96d) <= 1 && input.Bottom <= search.Height &&
                         row.GetColumnWidths()[0] == (int)Math.Round(16 * dpi / 96d) &&
-                        Math.Abs(row.GetColumnWidths()[4] - 34 * dpi / 96d) <= 1,
+                        Math.Abs(row.GetColumnWidths()[4] - 24 * dpi / 96d) <= 1,
                         $"Initial DPI {dpi}: {name} scales its row/columns and contains input {input.Bounds}");
                 }
             }
@@ -549,7 +549,7 @@ internal static class UiChecks
                 Check(Math.Abs(search.Height - 26 * scale) <= 1 && input.Top >= 0 && input.Bottom <= search.Height,
                     $"Manager DPI {dpi}: {name} contains its native input (pill={search.Height}, input={input.Bounds})");
                 Check(Math.Abs(row.GetColumnWidths()[0] - 16 * scale) <= 1 &&
-                    Math.Abs(row.GetColumnWidths()[4] - 34 * scale) <= 1,
+                    Math.Abs(row.GetColumnWidths()[4] - 24 * scale) <= 1,
                     $"Manager DPI {dpi}: category and globe columns contain their scaled glyphs");
                 Check(input.Left >= 24 * scale && input.Width > 0 && input.Right <= search.Width,
                     $"Manager DPI {dpi}: search input stays clear of the magnifier and right edge");
@@ -581,6 +581,9 @@ internal static class UiChecks
                 right.PointToScreen(new Point(right.Width, 0)).X < rightLanguage.PointToScreen(Point.Empty).X &&
                 leftLanguage.Parent == left.Parent && left.Height == 26 && right.Height == 26,
                 "Independent globe buttons sit outside both complete 26-DIP search pills");
+            Check(new[] { leftLanguage, rightLanguage }.All(button => button.Width == 24) &&
+                new[] { left, right }.All(search => search.Width == search.Parent!.ClientSize.Width - 16 - 9 - 6 - 24),
+                "Globe-only buttons return 10 DIP to both search pills while preserving row spacing");
             var addButton = Find<PlayerButton>(dialog, "AddStation");
             Check(!addButton.Framed && addButton.Size == new Size(12, 15) && !addButton.Visible && addButton.Parent == available &&
                 Find<PlayerButton>(dialog, "RemoveStation").Parent == mine && dialog.ClientSize.Width == 580 &&
@@ -648,6 +651,9 @@ internal static class UiChecks
                 var globeButton = Find<Button>(dialog, "AvailableLanguageFilter");
                 Check(left.Height == globeButton.Height && Math.Abs(left.Height - expectedPill) <= 1,
                     $"Manager DPI {dpi}: search pill and globe row scale together (search={left.Height}, globe={globeButton.Height}, nominal={expectedPill})");
+                Check(new[] { "AvailableLanguageFilter", "MyLanguageFilter" }
+                    .Select(name => Find<Button>(dialog, name)).All(button => Math.Abs(button.Width - 24 * dpi / 96d) <= 1),
+                    $"Manager DPI {dpi}: both globe-only buttons preserve their compact 24-DIP width");
                 Find<Button>(dialog, "AvailableLanguageFilter").PerformClick();
                 Check(dialog.LanguageMenu.Width == (int)(150 * dpi / 96f) &&
                     dialog.LanguageMenu.Items.Cast<ToolStripMenuItem>().All(item => item.Height == (int)(28 * dpi / 96f)),
@@ -834,10 +840,12 @@ internal static class UiChecks
                     if (pixels.GetPixel(x, y).ToArgb() != background)
                     { inkLeft = Math.Min(inkLeft, x); inktop = Math.Min(inktop, y); inkRight = Math.Max(inkRight, x); inkBottom = Math.Max(inkBottom, y); }
             var inkHeight = inkBottom - inktop + 1; var inkWidth = inkRight - inkLeft + 1;
-            Check(inkHeight is >= 14 and <= 16 && inkWidth >= 24,
-                $"14-DIP globe plus 8-DIP chevron paint a {inkWidth}x{inkHeight}px mark at 96 DPI");
+            Check(inkHeight is >= 14 and <= 16 && inkWidth is >= 14 and <= 16,
+                $"Globe without a chevron paints only a {inkWidth}x{inkHeight}px mark at 96 DPI");
             Check(Math.Abs((inktop + inkBottom) / 2 - (globe.Height - 1) / 2) <= 1,
-                "Globe and chevron stay vertically centred inside the 34-DIP button");
+                "Globe stays vertically centred inside the 24-DIP button");
+            Check(Math.Abs((inkLeft + inkRight) / 2 - (globe.Width - 1) / 2) <= 1,
+                "Globe stays horizontally centred without reserving space for a chevron");
             Check(pixels.GetPixel(18, 7).ToArgb() == PlayerTheme.Dark.Accent.ToArgb(), "Active filter paints mint indicator dot at the globe's top right");
         }
         Capture(dialog, "artifacts/station-manager-independent-languages.png");
