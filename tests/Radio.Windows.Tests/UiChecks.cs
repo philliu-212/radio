@@ -101,11 +101,12 @@ internal static class UiChecks
         player.Emit(AudioState.Playing);
         await form.SelectionPlaybackTask;
         oldMetadata.SetResult(new(MetadataKind.Program, "STALE", "OLD", DateTimeOffset.UtcNow.AddSeconds(90)));
-        metadata.Pending[1].SetResult(new(MetadataKind.Presenter, null, "測試主持人", DateTimeOffset.UtcNow.AddSeconds(90)));
+        metadata.Pending[1].SetResult(new(MetadataKind.Presenter, null, "測試主持人", DateTimeOffset.UtcNow.AddSeconds(90))
+        { TimeSlot = "16:00–17:00（台灣）", NextProgram = "下一節目" });
         await Task.Delay(50);
-        Check(Find<Label>(form, "MetadataTitle").Text == "" && Find<Label>(form, "MetadataPerson").Text == "DJ：測試主持人",
-            "Late old-station metadata is discarded; single DJ field is supported");
-        Check(tips.GetToolTip(Find<Label>(form, "MetadataPerson")) == "DJ：測試主持人",
+        Check(Find<Label>(form, "MetadataTitle").Text == "" && Find<Label>(form, "MetadataPerson").Text == "DJ：測試主持人 ｜ 時段：16:00–17:00（台灣） ｜ 接下來：下一節目",
+            "Late old-station metadata is discarded; DJ, slot and next program share the existing second line");
+        Check(tips.GetToolTip(Find<Label>(form, "MetadataPerson")) == "DJ：測試主持人 ｜ 時段：16:00–17:00（台灣） ｜ 接下來：下一節目",
             "Metadata tooltip exposes the full text without changing the two-line layout");
         mute.Checked = true; volume.Value = 63;
         Check(player.IsMuted && Math.Abs(player.Volume - .63) < .001, "Mute is independent of remembered per-player volume");
@@ -996,8 +997,8 @@ internal static class UiChecks
             .SelectMany(child => new[] { child }.Concat(Descendants(child)));
         var surfaces = Descendants(card).Prepend(card).Where(control => control.Visible && control.Width > 0 && control.Height > 0).ToArray();
         Check(Descendants(card).Prepend(card).Where(control => !string.IsNullOrEmpty(tips.GetToolTip(control)))
-                .Select(control => control.Name).Order().SequenceEqual(new[] { "OfficialLink", "Volume" }),
-            "Only official website and volume have card tooltips, including visible metadata and playback state");
+                .Select(control => control.Name).Order().SequenceEqual(new[] { "MetadataPerson", "MetadataTitle", "OfficialLink", "Volume" }),
+            "Official website, volume and full metadata have card tooltips; playback state has none");
         Check(!string.IsNullOrEmpty(tips.GetToolTip(Find<Label>(form, "AppTitle"))) && Find<Button>(form, "PlayButton").AccessibleName == "停止",
             "Card tooltip removal preserves brand version and accessible playback actions");
         Check(Descendants(card).OfType<Label>().All(label => label is CardTextLabel && label.AutoEllipsis),

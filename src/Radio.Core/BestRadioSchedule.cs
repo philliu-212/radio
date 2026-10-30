@@ -52,7 +52,8 @@ internal static class BestRadioSchedule
             // Changed/ambiguous layouts must not silently select an arbitrary program.
             if (result is not null) return null;
             var slotEnd = new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, local.Offset).AddMinutes(end);
-            result = new(MetadataKind.ScheduledProgram, title, dj, slotEnd < now.AddSeconds(90) ? slotEnd : now.AddSeconds(90));
+            result = new(MetadataKind.ScheduledProgram, title, dj, slotEnd < now.AddSeconds(90) ? slotEnd : now.AddSeconds(90))
+            { TimeSlot = $"{startHour:00}:{startMinute:00}–{endHour:00}:{endMinute:00}（台灣）" };
         }
         return result;
     }

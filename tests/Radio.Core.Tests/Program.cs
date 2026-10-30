@@ -1,6 +1,24 @@
 using System.Net;
 using Radio.Core;
 
+if (args.Contains("--metadata-live"))
+{
+    using var provider = new OfficialMetadataProvider();
+    foreach (var station in StationCatalog.Load().Where(station => station.Id != "kiss-999"))
+    {
+        try
+        {
+            var metadata = await provider.GetAsync(station.Id, default);
+            Console.WriteLine($"{station.Id}: {System.Text.Json.JsonSerializer.Serialize(metadata)}");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException)
+        {
+            Console.WriteLine($"{station.Id}: unavailable ({ex.GetType().Name})");
+        }
+    }
+    return;
+}
+
 if (args.Contains("--metadata-best-live"))
 {
     using var provider = new OfficialMetadataProvider();
