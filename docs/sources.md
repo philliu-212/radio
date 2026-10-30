@@ -32,7 +32,7 @@
 | 電台 | 已採用的官方資料 | 顯示限制 |
 | --- | --- | --- |
 | 好事989 | `http://www.bestradio.com.tw/schedule989.htm` 的節目表 | 依台灣時間及週別計算，標示「節目表」，不是即時 on-air 確認；代班可能不同，不猜 DJ 或歌名。 |
-| KISS | `https://www.kiss.com.tw/templates/header_songlist_json.php?area=0` 的 `now_playing` | 保留「即將播放」；驗證回傳時間，拒絕／過期就留白，不承諾與聲音同步。 |
+| KISS | `https://www.kiss.com.tw/templates/header_songlist_json.php?area=0` 的 `now_playing`；`https://www.kiss.com.tw/` 的 FM99.9 on-air 頁首 | 忠實區分「現在播放／即將播放」，驗證歌曲時間；頁首補上節目及 DJ 並檢查臺灣時間的節目時段。既有兩行顯示歌曲狀態及「歌手 ｜ DJ ｜ 節目」，無有效歌曲時顯示節目／DJ。頁首失敗保留有效歌曲；缺少／過期資訊留白，不承諾與聲音同步。不載入網頁腳本、圖片或音訊。 |
 | 中廣流行網 | 上表的官方 ChannelInfoBat API | 依頻道識別取得節目／DJ，不把節目名當歌名。 |
 | Hit FM 北部 | `https://www.hitoradio.com/newweb/onair_n_ajax_cname.php` | 僅使用已驗證 DJ 姓名，HTML 當文字資料解析，不渲染。 |
 | POP、飛碟、RFI Monde | 未接入已驗證的 metadata provider | 缺資料時留白，不從排行榜、名稱、宣傳文字或任意 StreamTitle 猜測正在播的歌曲。 |

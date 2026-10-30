@@ -10,6 +10,21 @@ internal static class MetadataChecks
         Check(upcoming?.Kind == MetadataKind.UpcomingSong && upcoming.FirstLine == "即將播放：我也我也" && upcoming.SecondLine == "郭家瑋", "KISS upcoming label is preserved");
         Check(OfficialMetadataProvider.Parse("kiss-999", """{"now_playing":"12:35 即將播放：歌手 - 舊歌"}""", now) is null, "Reject stale KISS clock");
         Check(OfficialMetadataProvider.Parse("kiss-999", """{"now_playing":"17:35 arbitrary stream title"}""", now) is null, "Never infer a song from arbitrary stream title");
+        var current = OfficialMetadataProvider.Parse("kiss-999", """{"now_playing":"17:35 現在播放：歌手 - 歌名"}""", now);
+        Check(current is { Kind: MetadataKind.CurrentSong, FirstLine: "現在播放：歌名", SecondLine: "歌手" }, "KISS official current song is recognized without relabeling upcoming");
+        Check(OfficialMetadataProvider.Parse("kiss-999", """{"now_playing":"12:35 現在播放：歌手 - 舊歌"}""", now) is null, "Stale current song is rejected too");
+        Check(OfficialMetadataProvider.Parse("kiss-999", """{"now_playing":"24:35 現在播放：歌手 - 歌名"}""", now) is null, "Invalid KISS clock is rejected");
+        Check(OfficialMetadataProvider.Parse("kiss-999", """{"now_playing":"23:59 現在播放：歌手 - 歌名"}""", new DateTimeOffset(2026, 10, 27, 16, 1, 0, TimeSpan.Zero)) is not null, "KISS song freshness crosses midnight");
+        CheckKissProgram(now);
+        using var kiss = new OfficialMetadataProvider(new KissHandler());
+        var combined = await kiss.GetAsync("kiss-999", default);
+        Check(combined?.FirstLine == "現在播放：測試歌名" && combined.SecondLine == "測試歌手 ｜ DJ：測試主持人 ｜ 節目：KISS Day & Night", "KISS provider combines official current song, DJ and program in existing two lines");
+        using var noPage = new OfficialMetadataProvider(new KissHandler(denyPage: true));
+        Check((await noPage.GetAsync("kiss-999", default)) is { Kind: MetadataKind.CurrentSong, ProgramTitle: null }, "Homepage refusal retains valid KISS song");
+        using var failedPage = new OfficialMetadataProvider(new KissHandler(failPage: true));
+        Check((await failedPage.GetAsync("kiss-999", default))?.Kind == MetadataKind.CurrentSong, "Homepage network error retains valid KISS song");
+        using var staleSong = new OfficialMetadataProvider(new KissHandler(staleSong: true));
+        Check((await staleSong.GetAsync("kiss-999", default)) is { Kind: MetadataKind.Program, Person: "測試主持人" }, "Missing song falls back to official program and DJ");
         var bcc = OfficialMetadataProvider.Parse("bcc-ilike", """[{"name":"中廣新聞網","program":"wrong"},{"name":"中廣流行網","program":"節目測試","dj":" 主持人 ","SecondsToExpire":30}]""", now);
         Check(bcc?.Kind == MetadataKind.Program && bcc.Title == "節目測試" && bcc.Person == "主持人" && bcc.ExpiresAt == now.AddSeconds(30), "BCC program/DJ by channel identity and expiry");
         Check(OfficialMetadataProvider.Parse("bcc-ilike", """[{"name":"中廣流行網","program":"old","SecondsToExpire":0}]""", now) is null, "Expired program is not displayed");
@@ -27,6 +42,39 @@ internal static class MetadataChecks
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         try { await scheduleProvider.GetAsync("best-989", cancelled.Token); throw new Exception("Cancelled schedule request succeeded."); }
         catch (OperationCanceledException) { Check(scheduleHandler.Calls == 1, "Cancellation applies even when schedule is cached"); }
+    }
+    private const string KissPage = """
+        <!-- <div class="header_text">大眾廣播 FM99.9<div class="show">舊節目 00:00 - 24:00</div><div class="song"> -->
+        <div class="header_text"><div class="station_list">大眾廣播 FM99.9(南部地區)</div>
+        <div class="dj_name_head"><img id="dj_img" src="ignore"><a><img id="dj_name_img" src="ignore" alt="測試主持人"></a></div>
+        <div class="show"><a>KISS Day &amp; Night 00:00 - 24:00</a> &nbsp;</div><div class="song">ignore</div></div>
+        """;
+    private static void CheckKissProgram(DateTimeOffset now)
+    {
+        var page = KissPage.Replace("00:00 - 24:00", "16:00 - 18:00");
+        var program = KissRadioProgram.Parse(page, now);
+        Check(program is { FirstLine: "節目：KISS Day & Night", SecondLine: "DJ：測試主持人" }, "KISS uses FM99.9 on-air header, decodes entities and ignores comments");
+        Check(KissRadioProgram.Parse(page, now.AddMinutes(25)) is null, "KISS program disappears at end of official slot");
+        Check(KissRadioProgram.Parse(page, now.AddHours(-2)) is null, "KISS out-of-slot header fails closed");
+        Check(KissRadioProgram.Parse(page, now.AddMinutes(24).AddSeconds(59))?.ExpiresAt == now.AddMinutes(25), "KISS program expires at slot boundary");
+        Check(KissRadioProgram.Parse(page.Replace(" alt=\"測試主持人\"", ""), now) is { Person: null, Title: "KISS Day & Night" }, "KISS never invents a missing presenter");
+        Check(KissRadioProgram.Parse(page.Replace("大眾廣播 FM99.9", "其他電台"), now) is null &&
+            KissRadioProgram.Parse("<html>changed</html>", now) is null, "KISS rejects other stations and changed layout");
+        Check(KissRadioProgram.Parse(page.Replace("16:00 - 18:00", "23:00 - 02:00"), now.AddHours(7)) is not null, "KISS overnight program uses Taiwan time");
+        Check(KissRadioProgram.Parse(page.Replace("16:00 - 18:00", "16:00 - 25:00"), now) is null, "KISS invalid slot rejected");
+    }
+    private sealed class KissHandler(bool denyPage = false, bool failPage = false, bool staleSong = false) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (request.RequestUri?.AbsolutePath == "/")
+            {
+                if (failPage) throw new HttpRequestException("Offline fixture");
+                return Task.FromResult(new HttpResponseMessage(denyPage ? HttpStatusCode.Forbidden : HttpStatusCode.OK) { Content = new StringContent(KissPage) });
+            }
+            var clock = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).AddHours(staleSong ? -2 : 0).ToString("HH:mm");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent($$"""{"now_playing":"{{clock}} 現在播放：測試歌手 - 測試歌名"}""") });
+        }
     }
     private static void CheckBestSchedule()
     {
