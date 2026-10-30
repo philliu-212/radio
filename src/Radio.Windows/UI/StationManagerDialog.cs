@@ -128,7 +128,7 @@ internal sealed class StationManagerDialog : Form
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = new Padding(0, 0, 12, 0) };
         row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 9)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 6)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 34));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 6)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 24));
         var icon = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, AccessibleName = tip };
         icon.Paint += (_, e) => { var size = (int)Math.Round(16 * DeviceDpi / 96d); GlyphPainter.Draw(e.Graphics, glyph, new Rectangle(0, (icon.Height - size) / 2, size, size), _theme.Accent); };
         _tips.SetToolTip(icon, tip); row.Controls.Add(icon, 0, 0); row.Controls.Add(search, 2, 0);

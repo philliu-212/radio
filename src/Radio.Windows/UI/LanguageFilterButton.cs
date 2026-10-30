@@ -34,17 +34,15 @@ internal sealed class LanguageFilterButton : Button
             using var path = RoundedShape.Create(ClientRectangle, (int)(6 * scale));
             using var hover = new SolidBrush(_theme.Playing); g.FillPath(hover, path);
         }
-        // 14-DIP globe plus its 8-DIP chevron in a 26 x 16 DIP box, centred in the
-        // 34-DIP-wide button. The globe is one step above the 16-DIP category
-        // glyphs but no longer reads as the largest element in the row.
-        g.TranslateTransform((Width - 26 * scale) / 2, (Height - 16 * scale) / 2);
+        // Keep the 14-DIP globe centred in a 16-DIP box; the compact button
+        // gives the removed chevron's space back to the search pill.
+        g.TranslateTransform((Width - 16 * scale) / 2, (Height - 16 * scale) / 2);
         g.ScaleTransform(scale, scale);
         var color = Language.Length > 0 ? _theme.Accent : _theme.Muted;
         using var pen = new Pen(color, 1.2f) { LineJoin = LineJoin.Round };
         g.DrawEllipse(pen, 1, 1, 14, 14);
         g.DrawEllipse(pen, 4.5f, 1, 7, 14);
         g.DrawLine(pen, 1, 8, 15, 8);
-        g.DrawLines(pen, new Point[] { new(17, 6), new(21, 10), new(25, 6) });
         if (Language.Length > 0)
         {
             using var dot = new SolidBrush(_theme.Accent); g.FillEllipse(dot, 11, 0, 5, 5);
