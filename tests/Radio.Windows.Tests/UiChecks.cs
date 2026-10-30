@@ -126,7 +126,7 @@ internal static class UiChecks
         var wheelPoint = volume.PointToScreen(new Point(volume.Width / 2, volume.Height / 2));
         PostMessage(volume.Handle, 0x020A, new IntPtr(120 << 16), new IntPtr((wheelPoint.X & 0xffff) | ((wheelPoint.Y & 0xffff) << 16)));
         await Task.Delay(30);
-        Check(volume.Value == 45 && settings.Volume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
+        Check(volume.Value == 42 && settings.Volume == volume.Value && Math.Abs(player.Volume - volume.Value / 100d) < .001,
             "Queued slider wheel changes volume once and commits the routed final value");
         var playsBeforeScroll = player.Plays;
         var stationList = (StationListBox)list;
@@ -1011,41 +1011,41 @@ internal static class UiChecks
         {
             volume.Value = 50;
             await Wheel(list, surface, 120);
-            Check(volume.Value == 55 && settings.Volume == 55 && Math.Abs(player.Volume - .55) < .001 && list.TopIndex == top,
+            Check(volume.Value == 52 && settings.Volume == 52 && Math.Abs(player.Volume - .52) < .001 && list.TopIndex == top,
                 $"Hover wheel on {surface.Name}/{surface.GetType().Name} adjusts and commits volume with focus elsewhere");
         }
         volume.Value = 50; volume.Focus();
         await Wheel(volume, volume, 120);
-        Check(volume.Value == 55, "Slider wheel is consumed once, without native double adjustment");
+        Check(volume.Value == 52, "Slider wheel is consumed once, without native double adjustment");
         await Wheel(volume, card, -240);
-        Check(volume.Value == 45, "Reverse and multi-notch wheel input use consistent five-percent steps");
+        Check(volume.Value == 48, "Reverse and multi-notch wheel input use consistent two-percent steps");
         await Wheel(list, card, 60);
-        Check(volume.Value == 45, "Partial wheel delta is accumulated without premature adjustment");
+        Check(volume.Value == 48, "Partial wheel delta is accumulated without premature adjustment");
         await Wheel(list, card, 60);
         Check(volume.Value == 50, "Two half-notch inputs produce one volume step");
-        volume.Value = 98; await Wheel(list, card, 120);
+        volume.Value = 99; await Wheel(list, card, 120);
         Check(volume.Value == 100 && settings.Volume == 100, "Card wheel clamps and commits upper volume bound");
-        volume.Value = 2; await Wheel(list, card, -120);
+        volume.Value = 1; await Wheel(list, card, -120);
         Check(volume.Value == 0 && settings.Volume == 0, "Card wheel clamps and commits lower volume bound");
         var mute = Find<CheckBox>(form, "Mute"); mute.Checked = true;
         await Wheel(list, card, 120);
-        Check(volume.Value == 5 && player.IsMuted && tips.GetToolTip(volume) == "音量 5%", "Wheel updates tooltip without cancelling mute");
+        Check(volume.Value == 2 && player.IsMuted && tips.GetToolTip(volume) == "音量 2%", "Wheel updates tooltip without cancelling mute");
         list.TopIndex = 0; await Wheel(list, list, -120);
-        Check(list.TopIndex > 0 && volume.Value == 5, "Hovering station list still scrolls stations without changing volume");
+        Check(list.TopIndex > 0 && volume.Value == 2, "Hovering station list still scrolls stations without changing volume");
         using (var other = new Form { StartPosition = FormStartPosition.Manual, Location = new Point(form.Right + 20, form.Top), Size = new Size(100, 100) })
         {
             other.Show(); await Wheel(other, card, 120);
-            Check(volume.Value == 5, "Wheel messages belonging to another window are never intercepted");
+            Check(volume.Value == 2, "Wheel messages belonging to another window are never intercepted");
             other.Close();
         }
         form.Enabled = false; await Wheel(list, card, 120);
-        Check(volume.Value == 5, "Disabled owner, such as during modal management, does not adjust volume behind dialog");
+        Check(volume.Value == 2, "Disabled owner, such as during modal management, does not adjust volume behind dialog");
         form.Enabled = true;
         foreach (var dpi in new[] { 120, 144, 192, 96 })
         {
             SimulateDpi(form, dpi); await Task.Delay(20);
             volume.Value = 50; await Wheel(list, Find<Label>(form, "Frequency"), 120);
-            Check(volume.Value == 55, $"DPI {dpi}: card hover wheel screen-coordinate routing remains aligned");
+            Check(volume.Value == 52, $"DPI {dpi}: card hover wheel screen-coordinate routing remains aligned");
         }
         form.Close();
     }
