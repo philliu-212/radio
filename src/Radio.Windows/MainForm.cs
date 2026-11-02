@@ -678,9 +678,7 @@ internal sealed class MainForm : Form
         _updateButton.Enabled = !_installingUpdate;
         ((TableLayoutPanel)_updateButton.Parent!).ColumnStyles[2].Width = visible ? ScaleDip(25) : 0;
         _updateButton.AccessibleName = view.Pending is not null ? "重新啟動並更新" : view.Message;
-        _tips.SetToolTip(_updateButton, view.Pending is not null
-            ? $"{view.Message} · 重新啟動並更新至 v{view.Pending.ToString(3)}"
-            : view.Message + (view.Phase == UpdatePhase.Downloading ? $" {view.Percent}%" : ""));
+        _tips.SetToolTip(_updateButton, "更新");
     }
 
     private async Task InstallUpdateAsync()
@@ -701,7 +699,7 @@ internal sealed class MainForm : Form
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            if (!_closing) _tips.SetToolTip(_updateButton, "無法重新啟動，舊版仍可使用：" + error.Message);
+            if (!_closing) _tips.SetToolTip(_updateButton, "更新");
         }
         finally
         {

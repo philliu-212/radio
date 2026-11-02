@@ -26,11 +26,14 @@ internal static class UiChecks
         form.Show();
         await Task.Delay(100);
         var update = Find<PlayerButton>(form, "UpdateButton");
+        var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         var themePosition = Find<PlayerButton>(form, "ThemeToggle").Left;
         Check(!update.Visible, "Update arrow is hidden without a newer version");
         form.ShowUpdateView(new UpdateView(UpdatePhase.Downloading, null, 37, "背景下載更新中"));
+        Check(tips.GetToolTip(update) == "更新", "Downloading tooltip contains only 更新, without progress");
         Check(update.Visible && player.Plays == 0, "Background OTA status does not start/stop playback or close the player");
         form.ShowUpdateView(new UpdateView(UpdatePhase.Ready, new Version(0, 6, 0), 100, "更新已備妥"));
+        Check(tips.GetToolTip(update) == "更新", "Ready tooltip contains only 更新, without version or restart text");
         Check(update.Visible && update.Glyph == PlayerGlyph.Download && update.AccessibleName == "重新啟動並更新" && update.Width > 0,
             "New release shows accessible download arrow");
         Check(Find<PlayerButton>(form, "ThemeToggle").Left == themePosition, "Update arrow does not displace window controls");
@@ -40,7 +43,6 @@ internal static class UiChecks
         var expectedVersion = typeof(MainForm).Assembly.GetName().Version!.ToString(3);
         Check(form.Text == "Radio Mini" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
             "Native taskbar/window title and header show only Radio Mini without a version");
-        var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(tips.OwnerDraw && tips.BackColor == PlayerTheme.Dark.Surface && tips.ForeColor == PlayerTheme.Dark.Text,
             "Main window tooltips follow the dark theme");
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
@@ -81,6 +83,7 @@ internal static class UiChecks
         foreach (var phase in new[] { UpdatePhase.Downloading, UpdatePhase.Preparing, UpdatePhase.Ready, UpdatePhase.Failed })
         {
             form.ShowUpdateView(new UpdateView(phase, phase == UpdatePhase.Ready ? new Version(0, 6, 0) : null, 50, "OTA fixture"));
+            Check(tips.GetToolTip(update) == "更新", "OTA " + phase + " tooltip remains 更新");
             Check(form.Visible && form.LatestStatus.State == AudioState.Playing && player.Plays == 1 && player.Stops == stopsBeforeUpdate,
                 "OTA " + phase + " keeps existing playback and player window alive");
         }
