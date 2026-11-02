@@ -162,7 +162,7 @@ internal sealed class ProbeForm(string[] args) : Form
         }
         var metadataTitle = form.Controls.Find("MetadataTitle", true).Single().Text;
         var metadataPerson = form.Controls.Find("MetadataPerson", true).Single().Text;
-        form.Close();
+        form.ExitPlayer();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new
         {
