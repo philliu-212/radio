@@ -1,6 +1,12 @@
 using System.Net;
 using Radio.Core;
 
+if (args.Contains("--esradio-live"))
+{
+    await EsRadioChecks.RunLiveAsync();
+    return;
+}
+
 if (args.Contains("--metadata-live") || args.Contains("--metadata-rfi-live"))
 {
     var rfiOnly = args.Contains("--metadata-rfi-live");
@@ -32,8 +38,8 @@ if (args.Contains("--metadata-best-live"))
 }
 
 var stations = StationCatalog.Load();
-Check(stations.Count == 7 && stations.Select(x => x.Id).Distinct().Count() == 7, "Seven distinct stations");
-Check(stations.Select(x => x.Frequency).SequenceEqual(["91.7", "92.1", "96.3", "98.9", "99.9", "107.7", ""]), "Stations sorted by numeric FM frequency, then internet-only stations");
+Check(stations.Count == 8 && stations.Select(x => x.Id).Distinct().Count() == 8, "Eight distinct stations");
+Check(stations.Select(x => x.Frequency).SequenceEqual(["91.7", "92.1", "96.3", "98.9", "99.9", "107.7", "", ""]), "Stations sorted by numeric FM frequency, then internet-only stations");
 Check(stations.Single(x => x.Frequency == "96.3").Id == "bcc-ilike", "96.3 is BCC, not Alian");
 Check(stations.Single(x => x.Id == "hit-north").Frequency == "107.7", "Hit FM is northern feed");
 
@@ -96,6 +102,7 @@ try
 }
 catch (OperationCanceledException) { Console.WriteLine("PASS: Cancellation"); }
 await MetadataChecks.RunAsync();
+await EsRadioChecks.RunAsync();
 Console.WriteLine("All offline checks passed.");
 
 static void Check(bool condition, string name)

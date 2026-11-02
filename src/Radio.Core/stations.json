@@ -1,6 +1,7 @@
 [
   {
     "id": "best-989",
+    "country": "Taiwan",
     "languages": ["zh"],
     "name": "好事989",
     "frequency": "98.9",
@@ -12,6 +13,7 @@
   },
   {
     "id": "kiss-999",
+    "country": "Taiwan",
     "languages": ["zh"],
     "name": "KISS Radio",
     "frequency": "99.9",
@@ -23,6 +25,7 @@
   },
   {
     "id": "pop-917",
+    "country": "Taiwan",
     "languages": ["zh"],
     "name": "POP Radio",
     "frequency": "91.7",
@@ -34,6 +37,7 @@
   },
   {
     "id": "ufo-921",
+    "country": "Taiwan",
     "languages": ["zh"],
     "name": "飛碟電台",
     "frequency": "92.1",
@@ -45,6 +49,7 @@
   },
   {
     "id": "bcc-ilike",
+    "country": "Taiwan",
     "languages": ["zh"],
     "name": "中廣流行網 i like radio",
     "frequency": "96.3",
@@ -57,6 +62,7 @@
   },
   {
     "id": "hit-north",
+    "country": "Taiwan",
     "languages": ["zh"],
     "name": "Hit FM 北部",
     "frequency": "107.7",
@@ -68,6 +74,7 @@
   },
   {
     "id": "rfi-monde",
+    "country": "France",
     "languages": ["fr"],
     "name": "RFI Monde",
     "frequency": "",
@@ -75,6 +82,21 @@
     "resolver": "Direct",
     "endpointUrl": "https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3",
     "streamHost": "rfimonde64k.ice.infomaniak.ch",
+    "mediaType": "audio/mpeg"
+  },
+  {
+    "id": "esradio",
+    "country": "Spain",
+    "city": "Madrid",
+    "broadcastFrequency": "99.1",
+    "languages": ["es"],
+    "genre": "News / Talk",
+    "name": "esRadio",
+    "frequency": "",
+    "pageUrl": "https://esradio.libertaddigital.com/",
+    "resolver": "Direct",
+    "endpointUrl": "https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-high.mp3",
+    "streamHost": "libertaddigital-radio-live1.flumotion.com",
     "mediaType": "audio/mpeg"
   }
 ]
