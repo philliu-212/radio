@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        MarqueeChecks.Run();
         PlaybackRecoveryChecks.Run();
         IconChecks.Run();
         await CheckStationManagerDpiAsync();
@@ -1009,8 +1010,8 @@ internal static class UiChecks
             "Official website, volume and full metadata have card tooltips; playback state has none");
         Check(!string.IsNullOrEmpty(tips.GetToolTip(Find<Label>(form, "AppTitle"))) && Find<Button>(form, "PlayButton").AccessibleName == "停止",
             "Card tooltip removal preserves brand version and accessible playback actions");
-        Check(Descendants(card).OfType<Label>().All(label => label is CardTextLabel && label.AutoEllipsis),
-            "Card labels preserve ellipsis while suppressing WinForms' independent overflow tooltips");
+        Check(Descendants(card).OfType<Label>().All(label => label is MarqueeLabel ? !label.AutoEllipsis : label is CardTextLabel && label.AutoEllipsis),
+            "Metadata uses marquee without native overflow tips; other card labels keep their ellipsis");
         async Task Wheel(Control target, Control hovered, int delta)
         {
             var screen = hovered.PointToScreen(new Point(hovered.Width / 2, hovered.Height / 2));
