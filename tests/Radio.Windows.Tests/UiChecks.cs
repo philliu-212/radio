@@ -374,10 +374,10 @@ internal static class UiChecks
         available.SetSelected(0, true); available.SetSelected(2, true); mine.SetSelected(1, true);
         Capture(dialog, "artifacts/station-manager-four-arrows.png");
         HoverTransfer(Find<Button>(dialog, "AddStation"));
-        await Task.Delay(180);
+        await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
         Capture(dialog, "artifacts/station-manager-inline-right.png");
         HoverTransfer(Find<Button>(dialog, "RemoveStation"));
-        await Task.Delay(180);
+        await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
         Check(Find<Button>(dialog, "RemoveStation").Visible && !Find<Button>(dialog, "AddStation").Visible,
             "Moving between lists reveals only the hovered row's matching inline arrow");
         Capture(dialog, "artifacts/station-manager-inline-left.png");
@@ -408,21 +408,23 @@ internal static class UiChecks
     {
         var animation = new StationHoverAnimation();
         animation.SetHovered("first", 0);
-        Check(animation.Progress("first", 0) == 0 && animation.Progress("first", 60) == .875 &&
-            animation.Progress("first", 120) == 1 && !animation.IsAnimating(120),
-            "Hover uses a 120ms cubic ease-out from transparent to fully visible");
-        animation.SetHovered(null, 120);
-        Check(animation.Progress("first", 120) == 1 && animation.Progress("first", 180) == .125 &&
-            animation.Progress("first", 240) == 0, "Leaving reverses opacity, content offset and background over 120ms");
-        animation.SetHovered("first", 240);
-        var partial = animation.Progress("first", 280);
-        animation.SetHovered("second", 280);
-        Check(animation.Progress("first", 280) == partial && animation.Progress("second", 280) == 0 &&
-            animation.Progress("first", 340) < partial && animation.Progress("second", 340) > 0,
+        Check(StationHoverAnimation.DurationMilliseconds == 300 &&
+            animation.Progress("first", 0) == 0 && animation.Progress("first", 150) == .875 &&
+            animation.IsAnimating(299) && animation.Progress("first", 300) == 1 && !animation.IsAnimating(300),
+            "Hover uses a 300ms cubic ease-out from transparent to fully visible");
+        animation.SetHovered(null, 300);
+        Check(animation.Progress("first", 300) == 1 && animation.Progress("first", 450) == .125 &&
+            animation.IsAnimating(599) && animation.Progress("first", 600) == 0 && !animation.IsAnimating(600),
+            "Leaving reverses opacity, content offset and background over 300ms");
+        animation.SetHovered("first", 600);
+        var partial = animation.Progress("first", 700);
+        animation.SetHovered("second", 700);
+        Check(animation.Progress("first", 700) == partial && animation.Progress("second", 700) == 0 &&
+            animation.Progress("first", 850) < partial && animation.Progress("second", 850) > 0,
             "Rapid row changes fade the old row out independently without snapping");
-        var reversed = animation.Progress("first", 340);
-        animation.SetHovered("first", 340);
-        Check(animation.Progress("first", 340) == reversed && animation.Progress("first", 460) == 1,
+        var reversed = animation.Progress("first", 850);
+        animation.SetHovered("first", 850);
+        Check(animation.Progress("first", 850) == reversed && animation.Progress("first", 1150) == 1,
             "Re-entering mid-fade continues from the current visual state");
         Check(StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 0) == PlayerTheme.Dark.Row &&
             StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 1) == PlayerTheme.Dark.Hover &&
@@ -442,7 +444,7 @@ internal static class UiChecks
             list.DrawToBitmap(resting, list.ClientRectangle);
             HoverTransfer(button);
             var arrowBounds = button.Bounds;
-            await Task.Delay(240);
+            await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             using var hovered = new Bitmap(list.Width, list.Height);
             list.DrawToBitmap(hovered, list.ClientRectangle);
             hovered.Save($"artifacts/station-manager-hover-{list.Name}.png");
@@ -483,7 +485,7 @@ internal static class UiChecks
                 $"{list.Name}: hover selects its row and enables the arrow without changing geometry or batch arrows");
             Cursor.Position = dialog.PointToScreen(new Point(290, 270));
             SendMouse(list, 0x02A3, 0, 0);
-            await Task.Delay(240);
+            await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             using var restored = new Bitmap(list.Width, list.Height);
             list.DrawToBitmap(restored, list.ClientRectangle);
             Check(!button.Visible && InkLeft(restored) == InkLeft(resting) &&
@@ -644,7 +646,8 @@ internal static class UiChecks
             Check(batchButton.PointToScreen(Point.Empty) == footerPosition, "Footer arrows do not move when the list scrolls");
             available.TopIndex = 0;
             Cursor.Position = dialog.PointToScreen(new Point(290, 270));
-            SendMouse(available, 0x02A3, 0, 0); await Task.Delay(180);
+            SendMouse(available, 0x02A3, 0, 0);
+            await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             Check(!addButton.Visible, "Inline arrow hides when the pointer leaves the station");
             Check(HitTest(dialog, dialog.PointToScreen(new Point(100, dialog.ClientSize.Height - 10))) == 2,
                 "Dialog background exposes native caption hit testing for window dragging");
