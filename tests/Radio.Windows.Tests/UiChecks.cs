@@ -408,23 +408,23 @@ internal static class UiChecks
     {
         var animation = new StationHoverAnimation();
         animation.SetHovered("first", 0);
-        Check(StationHoverAnimation.DurationMilliseconds == 450 &&
-            animation.Progress("first", 0) == 0 && animation.Progress("first", 225) == .875 &&
-            animation.IsAnimating(449) && animation.Progress("first", 450) == 1 && !animation.IsAnimating(450),
-            "Hover uses a 450ms cubic ease-out from transparent to fully visible");
-        animation.SetHovered(null, 450);
-        Check(animation.Progress("first", 450) == 1 && animation.Progress("first", 675) == .125 &&
-            animation.IsAnimating(899) && animation.Progress("first", 900) == 0 && !animation.IsAnimating(900),
-            "Leaving reverses opacity, content offset and background over 450ms");
-        animation.SetHovered("first", 900);
-        var partial = animation.Progress("first", 1050);
-        animation.SetHovered("second", 1050);
-        Check(animation.Progress("first", 1050) == partial && animation.Progress("second", 1050) == 0 &&
-            animation.Progress("first", 1275) < partial && animation.Progress("second", 1275) > 0,
+        Check(StationHoverAnimation.DurationMilliseconds == 300 &&
+            animation.Progress("first", 0) == 0 && animation.Progress("first", 150) == .875 &&
+            animation.IsAnimating(299) && animation.Progress("first", 300) == 1 && !animation.IsAnimating(300),
+            "Hover uses a 300ms cubic ease-out from transparent to fully visible");
+        animation.SetHovered(null, 300);
+        Check(animation.Progress("first", 300) == 1 && animation.Progress("first", 450) == .125 &&
+            animation.IsAnimating(599) && animation.Progress("first", 600) == 0 && !animation.IsAnimating(600),
+            "Leaving reverses opacity, content offset and background over 300ms");
+        animation.SetHovered("first", 600);
+        var partial = animation.Progress("first", 700);
+        animation.SetHovered("second", 700);
+        Check(animation.Progress("first", 700) == partial && animation.Progress("second", 700) == 0 &&
+            animation.Progress("first", 850) < partial && animation.Progress("second", 850) > 0,
             "Rapid row changes fade the old row out independently without snapping");
-        var reversed = animation.Progress("first", 1275);
-        animation.SetHovered("first", 1275);
-        Check(animation.Progress("first", 1275) == reversed && animation.Progress("first", 1725) == 1,
+        var reversed = animation.Progress("first", 850);
+        animation.SetHovered("first", 850);
+        Check(animation.Progress("first", 850) == reversed && animation.Progress("first", 1150) == 1,
             "Re-entering mid-fade continues from the current visual state");
         Check(StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 0) == PlayerTheme.Dark.Row &&
             StationHoverAnimation.Blend(PlayerTheme.Dark.Row, PlayerTheme.Dark.Hover, 1) == PlayerTheme.Dark.Hover &&
