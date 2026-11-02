@@ -8,6 +8,8 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        await ThemedToolTipChecks.RunAsync();
+        await TrayToolTipChecks.RunAsync();
         MarqueeChecks.Run();
         PlaybackRecoveryChecks.Run();
         IconChecks.Run();
@@ -39,8 +41,10 @@ internal static class UiChecks
         Check(form.Text == "Radio Mini" && Find<Label>(form, "AppTitle").Text == "Radio Mini",
             "Native taskbar/window title and header show only Radio Mini without a version");
         var tips = (ToolTip)typeof(MainForm).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        Check(tips.OwnerDraw && tips.BackColor == PlayerTheme.Dark.Surface && tips.ForeColor == PlayerTheme.Dark.Text,
+            "Main window tooltips follow the dark theme");
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
-        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        var tray = (ThemedTrayIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(form.Icon?.Width == (int)Math.Round(32 * form.DeviceDpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * form.DeviceDpi / 96d),
             "Window/taskbar and tray load their own correctly sized artwork frames");
         Check(tray.Text == "Radio Mini" && tray.ContextMenuStrip!.Items.Cast<ToolStripItem>().Any(item => item.Text == $"Radio Mini v{expectedVersion}"),
@@ -233,6 +237,10 @@ internal static class UiChecks
         metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         form.ToggleTheme();
         Check(!form.IsDarkMode && play.Bounds == transportBounds, "Light theme does not rearrange controls");
+        Check(tray.TipWindow.BackColor == PlayerTheme.Light.Surface && tray.TipWindow.ForeColor == PlayerTheme.Light.Text,
+            "Switching to light mode also updates the tray tooltip");
+        Check(tips.BackColor == PlayerTheme.Light.Surface && tips.ForeColor == PlayerTheme.Light.Text,
+            "Switching to light mode also updates tooltip colors");
         Capture(form, "artifacts/direction-c-light-playing.png");
         form.ToggleTheme();
         Capture(form, "artifacts/direction-c-dark-playing.png");
@@ -512,7 +520,7 @@ internal static class UiChecks
         var search = Find<StationSearchBox>(form, "StationSearch");
         var volume = Find<TrackBar>(form, "Volume");
         volume.Value = 63;
-        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        var tray = (ThemedTrayIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         var handle = form.Handle;
         var plays = player.Plays;
         var stops = player.Stops;
@@ -636,6 +644,8 @@ internal static class UiChecks
                 batchButton.PointToScreen(Point.Empty).X == addButton.PointToScreen(Point.Empty).X,
                 "Fixed footer double arrow aligns its rear viewport with the inline arrow");
             var tips = (ToolTip)typeof(StationManagerDialog).GetField("_tips", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(dialog)!;
+            Check(tips.OwnerDraw && tips.BackColor == PlayerTheme.Dark.Surface && tips.ForeColor == PlayerTheme.Dark.Text,
+                "Station manager uses themed tooltips");
             Check(new[] { "AddStation", "RemoveStation", "AddAllStations", "RemoveAllStations" }
                 .All(name => string.IsNullOrEmpty(tips.GetToolTip(Find<Button>(dialog, name)))), "All transfer arrows have no tooltip");
             Cursor.Position = addButton.PointToScreen(new Point(6, 7)); await Task.Delay(30);

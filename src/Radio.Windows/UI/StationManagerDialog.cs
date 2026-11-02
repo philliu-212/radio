@@ -11,7 +11,7 @@ internal sealed class StationManagerDialog : Form
     private readonly StationListBox _mine = new() { Name = "MyStations", AccessibleName = "我的電台", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly StationSearchBox _leftSearch = new() { Name = "AvailableSearch", Outlined = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly StationSearchBox _rightSearch = new() { Name = "MySearch", Outlined = true, Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly ToolTip _tips = new();
+    private readonly ThemedToolTip _tips = new();
     private readonly LanguageFilterButton _leftLanguage;
     private readonly LanguageFilterButton _rightLanguage;
     private readonly ContextMenuStrip _languageMenu;
@@ -34,6 +34,7 @@ internal sealed class StationManagerDialog : Form
         // absolute search rows/columns have been attached to the form.
         SuspendLayout();
         _library = library; _theme = theme;
+        _tips.SetTheme(theme);
         _leftLanguage = new LanguageFilterButton(theme) { Name = "AvailableLanguageFilter" };
         _rightLanguage = new LanguageFilterButton(theme) { Name = "MyLanguageFilter" };
         _languageMenu = new ContextMenuStrip { Name = "LanguageMenu", Font = font, ShowImageMargin = false, ShowCheckMargin = false, Renderer = new LanguageMenuRenderer(theme) };
