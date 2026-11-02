@@ -53,7 +53,7 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
         _client.MaxResponseContentBufferSize = 1024 * 1024;
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("LightweightRadio/0.3");
     }
-    public bool Supports(string stationId) => stationId is "best-989" or "bcc-ilike" or "hit-north" or "kiss-999" or "pop-917" or "ufo-921" or "rfi-monde";
+    public bool Supports(string stationId) => stationId is "best-989" or "bcc-ilike" or "hit-north" or "kiss-999" or "pop-917" or "ufo-921" or "rfi-monde" or "esradio";
     public async Task<StationMetadata?> GetAsync(string stationId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -88,6 +88,7 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
         }
         var url = stationId switch
         {
+            "esradio" => "https://s1.staticld.com/rt/programa-actual-radio.json",
             "bcc-ilike" => "https://www.bcc.com.tw/webapi/BCCRadioWebAPI/ChannelInfoBat",
             "hit-north" => "https://www.hitoradio.com/newweb/onair_n_ajax_cname.php",
             "kiss-999" => "https://www.kiss.com.tw/templates/header_songlist_json.php?area=0",
@@ -124,6 +125,7 @@ public sealed class OfficialMetadataProvider : IStationMetadataProvider
 
     internal static StationMetadata? Parse(string stationId, string json, DateTimeOffset now)
     {
+        if (stationId == "esradio") return EsRadioProgram.Parse(json, now);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         var expiry = now.AddSeconds(90);

@@ -419,7 +419,7 @@ internal sealed class MainForm : Form
         var nameBounds = new Rectangle(bounds.X + ScaleDip(23), bounds.Y, bounds.Width - ScaleDip(61), bounds.Height);
         TextRenderer.DrawText(e.Graphics, StationName(station), Font, nameBounds, _theme.Text,
             TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
-        TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
+        TextRenderer.DrawText(e.Graphics, station.ListLabel, _frequencyFont,
             new Rectangle(bounds.Right - ScaleDip(40), bounds.Y, ScaleDip(34), bounds.Height), _theme.Muted,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
     }

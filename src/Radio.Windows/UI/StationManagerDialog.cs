@@ -310,7 +310,7 @@ internal sealed class StationManagerDialog : Form
             new Rectangle(bounds.X + Offset(leading), bounds.Y, Math.Max(1, bounds.Width - Offset(leading + trailing + 35)), bounds.Height), _theme.Text,
             TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine |
             TextFormatFlags.PreserveGraphicsTranslateTransform | TextFormatFlags.PreserveGraphicsClipping);
-        TextRenderer.DrawText(e.Graphics, station.FrequencyLabel, _frequencyFont,
+        TextRenderer.DrawText(e.Graphics, station.ListLabel, _frequencyFont,
             new Rectangle(bounds.Right - Offset(trailing + 34), bounds.Y, Dip(34), bounds.Height), _theme.Muted,
             TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
             TextFormatFlags.PreserveGraphicsTranslateTransform | TextFormatFlags.PreserveGraphicsClipping);

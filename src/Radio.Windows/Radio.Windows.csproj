@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="../Radio.Core/Radio.Core.csproj" />
     <EmbeddedResource Include="Assets/RadioMini.ico" LogicalName="Radio.Windows.Assets.RadioMini.ico" />
+    <EmbeddedResource Include="Assets/Stations/esradio.png" LogicalName="Radio.Windows.Assets.Stations.esradio.png" />
     <Compile Include="../Radio.Update/PortableStore.cs" Link="Updates/PortableStore.cs" />
   </ItemGroup>
   <!-- Pin runtime packages for Full releases without changing the Windows SDK pack. -->

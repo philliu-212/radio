@@ -18,3 +18,8 @@ Windows Desktop source and license: https://github.com/dotnet/winforms
 
 Windows media playback components are supplied by the operating system;
 their binaries are not included in this application package.
+
+esRadio station logo
+Official source: https://s.libertaddigital.com/logos/esradio/256.png
+Logo and trademarks belong to esRadio / Libertad Digital and their respective owners.
+Included solely for station identification. No open-source license or endorsement is claimed.

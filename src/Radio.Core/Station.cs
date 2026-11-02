@@ -15,10 +15,21 @@ public sealed record Station(
     string MediaType,
     string? Match = null,
     Uri? EndpointUrl = null,
-    IReadOnlyList<string>? Languages = null)
+    IReadOnlyList<string>? Languages = null,
+    string? Country = null,
+    string? Genre = null)
 {
+    private static readonly HashSet<string> LanguageCodes = System.Globalization.CultureInfo
+        .GetCultures(System.Globalization.CultureTypes.NeutralCultures)
+        .Select(culture => culture.TwoLetterISOLanguageName)
+        .Where(code => code.Length == 2 && code != "iv").ToHashSet(StringComparer.OrdinalIgnoreCase);
     public bool HasFrequency => !string.IsNullOrWhiteSpace(Frequency);
     public string FrequencyLabel => HasFrequency ? Frequency : "WEB";
+    // Country only distinguishes domestic display; language always comes from verified catalog data.
+    // Unknown country/language retains the existing fallback. Never mutate the source frequency.
+    public string ListLabel => !string.IsNullOrWhiteSpace(Country) && Country != "Taiwan" &&
+        Languages?.FirstOrDefault() is { } language && LanguageCodes.Contains(language)
+        ? language.ToUpperInvariant() : FrequencyLabel;
     public string DisplayName => HasFrequency ? $"FM {Frequency}　{Name}" : $"WEB　{Name}";
 }
 

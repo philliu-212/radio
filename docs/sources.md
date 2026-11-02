@@ -11,6 +11,7 @@
 | `bcc-ilike` | `https://www.bcc.com.tw/onAir.asp?nid=2` 使用的官方 API | GET `https://www.bcc.com.tw/webapi/BCCRadioWebAPI/ChannelInfoBat`，依名稱「中廣流行網」選取 `iosStream`，不依陣列序號選台 |
 | `hit-north` | `https://www.hitoradio.com/newweb/nowonaircount_new.php?block=0&area=6` | 初始化頁面 session，再 POST `https://www.hitoradio.com/newweb/hichannel.php`，表單為 `channelID=1&action=getLIVEURL` |
 | `rfi-monde` | `https://www.rfi.fr/fr/direct-monde`（2026-10-28 核對） | 頁面 `direct_rfi_monde` 的官方公開來源 `https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3`，直接播放 MP3，不選 Afrique 或重播來源 |
+| `esradio` | `https://esradio.libertaddigital.com/`、`directo.html`（2026-11-02 核對） | 直接播放同一官方 Flumotion 頻道的 `https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-high.mp3`；Spain、Spanish `es`、News / Talk |
 
 ## 邊界與限制
 
@@ -51,6 +52,29 @@ RFI 初次回傳 null 的解析問題已修正：真實頁面 live 項目顯示 
 - 查詢逾時、格式變動、HTTP 拒絕或 TTL 到期只清除附加資訊，不影響音訊；節目表快取也須依目前時間重新計算時段。
 - 不另開音訊串流做 metadata 偵測、不執行網站腳本、不為文字查詢引入瀏覽器或繞過 403／驗證碼。文字回應上限 1 MiB（RFI 有大量 inline CSS），其他新增頁面解析仍限 256 KiB；不下載連結資源。
 - 舊抽樣與實驗細節保留於 Git 歷史，不作為目前直播內容或穩定性的證據。離線測試見 `tests/Radio.Core.Tests/MetadataChecks.cs`。
+
+## esRadio 官方來源查核（2026-11-02，#83／#84）
+
+- 官方直播頁 `<audio>` 列出 `ld-live1-med.aac` 與 `ld-live1-low.mp3`；採用同一 `libertaddigital-radio-live1.flumotion.com/libertaddigital/` 頻道的 high MP3。FFmpeg 實際解碼 high MP3 90 秒、low MP3 60 秒成功且有非零 PCM 音訊，分別辨識為 128／64 kbps、44.1 kHz stereo；HTTP `icy-br` 卻皆聲稱 56，音質以解碼資訊為準。
+- 備用官方 MP3：`https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-low.mp3`。目前沒有多 URL 自動備援機制，因此只記錄並實測備用，不為本次重構引擎或增加自動切換。AAC `ld-live1-high.aac` HTTP 200，僅作來源／ICY 抽查，未宣稱已驗收 AAC 播放。
+- 官方 JS `https://s1.staticld.com/js/299/210318.min.js` 使用 `https://s1.staticld.com/rt/programa-actual-radio.json` 更新全國站導覽列 `#directoesradio`，因此直接沿用此結構化來源，不解析地方分台節目表，也不由文章猜測直播內容。JSON 的 `nombre`、`presentadores`、`hora_inicio`、`hora_final`、`siguiente.nombre` 可取得；忽略 `audios`（Podcast／文章），不當歌曲。
+- 本機 .NET provider 於約 09:26 UTC 實際取得 **Es la Mañana de Federico**、**Federico Jiménez Losantos**、Madrid **06:00–12:00**、下一節目 **Kilómetro Cero**。只代表當次抽查，不是寫死顯示內容。
+- 主持人交叉核對官方節目頁的 `author`／description／主持人區塊：`es-la-manana-de-federico/` → Federico Jiménez Losantos；`en-casa-de-herrero/` → Luis Herrero；`la-noche-de-cuesta/` → Carlos Cuesta；`la-trinchera-de-llamas/` → Manuel Llamas；`informativos.html` → Juan Pablo Polvorinos。實作仍優先採即時 JSON 的主持人，缺少就留白，不建立歷史人物對照表。
+- 官方 `programacion.html` 有平日／週末時段，亦含 Madrid 地方節目及重播；不將其 CSS 格子當作可靠直播計算來源。平日／週末節目由官方 current API 選取；本機只以 `Europe/Madrid`（含夏令時間）驗證時段，支援跨午夜，拒絕無效時段與超時選項。JSON 無日期，無法獨立證明伺服器從未回傳同時段舊資料；不宣稱與聲音逐秒同步。
+- 沿用既有可見且播放中才查詢／最長 60 秒輪詢、90 秒 metadata 有效上限及切台取消機制，不增加 timer 或快取架構。有效期限取 90 秒與節目結束較早者；資料失敗沿用空白，播放仍獨立運作。下一節目使用既有第二行。
+- high MP3、low MP3、high AAC 皆 HTTP 200、`icy-metaint: 1024`；分別取樣約 20.4 秒，共讀 463／232／352 個 ICY block，未取得非空 metadata 或 `StreamTitle`。不能據此保證永遠沒有，但本次沒有可可靠辨識的歌名／節目標題，因此不把 ICY 接入歌曲欄位，執行時也不另開第二條音訊連線探測。
+- 官方 Logo 與本次不改 UI 的限制見 [電台資產說明](../src/Radio.Windows/Assets/Stations/README.md)。
+
+明確啟用線上測試（不含於離線套件、不錄音、不寫使用者設定）：
+
+```powershell
+dotnet run --project tests/Radio.Core.Tests -c Release -- --esradio-live
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --esradio
+```
+
+前者讀取真實節目 JSON 並分別抽查三個串流的 ICY；後者用正式 `SystemAudioPlayer` 靜音觀測 high MP3 120 秒、low MP3 60 秒、切 RFI 20 秒再回 esRadio 30 秒，檢查播放事件、時鐘持續前進與錯誤。這不是實際聽感、數小時穩定性、斷網恢復或實體多螢幕驗收；執行結果應另見 PR 紀錄。初次 low 30 秒量測僅前進 16.7 秒，連續性檢查失敗（無引擎錯誤），因此延長備用來源觀測並讓診斷在個別連續性失敗後繼續測切台；不放寬檢查門檻、不把失敗刪除。
+
+延長觀測實際結果：high 120.1 秒前進 116.7 秒，low 60 秒前進 46.7 秒，切 RFI 20 秒前進 16.0 秒、再回 high 30 秒前進 26.4 秒，皆無引擎錯誤；high／RFI／回切符合短測門檻，**low 仍未通過時鐘連續性門檻，因此整個線上診斷回傳失敗**。最長停滯取樣為 high 3 秒／low 8 秒，不將時鐘取樣直接描述為已聽見的靜音。正式目錄維持 high MP3，不啟用未驗收的自動備援，也不為備用問題改播放引擎。
 
 ## 參考
 

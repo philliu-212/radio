@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        await CheckEsRadioAsync();
         await ThemedToolTipChecks.RunAsync();
         await TrayToolTipChecks.RunAsync();
         MarqueeChecks.Run();
@@ -69,7 +70,7 @@ internal static class UiChecks
         var volume = Find<TrackBar>(form, "Volume");
         form.SelectForProbe("pop-917");
         CheckNoStationFocusFrame((StationListBox)list, Find<StationSearchBox>(form, "StationSearch").Controls[0]);
-        Check(list.Items.Count == 7, "Seven catalog stations remain available");
+        Check(list.Items.Count == 8, "Eight catalog stations remain available");
         var listWidth = list.Width;
         Check(((StationListBox)list).VisibleRows == 5, "List shows exactly five full rows");
         list.TopIndex = 1;
@@ -106,7 +107,7 @@ internal static class UiChecks
         search.Query = "does not exist";
         Check(list.Items.Count == 0 && form.PlayingStationId == "bcc-ilike", "No results keep existing audio and information");
         search.Query = "";
-        Check(list.Items.Count == 7 && player.Plays == playsBeforeSearch, "Clearing search restores full list silently");
+        Check(list.Items.Count == 8 && player.Plays == playsBeforeSearch, "Clearing search restores full list silently");
         Check(form.PlayingStationId == "bcc-ilike" && metadata.Calls == 1, "Actual Playing event starts visible metadata fetch");
         var oldMetadata = metadata.Pending[0];
         list.SelectedIndex = 5;
@@ -654,7 +655,7 @@ internal static class UiChecks
             var mine = Find<ListBox>(dialog, "MyStations");
             var left = Find<StationSearchBox>(dialog, "AvailableSearch");
             var right = Find<StationSearchBox>(dialog, "MySearch");
-            Check(available.Items.Count == 7 && mine.Items.Count == 0 && Find<Button>(dialog, "DoneButton").Enabled,
+            Check(available.Items.Count == 8 && mine.Items.Count == 0 && Find<Button>(dialog, "DoneButton").Enabled,
                 "Empty manager allows completion and exposes the real catalog");
             var leftLanguage = Find<Button>(dialog, "AvailableLanguageFilter");
             var rightLanguage = Find<Button>(dialog, "MyLanguageFilter");
@@ -846,7 +847,7 @@ internal static class UiChecks
             HoverTransfer(add);
             Cursor.Position = add.PointToScreen(new Point(6, 7));
             SendMouse(add, 0x0201, 6, 7); SendMouse(add, 0x0202, 6, 7);
-            Check(library.Mine.Count == 3 && library.Available.Count == 4 && notifications == 3,
+            Check(library.Mine.Count == 3 && library.Available.Count == 5 && notifications == 3,
                 "The inline arrow still transfers its hovered row exactly once");
             ClickRow(mine, 0); ClickRow(mine, 0, mine.ItemContentWidth - 35);
             Check(library.Mine.Count == 1 && library.Mine[0].Id == "bcc-ilike" && notifications == 5,
@@ -858,9 +859,9 @@ internal static class UiChecks
             Check(library.Mine.Count == 1 && library.Mine[0].Id == "pop-917" && !removeAll.Enabled,
                 "Double left chevron removes search results but preserves hidden stations");
             left.Query = ""; addAll.PerformClick(); right.Query = "";
-            Check(library.Mine.Count == 7 && !addAll.Enabled && removeAll.Enabled, "Unfiltered add-all includes the entire remaining catalog without duplicates");
+            Check(library.Mine.Count == 8 && !addAll.Enabled && removeAll.Enabled, "Unfiltered add-all includes the entire remaining catalog without duplicates");
             removeAll.PerformClick();
-            Check(library.Mine.Count == 0 && library.Available.Count == 7 && !removeAll.Enabled && Find<Button>(dialog, "DoneButton").Enabled,
+            Check(library.Mine.Count == 0 && library.Available.Count == 8 && !removeAll.Enabled && Find<Button>(dialog, "DoneButton").Enabled,
                 "Unfiltered remove-all leaves valid zero-station membership and enabled completion");
             Check(settings.PlayCounts.Values.All(count => count == 0), "Batch selection and transfer never increment playback statistics");
             dialog.Close();
@@ -877,6 +878,50 @@ internal static class UiChecks
         Check(largeLibrary.Mine.Count == 0 && largeLibrary.Available.Count == 120 && largeNotifications == 1 && largeLibrary.Count("fixture-0") == 17,
             "One double-chevron click removes 100 stations, notifies once and retains lifetime statistics");
         largeDialog.Close();
+    }
+
+    private static async Task CheckEsRadioAsync()
+    {
+        var settings = new ThemeSettings { StationSetupCompleted = true };
+        var library = new StationLibrary(settings);
+        using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
+        {
+            dialog.Show(); await Task.Delay(30);
+            var available = Find<ListBox>(dialog, "AvailableStations");
+            var mine = Find<ListBox>(dialog, "MyStations");
+            Find<Button>(dialog, "AvailableLanguageFilter").PerformClick();
+            ((ToolStripMenuItem)dialog.LanguageMenu.Items.Find("Language_es", false).Single()).PerformClick();
+            Find<StationSearchBox>(dialog, "AvailableSearch").Query = "esRADIO";
+            Check(available.Items.Count == 1 && ((Station)available.Items[0]).ListLabel == "ES", "Spanish language AND name search finds real esRadio with ES in available list");
+            available.SelectedIndex = 0; ClickTransfer(Find<Button>(dialog, "AddStation"));
+            Check(mine.Items.Count == 1 && ((Station)mine.Items[0]).ListLabel == "ES" && library.Mine[0].Id == "esradio", "esRadio adds with same ES label on management right side");
+            mine.SelectedIndex = 0; ClickTransfer(Find<Button>(dialog, "RemoveStation"));
+            Check(library.Mine.Count == 0 && available.Items.Count == 1, "esRadio removal returns it to Spanish available results");
+            dialog.Close();
+        }
+        library.Add("esradio"); library.Add("rfi-monde"); library.Add("best-989");
+        var player = new FixturePlayer();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new UnavailableEsRadioMetadata(), settings, autoPlayOnStartup: false);
+        form.Show(); await Task.Delay(30);
+        var list = Find<ListBox>(form, "StationList");
+        Check(list.Items.Cast<Station>().Select(s => s.ListLabel).SequenceEqual(["ES", "FR", "98.9"]), "Main list shares ES/FR/Taiwan FM labels without changing source data");
+        Find<StationSearchBox>(form, "StationSearch").Query = "esRadio";
+        Check(list.Items.Count == 1, "Main name search finds esRadio");
+        var playing = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing); await playing;
+        await Task.Delay(30);
+        Check(form.PlayingStationId == "esradio" && form.LatestStatus.State == AudioState.Playing &&
+            Find<Label>(form, "MetadataTitle").Text == "" && Find<Label>(form, "MetadataPerson").Text == "", "esRadio metadata network failure leaves playback active and song/program fields empty");
+        using var logoStream = typeof(MainForm).Assembly.GetManifestResourceStream("Radio.Windows.Assets.Stations.esradio.png");
+        using var logo = Image.FromStream(logoStream ?? throw new Exception("Missing esRadio logo"));
+        Check(logo.Width == 256 && logo.Height == 256, "Official esRadio logo is embedded using existing resource mechanism, no new image loader");
+        form.ExitPlayer();
+    }
+
+    private sealed class UnavailableEsRadioMetadata : IStationMetadataProvider
+    {
+        public bool Supports(string id) => id == "esradio";
+        public Task<StationMetadata?> GetAsync(string id, CancellationToken token) => throw new HttpRequestException("Offline fixture");
+        public void Dispose() { }
     }
 
     private static async Task CheckLanguageFiltersAsync()
@@ -902,8 +947,8 @@ internal static class UiChecks
         void Choose(bool isLeft, string code)
         {
             Find<Button>(dialog, isLeft ? "AvailableLanguageFilter" : "MyLanguageFilter").PerformClick();
-            Check(dialog.LanguageMenu.Visible && dialog.LanguageMenu.Items.Count == 4 && dialog.LanguageMenu.Width is >= 145 and <= 152,
-                $"Compact language popup opens under the external globe with four options (visible={dialog.LanguageMenu.Visible}, width={dialog.LanguageMenu.Width}, items={dialog.LanguageMenu.Items.Count})");
+            Check(dialog.LanguageMenu.Visible && dialog.LanguageMenu.Items.Count == 5 && dialog.LanguageMenu.Width is >= 145 and <= 152,
+                $"Compact language popup opens under the external globe with five options (visible={dialog.LanguageMenu.Visible}, width={dialog.LanguageMenu.Width}, items={dialog.LanguageMenu.Items.Count})");
             ((ToolStripMenuItem)dialog.LanguageMenu.Items.Find($"Language_{code}", false).Single()).PerformClick();
             Check(!dialog.LanguageMenu.Visible, "Choosing language immediately closes the popup");
         }
@@ -1162,9 +1207,9 @@ internal static class UiChecks
         Check(player.Plays == 2 && form.SelectedStationId == "ufo-921", "Mouse station change immediately tunes exactly once");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x23), IntPtr.Zero);
-        Check(list.SelectedIndex == 6 && list.TopIndex == 2 && player.Plays == 3 && form.SelectedStationId == "rfi-monde", "Keyboard End scrolls to RFI and tunes it");
+        Check(list.SelectedIndex == 7 && list.TopIndex == 3 && player.Plays == 3 && form.SelectedStationId == "esradio", "Keyboard End scrolls to esRadio and tunes it");
         Check(Find<Label>(form, "Frequency").Text == "WEB" && Find<Label>(form, "FrequencyUnit").Text == "",
-            "RFI displays internet-only status without an FM unit");
+            "esRadio status card retains internet-only fallback without an FM unit (list alone shows ES)");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x24), IntPtr.Zero);
         Check(list.SelectedIndex == 0 && list.TopIndex == 0 && player.Plays == 4, "Keyboard Home scrolls back without changing layout");

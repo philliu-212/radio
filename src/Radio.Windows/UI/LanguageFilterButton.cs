@@ -6,7 +6,7 @@ namespace Radio.Windows.UI;
 internal sealed class LanguageFilterButton : Button
 {
     internal static readonly (string Code, string Label)[] Options =
-        [("", "全部語言"), ("zh", "中文"), ("en", "English"), ("fr", "Français")];
+        [("", "全部語言"), ("zh", "中文"), ("en", "English"), ("fr", "Français"), ("es", "Español")];
     private readonly PlayerTheme _theme;
     private bool _hover;
     public string Language { get; set; } = "";
