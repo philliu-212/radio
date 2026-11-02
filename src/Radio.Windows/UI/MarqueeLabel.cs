@@ -11,13 +11,13 @@ internal sealed class MarqueeLabel : Label
         TextFormatFlags.VerticalCenter | TextFormatFlags.PreserveGraphicsClipping;
     private int _textWidth;
     private double _offset;
-    private double _pause = 1200;
     private bool _animationEnabled = true;
     private bool _disposed;
     private Form? _owner;
     internal double ScrollOffset => _offset;
     internal bool AnimationRunning => _timer.Enabled;
     internal int OverflowWidth => Math.Max(0, _textWidth - Math.Max(0, ClientSize.Width - Padding.Horizontal));
+    internal int CycleWidth => _textWidth + (int)Math.Round(32 * DeviceDpi / 96d);
 
     public MarqueeLabel()
     {
@@ -43,7 +43,7 @@ internal sealed class MarqueeLabel : Label
     private void ResetAnimation()
     {
         if (_disposed) return;
-        _offset = 0; _pause = 1200;
+        _offset = 0;
         _textWidth = string.IsNullOrEmpty(Text) ? 0 : TextRenderer.MeasureText(Text, Font,
             new Size(int.MaxValue, int.MaxValue), TextFlags).Width;
         UpdateTimer(); Invalidate();
@@ -62,15 +62,7 @@ internal sealed class MarqueeLabel : Label
     internal void AdvanceAnimation(double milliseconds)
     {
         if (!AnimationRunning || milliseconds <= 0) return;
-        if (_pause > 0)
-        {
-            var consumed = Math.Min(_pause, milliseconds);
-            _pause -= consumed; milliseconds -= consumed;
-            if (milliseconds <= 0) return;
-            if (_offset >= OverflowWidth) { _offset = 0; _pause = 1200; Invalidate(); return; }
-        }
-        _offset = Math.Min(OverflowWidth, _offset + milliseconds * 24 * DeviceDpi / 96d / 1000);
-        if (_offset >= OverflowWidth) _pause = 1800;
+        _offset = (_offset + milliseconds * 24 * DeviceDpi / 96d / 1000) % CycleWidth;
         Invalidate();
     }
 
@@ -82,6 +74,10 @@ internal sealed class MarqueeLabel : Label
         var state = e.Graphics.Save();
         e.Graphics.SetClip(viewport, System.Drawing.Drawing2D.CombineMode.Intersect);
         var bounds = new Rectangle(viewport.Left - (int)Math.Round(_offset), viewport.Top, _textWidth, viewport.Height);
+        TextRenderer.DrawText(e.Graphics, Text, Font, bounds, ForeColor, TextFlags);
+        // The next copy enters before the current one leaves. Wrapping the offset
+        // therefore changes no visible pixels and never jumps back to the start.
+        bounds.X += CycleWidth;
         TextRenderer.DrawText(e.Graphics, Text, Font, bounds, ForeColor, TextFlags);
         e.Graphics.Restore(state);
     }
