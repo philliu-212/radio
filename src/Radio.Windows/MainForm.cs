@@ -43,7 +43,7 @@ internal sealed class MainForm : Form
     private Icon _trayIcon = AppIcon.Load(16);
     private readonly List<Font> _fonts = [];
     private readonly Dictionary<(float Size, FontStyle Style, string Family, int Dpi), Font> _fontCache = [];
-    private readonly NotifyIcon _tray;
+    private readonly ThemedTrayIcon _tray;
     private readonly ToolStripMenuItem _trayTransport;
     private readonly bool _persistPreferences;
     private readonly bool _autoPlayOnStartup;
@@ -163,7 +163,7 @@ internal sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(AppTitle).Enabled = false;
         menu.Items.Add("退出", null, (_, _) => Close());
-        _tray = new NotifyIcon { Icon = _trayIcon, Text = AppName, ContextMenuStrip = menu, Visible = true };
+        _tray = new ThemedTrayIcon { Icon = _trayIcon, Text = AppName, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowPlayer();
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
         _stations.SelectedIndexChanged += (_, _) =>
@@ -387,6 +387,7 @@ internal sealed class MainForm : Form
     private void ApplyTheme()
     {
         _tips.SetTheme(_theme);
+        _tray.SetTheme(_theme);
         BackColor = _theme.Canvas; ForeColor = _theme.Text;
         _card.BackColor = _theme.Surface;
         _stations.BackColor = _theme.Canvas; _stations.ForeColor = _theme.Text;

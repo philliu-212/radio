@@ -9,6 +9,7 @@ internal static class UiChecks
     public static async Task RunAsync()
     {
         await ThemedToolTipChecks.RunAsync();
+        await TrayToolTipChecks.RunAsync();
         MarqueeChecks.Run();
         PlaybackRecoveryChecks.Run();
         IconChecks.Run();
@@ -43,7 +44,7 @@ internal static class UiChecks
         Check(tips.OwnerDraw && tips.BackColor == PlayerTheme.Dark.Surface && tips.ForeColor == PlayerTheme.Dark.Text,
             "Main window tooltips follow the dark theme");
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
-        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        var tray = (ThemedTrayIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(form.Icon?.Width == (int)Math.Round(32 * form.DeviceDpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * form.DeviceDpi / 96d),
             "Window/taskbar and tray load their own correctly sized artwork frames");
         Check(tray.Text == "Radio Mini" && tray.ContextMenuStrip!.Items.Cast<ToolStripItem>().Any(item => item.Text == $"Radio Mini v{expectedVersion}"),
@@ -236,6 +237,8 @@ internal static class UiChecks
         metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         form.ToggleTheme();
         Check(!form.IsDarkMode && play.Bounds == transportBounds, "Light theme does not rearrange controls");
+        Check(tray.TipWindow.BackColor == PlayerTheme.Light.Surface && tray.TipWindow.ForeColor == PlayerTheme.Light.Text,
+            "Switching to light mode also updates the tray tooltip");
         Check(tips.BackColor == PlayerTheme.Light.Surface && tips.ForeColor == PlayerTheme.Light.Text,
             "Switching to light mode also updates tooltip colors");
         Capture(form, "artifacts/direction-c-light-playing.png");
@@ -517,7 +520,7 @@ internal static class UiChecks
         var search = Find<StationSearchBox>(form, "StationSearch");
         var volume = Find<TrackBar>(form, "Volume");
         volume.Value = 63;
-        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        var tray = (ThemedTrayIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         var handle = form.Handle;
         var plays = player.Plays;
         var stops = player.Stops;
