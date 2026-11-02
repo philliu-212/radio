@@ -33,8 +33,8 @@ internal sealed class MainForm : Form
     private readonly Label _title = TextLabel("NowPlayingTitle", card: true);
     private readonly Label _frequency = TextLabel("Frequency", card: true);
     private readonly Label _fm = TextLabel("FrequencyUnit", card: true);
-    private readonly Label _metadataTitle = TextLabel("MetadataTitle", card: true);
-    private readonly Label _metadataPerson = TextLabel("MetadataPerson", card: true);
+    private readonly MarqueeLabel _metadataTitle = new() { Name = "MetadataTitle" };
+    private readonly MarqueeLabel _metadataPerson = new() { Name = "MetadataPerson" };
     private readonly MuteButton _mute = new() { Name = "Mute", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly VolumeSlider _volume = new() { Name = "Volume", AccessibleName = "音量", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerCard _card = new() { Name = "PlaybackCard", Dock = DockStyle.Fill, Margin = Padding.Empty };
@@ -223,7 +223,7 @@ internal sealed class MainForm : Form
         VisibleChanged += (_, _) =>
         {
             if (Visible && WindowState != FormWindowState.Minimized) ResumePresentation();
-            else if (!Visible && !_closing) { _uiSuspended = true; CancelMetadata(); }
+            else if (!Visible && !_closing) SuspendPresentation();
         };
         _tips.SetToolTip(_themeButton, "切換深色／淺色模式");
         _tips.SetToolTip(_minimize, "縮到系統匣，繼續播放");
@@ -579,11 +579,13 @@ internal sealed class MainForm : Form
         // Native taskbar minimization must retain the taskbar button for restoration.
         // Only the explicit "minimize to tray" button hides the window.
         _uiSuspended = true; CancelMetadata();
+        _metadataTitle.AnimationEnabled = false; _metadataPerson.AnimationEnabled = false;
     }
     private void ResumePresentation()
     {
         var refresh = _uiSuspended || _uiDirty;
         _uiSuspended = false;
+        _metadataTitle.AnimationEnabled = true; _metadataPerson.AnimationEnabled = true;
         if (refresh) RefreshPresentation();
         StartMetadata();
     }
