@@ -45,6 +45,12 @@ internal static class UiChecks
             "Native taskbar/window title and header show only Radio Mini without a version");
         Check(tips.OwnerDraw && tips.BackColor == PlayerTheme.Dark.Surface && tips.ForeColor == PlayerTheme.Dark.Text,
             "Main window tooltips follow the dark theme");
+        Check(tips.GetToolTip(Find<Button>(form, "MinimizeButton")) == "最小化" &&
+            tips.GetToolTip(Find<Button>(form, "CloseButton")) == "關閉",
+            "Window button tooltips contain only 最小化 and 關閉");
+        var themeButton = Find<Button>(form, "ThemeToggle");
+        Check(tips.GetToolTip(themeButton) == "淺色模式" && themeButton.AccessibleName == "淺色模式",
+            "Dark mode theme button describes the light mode it will activate");
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
         var tray = (ThemedTrayIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(form.Icon?.Width == (int)Math.Round(32 * form.DeviceDpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * form.DeviceDpi / 96d),
@@ -214,14 +220,23 @@ internal static class UiChecks
         var count = form.PresentationUpdates;
         Find<Button>(form, "MinimizeButton").PerformClick();
         await Task.Delay(50);
+        Check(form.Visible && form.ShowInTaskbar && form.WindowState == FormWindowState.Minimized && form.IsBackgroundMode,
+            "Custom minimize button keeps the window on the taskbar");
+        SendMessage(form.Handle, 0x0112, new IntPtr(0xF120), IntPtr.Zero);
+        await Task.Delay(30);
+        Check(form.Visible && form.WindowState == FormWindowState.Normal && !form.IsBackgroundMode,
+            "Taskbar restore works after custom minimize");
+        Find<Button>(form, "CloseButton").PerformClick();
+        await Task.Delay(30);
         count = form.PresentationUpdates;
         var calls = metadata.Calls;
         player.Emit(AudioState.Buffering); player.Emit(AudioState.Playing);
         await Task.Delay(100);
         Check(!form.Visible && form.IsBackgroundMode && !form.MetadataRunning && metadata.Calls == calls && form.PresentationUpdates == count,
             "Tray mode stops metadata and UI presentation updates without stopping audio");
-        Check(form.PlayingStationId == "hit-north" && player.Stops == 2, "Minimize does not disconnect playback");
-        form.ShowPlayer(); await Task.Delay(50);
+        Check(!player.Disposed && !metadata.Disposed && tray.Visible && form.PlayingStationId == "hit-north" && player.Stops == 2,
+            "X hides to tray without disposing or disconnecting playback");
+        tray.ContextMenuStrip!.Items[0].PerformClick(); await Task.Delay(50);
         Check(form.Visible && metadata.Calls == calls + 1, "Tray restore fetches fresh metadata immediately");
         metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         var transportBounds = play.Bounds;
@@ -240,12 +255,18 @@ internal static class UiChecks
         metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         form.ToggleTheme();
         Check(!form.IsDarkMode && play.Bounds == transportBounds, "Light theme does not rearrange controls");
+        Check(tips.GetToolTip(themeButton) == "深色模式" && themeButton.AccessibleName == "深色模式",
+            "Light mode theme button describes the dark mode it will activate");
         Check(tray.TipWindow.BackColor == PlayerTheme.Light.Surface && tray.TipWindow.ForeColor == PlayerTheme.Light.Text,
             "Switching to light mode also updates the tray tooltip");
+        Check(tray.ContextMenuStrip!.BackColor == PlayerTheme.Light.Surface && tray.ContextMenuStrip.ForeColor == PlayerTheme.Light.Text,
+            "Switching the player theme also updates the tray context menu");
         Check(tips.BackColor == PlayerTheme.Light.Surface && tips.ForeColor == PlayerTheme.Light.Text,
             "Switching to light mode also updates tooltip colors");
         Capture(form, "artifacts/direction-c-light-playing.png");
         form.ToggleTheme();
+        Check(tips.GetToolTip(themeButton) == "淺色模式" && themeButton.AccessibleName == "淺色模式",
+            "Returning to dark mode restores the light mode action tooltip");
         Capture(form, "artifacts/direction-c-dark-playing.png");
         play.PerformClick();
         Check(form.LatestStatus.State == AudioState.Stopped && form.PlayingStationId is null && !form.MetadataRunning, "Stop disconnects and clears metadata");
@@ -301,8 +322,17 @@ internal static class UiChecks
             CheckLayout(form);
             Capture(form, $"artifacts/direction-c-dpi-{dpi}.png");
         }
-        form.Close();
-        Check(player.Disposed && metadata.Disposed, "Window close releases playback, metadata and tray ownership");
+        var playsBeforeClose = player.Plays;
+        SendMessage(form.Handle, 0x0112, new IntPtr(0xF060), IntPtr.Zero);
+        Check(!form.Visible && !player.Disposed && form.IsBackgroundMode && tray.Visible,
+            "Native close (Alt+F4) also hides to tray without exiting");
+        tray.HandleNotification(0x203);
+        Check(form.Visible && !form.IsBackgroundMode && player.Plays == playsBeforeClose,
+            "Tray double-click restores after native close without restarting playback");
+        Find<Button>(form, "CloseButton").PerformClick();
+        tray.ContextMenuStrip!.Items[^1].PerformClick();
+        Check(player.Disposed && metadata.Disposed && form.IsDisposed && !tray.Visible,
+            "Tray exit releases playback, metadata and tray ownership even while hidden");
         CheckPreferences();
         await CheckStationInputAsync();
         await CheckStationHoverAnimationAsync();
@@ -535,7 +565,7 @@ internal static class UiChecks
         foreach (var state in new[] { "visible", "minimized", "tray" })
         {
             if (state != "visible") form.WindowState = FormWindowState.Minimized;
-            if (state == "tray") form.Hide(); // Match the existing minimize-to-tray button.
+            if (state == "tray") Find<Button>(form, "CloseButton").PerformClick();
             form.ShowPlayer();
             await Task.Delay(30);
             Check(form.Handle == handle && form.Visible && form.ShowInTaskbar && form.WindowState == FormWindowState.Normal,
@@ -768,13 +798,13 @@ internal static class UiChecks
         timer.Start(); Find<Button>(form, "EmptyAddStation").PerformClick();
         Check(opened == 4 && form.SelectedStationId is null && player.Plays == playsBeforeReAdd,
             "Re-adding a removed selected station does not revive stale selection or auto-play");
-        form.Close();
+        form.ExitPlayer();
         using var completedEmpty = new MainForm(new FixturePlayer(), false, true, new FixtureResolver(), new FixtureMetadata(),
             new ThemeSettings { StationSetupCompleted = true });
         completedEmpty.Show(); await Task.Delay(60);
         Check(!Application.OpenForms.OfType<StationManagerDialog>().Any() && Find<Button>(completedEmpty, "EmptyAddStation").Visible,
             "Completed empty setup restarts at central plus without forcing manager again");
-        completedEmpty.Close();
+        completedEmpty.ExitPlayer();
     }
     private static async Task CheckBatchStationManagementAsync()
     {
@@ -997,7 +1027,7 @@ internal static class UiChecks
             form.Hide(); form.ShowPlayer(); await Task.Delay(30);
             Check(player.Plays == 1 && form.LatestStatus.State == AudioState.Stopped,
                 "Restoring a manually stopped player does not auto-play again");
-            form.Close();
+            form.ExitPlayer();
         }
         foreach (var count in new[] { 0L, 4L })
         {
@@ -1006,7 +1036,7 @@ internal static class UiChecks
             using var tied = new MainForm(tiedPlayer, false, true, new FixtureResolver(), new FixtureMetadata(), tiedSettings);
             tied.Show(); await Task.Delay(20);
             Check(tiedPlayer.Plays == 1 && tied.SelectedStationId == "ufo-921", $"Startup ties ({count} plays) preserve existing favorite order");
-            tiedPlayer.Emit(AudioState.Playing); await tied.StartupPlaybackTask; tied.Close();
+            tiedPlayer.Emit(AudioState.Playing); await tied.StartupPlaybackTask; tied.ExitPlayer();
         }
         var failedSettings = CatalogSettings(); failedSettings.PlayCounts["kiss-999"] = 9; failedSettings.LastStationId = "kiss-999";
         var failedPlayer = new FixturePlayer(); var failedResolver = new FixtureResolver { Fail = true };
@@ -1015,7 +1045,7 @@ internal static class UiChecks
         Check(failed.LatestStatus.State == AudioState.Failed && failedResolver.Calls == 1 && failedPlayer.Plays == 0 &&
             failedSettings.PlayCounts["kiss-999"] == 9 && failedSettings.LastStationId == "kiss-999",
             $"Failed startup leaves retry UI without counting, looping or rewriting the last station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
-        failed.Close();
+        failed.ExitPlayer();
         var staleSettings = new ThemeSettings
         {
             MyStationIds = ["pop-917", "best-989"], PlayCounts = { ["pop-917"] = 3, ["best-989"] = 12 },
@@ -1028,7 +1058,7 @@ internal static class UiChecks
             "A last-station entry that is no longer a favorite falls back to the most played station");
         stalePlayer.Emit(AudioState.Playing); await stale.StartupPlaybackTask;
         Check(staleSettings.LastStationId == "best-989", "Successful fallback playback replaces the stale last-station reference");
-        stale.Close();
+        stale.ExitPlayer();
         var followSettings = CatalogSettings();
         var followPlayer = new FixturePlayer();
         using (var follow = new MainForm(followPlayer, false, true, new FixtureResolver(), new FixtureMetadata(), followSettings, autoPlayOnStartup: false))
@@ -1037,7 +1067,7 @@ internal static class UiChecks
             var playback = follow.PlayForProbeAsync("ufo-921"); followPlayer.Emit(AudioState.Playing); await playback;
             Check(followSettings.LastStationId == "ufo-921" && followSettings.PlayCounts["ufo-921"] == 1,
                 "Any successful manual playback becomes the next startup station");
-            follow.Close();
+            follow.ExitPlayer();
         }
     }
 
@@ -1112,7 +1142,7 @@ internal static class UiChecks
             volume.Value = 50; await Wheel(list, Find<Label>(form, "Frequency"), 120);
             Check(volume.Value == 52, $"DPI {dpi}: card hover wheel screen-coordinate routing remains aligned");
         }
-        form.Close();
+        form.ExitPlayer();
     }
 
     private static async Task CheckStationInputAsync()
@@ -1139,7 +1169,7 @@ internal static class UiChecks
         SendMessage(list.Handle, 0x0100, new IntPtr(0x24), IntPtr.Zero);
         Check(list.SelectedIndex == 0 && list.TopIndex == 0 && player.Plays == 4, "Keyboard Home scrolls back without changing layout");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
-        form.Close();
+        form.ExitPlayer();
     }
     private static void Check(bool value, string name)
     {

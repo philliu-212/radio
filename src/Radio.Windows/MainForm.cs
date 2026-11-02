@@ -63,6 +63,7 @@ internal sealed class MainForm : Form
     private bool _active;
     private bool _hasStarted;
     private bool _closing;
+    private bool _exitRequested;
     private bool _resourcesDisposed;
     private bool _uiSuspended;
     private bool _uiDirty;
@@ -162,7 +163,7 @@ internal sealed class MainForm : Form
         menu.Items.Add(metadataOption);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(AppTitle).Enabled = false;
-        menu.Items.Add("退出", null, (_, _) => Close());
+        menu.Items.Add("退出", null, (_, _) => ExitPlayer());
         _tray = new ThemedTrayIcon { Icon = _trayIcon, Text = AppName, ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => ShowPlayer();
         _transport.Click += async (_, _) => await TogglePlaybackAsync();
@@ -205,7 +206,7 @@ internal sealed class MainForm : Form
             }
             else ShowUpdateView(view);
         };
-        _minimize.Click += (_, _) => { WindowState = FormWindowState.Minimized; Hide(); };
+        _minimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
         _close.Click += (_, _) => Close();
         _official.Click += (_, _) =>
         {
@@ -225,9 +226,8 @@ internal sealed class MainForm : Form
             if (Visible && WindowState != FormWindowState.Minimized) ResumePresentation();
             else if (!Visible && !_closing) SuspendPresentation();
         };
-        _tips.SetToolTip(_themeButton, "切換深色／淺色模式");
-        _tips.SetToolTip(_minimize, "縮到系統匣，繼續播放");
-        _tips.SetToolTip(_close, "退出 Radio Mini");
+        _tips.SetToolTip(_minimize, "最小化");
+        _tips.SetToolTip(_close, "關閉");
         _tips.SetToolTip(_official, "開啟電台官方網頁");
         _tips.SetToolTip(_volume, $"音量 {_volume.Value}%");
         _tips.SetToolTip(_manage, "新增／管理電台"); _tips.SetToolTip(_emptyAdd, "新增電台");
@@ -386,6 +386,8 @@ internal sealed class MainForm : Form
     }
     private void ApplyTheme()
     {
+        _themeButton.AccessibleName = _darkMode ? "淺色模式" : "深色模式";
+        _tips.SetToolTip(_themeButton, _themeButton.AccessibleName);
         _tips.SetTheme(_theme);
         _tray.SetTheme(_theme);
         BackColor = _theme.Canvas; ForeColor = _theme.Text;
@@ -579,7 +581,7 @@ internal sealed class MainForm : Form
     private void SuspendPresentation()
     {
         // Native taskbar minimization must retain the taskbar button for restoration.
-        // Only the explicit "minimize to tray" button hides the window.
+        // Closing to the tray is separate from minimizing to the taskbar.
         _uiSuspended = true; CancelMetadata();
         _metadataTitle.AnimationEnabled = false; _metadataPerson.AnimationEnabled = false;
     }
@@ -695,7 +697,7 @@ internal sealed class MainForm : Form
         {
             await _updater.StopPreparationAsync();
             if (_closing) return;
-            OtaRuntime.Restart(); Close();
+            OtaRuntime.Restart(); ExitPlayer();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -715,6 +717,20 @@ internal sealed class MainForm : Form
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
 
+    internal void ExitPlayer()
+    {
+        _exitRequested = true;
+        Close();
+    }
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (e.CloseReason == CloseReason.UserClosing && !_exitRequested)
+        {
+            e.Cancel = true;
+            Hide();
+        }
+        base.OnFormClosing(e);
+    }
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         ReleaseResources(); base.OnFormClosed(e);

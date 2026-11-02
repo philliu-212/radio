@@ -17,6 +17,7 @@ internal sealed class ThemedTrayIcon : Component
     private bool _visible, _registered, _disposed;
     private Rectangle _anchor;
     private ContextMenuStrip? _menu;
+    private PlayerTheme _theme = PlayerTheme.Dark;
     internal bool UsesCustomToolTip { get; private set; }
     internal TrayToolTipWindow TipWindow => _tip;
     public event EventHandler? DoubleClick;
@@ -29,7 +30,7 @@ internal sealed class ThemedTrayIcon : Component
         {
             if (_menu is not null) _menu.Closed -= MenuClosed;
             _menu = value;
-            if (_menu is not null) _menu.Closed += MenuClosed;
+            if (_menu is not null) { _menu.Closed += MenuClosed; ApplyMenuTheme(); }
         }
     }
     public Icon? Icon { get => _icon; set { _icon = value; Update(); } }
@@ -45,7 +46,20 @@ internal sealed class ThemedTrayIcon : Component
         }
     }
     public bool Visible { get => _visible; set { _visible = value; Update(); } }
-    public void SetTheme(PlayerTheme theme) => _tip.SetTheme(theme);
+    public void SetTheme(PlayerTheme theme)
+    {
+        _theme = theme;
+        _tip.SetTheme(theme);
+        ApplyMenuTheme();
+    }
+    private void ApplyMenuTheme()
+    {
+        if (_menu is null) return;
+        _menu.BackColor = _theme.Surface;
+        _menu.ForeColor = _theme.Text;
+        _menu.Renderer = new TrayMenuRenderer(_theme);
+        _menu.Invalidate();
+    }
 
     private void MenuClosed(object? sender, ToolStripDropDownClosedEventArgs e)
     {

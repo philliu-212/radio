@@ -9,6 +9,9 @@ internal static class TrayToolTipChecks
         using var icon = AppIcon.Load(16);
         using var menu = new ContextMenuStrip();
         menu.Items.Add("開啟播放器");
+        menu.Items.Add(new ToolStripMenuItem("顯示節目／歌曲資訊") { Checked = true, CheckOnClick = true });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Radio Mini v測試").Enabled = false;
         using var tray = new ThemedTrayIcon { Icon = icon, Text = "Radio Mini · 中廣流行網", ContextMenuStrip = menu, Visible = true };
         Check(tray.UsesCustomToolTip, "Shell registers version 4 custom tray tooltip notifications");
         var work = Screen.PrimaryScreen!.WorkingArea;
@@ -33,6 +36,37 @@ internal static class TrayToolTipChecks
             Check(tray.TipWindow.Text == tray.Text, "Visible tray tooltip follows station text changes");
             tray.HandleNotification(0x407);
             Check(!tray.TipWindow.Visible, "Shell popup-close notification dismisses custom tray tooltip");
+            tray.HandleNotification(0x7B);
+            Check(((ToolStripMenuItem)menu.Items[1]).Checked, "Menu check remains enabled before rendering " + name);
+            menu.Items[0].Select();
+            using var menuCapture = new Bitmap(menu.Width, menu.Height);
+            menu.DrawToBitmap(menuCapture, menu.ClientRectangle);
+            menuCapture.Save($"artifacts/tray-menu-{name}.png");
+            var colors = Enumerable.Range(0, menuCapture.Width)
+                .SelectMany(x => Enumerable.Range(0, menuCapture.Height).Select(y => menuCapture.GetPixel(x, y).ToArgb())).ToHashSet();
+            // Antialiased check strokes need not contain an exact solid accent pixel.
+            bool HasColor(Color target) => colors.Select(Color.FromArgb).Any(color =>
+                Math.Abs(color.R - target.R) + Math.Abs(color.G - target.G) + Math.Abs(color.B - target.B) < 35);
+            var checkBounds = menu.Items[1].Bounds;
+            var hasCheck = Enumerable.Range(3, 18).Any(x => Enumerable.Range(checkBounds.Top, checkBounds.Height).Any(y =>
+            {
+                var pixel = menuCapture.GetPixel(x, y);
+                return Enumerable.Range(60, 41).Any(percent =>
+                {
+                    var alpha = percent / 100d;
+                    return Math.Abs(pixel.R - (theme.Accent.R * alpha + theme.Surface.R * (1 - alpha))) +
+                        Math.Abs(pixel.G - (theme.Accent.G * alpha + theme.Surface.G * (1 - alpha))) +
+                        Math.Abs(pixel.B - (theme.Accent.B * alpha + theme.Surface.B * (1 - alpha))) < 12;
+                });
+            }));
+            Check(menu.Visible && menu.Renderer is TrayMenuRenderer && menu.BackColor == theme.Surface && menu.ForeColor == theme.Text &&
+                hasCheck && new[] { theme.Surface, theme.Selection, theme.Text, theme.Muted, theme.Track }.All(HasColor),
+                name + " context menu renders themed background, hover, text, disabled version, check and separator; missing=" +
+                string.Join(",", new[] { theme.Surface, theme.Selection, theme.Text, theme.Muted, theme.Track }.Where(color => !HasColor(color))) + "; check=" + hasCheck);
+            menu.Items[1].PerformClick();
+            Check(!((ToolStripMenuItem)menu.Items[1]).Checked, "Themed menu preserves check-on-click behavior");
+            ((ToolStripMenuItem)menu.Items[1]).Checked = true;
+            menu.Close();
         }
         var doubles = 0;
         tray.DoubleClick += (_, _) => doubles++;
