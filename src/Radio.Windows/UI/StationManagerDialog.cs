@@ -360,7 +360,7 @@ internal sealed class StationManagerDialog : Form
 // Presentation only: each row can finish fading out while another starts fading in.
 internal sealed class StationHoverAnimation
 {
-    internal const double DurationMilliseconds = 120;
+    internal const double DurationMilliseconds = 450;
     private readonly Dictionary<string, (double From, double To, double Started)> _rows = new();
     private string? _hoveredId;
 
