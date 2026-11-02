@@ -226,9 +226,8 @@ internal sealed class MainForm : Form
             if (Visible && WindowState != FormWindowState.Minimized) ResumePresentation();
             else if (!Visible && !_closing) SuspendPresentation();
         };
-        _tips.SetToolTip(_themeButton, "切換深色／淺色模式");
-        _tips.SetToolTip(_minimize, "最小化到工作列，繼續播放");
-        _tips.SetToolTip(_close, "縮到通知區，繼續播放");
+        _tips.SetToolTip(_minimize, "最小化");
+        _tips.SetToolTip(_close, "關閉");
         _tips.SetToolTip(_official, "開啟電台官方網頁");
         _tips.SetToolTip(_volume, $"音量 {_volume.Value}%");
         _tips.SetToolTip(_manage, "新增／管理電台"); _tips.SetToolTip(_emptyAdd, "新增電台");
@@ -387,6 +386,8 @@ internal sealed class MainForm : Form
     }
     private void ApplyTheme()
     {
+        _themeButton.AccessibleName = _darkMode ? "淺色模式" : "深色模式";
+        _tips.SetToolTip(_themeButton, _themeButton.AccessibleName);
         _tips.SetTheme(_theme);
         _tray.SetTheme(_theme);
         BackColor = _theme.Canvas; ForeColor = _theme.Text;

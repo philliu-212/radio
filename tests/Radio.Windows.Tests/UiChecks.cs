@@ -45,6 +45,12 @@ internal static class UiChecks
             "Native taskbar/window title and header show only Radio Mini without a version");
         Check(tips.OwnerDraw && tips.BackColor == PlayerTheme.Dark.Surface && tips.ForeColor == PlayerTheme.Dark.Text,
             "Main window tooltips follow the dark theme");
+        Check(tips.GetToolTip(Find<Button>(form, "MinimizeButton")) == "最小化" &&
+            tips.GetToolTip(Find<Button>(form, "CloseButton")) == "關閉",
+            "Window button tooltips contain only 最小化 and 關閉");
+        var themeButton = Find<Button>(form, "ThemeToggle");
+        Check(tips.GetToolTip(themeButton) == "淺色模式" && themeButton.AccessibleName == "淺色模式",
+            "Dark mode theme button describes the light mode it will activate");
         Check(tips.GetToolTip(Find<Label>(form, "AppTitle")) == $"Radio Mini v{expectedVersion}", "Hovering brand reveals actual app version");
         var tray = (ThemedTrayIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
         Check(form.Icon?.Width == (int)Math.Round(32 * form.DeviceDpi / 96d) && tray.Icon?.Width == (int)Math.Round(16 * form.DeviceDpi / 96d),
@@ -249,6 +255,8 @@ internal static class UiChecks
         metadata.Pending[^1].SetResult(null); await Task.Delay(30);
         form.ToggleTheme();
         Check(!form.IsDarkMode && play.Bounds == transportBounds, "Light theme does not rearrange controls");
+        Check(tips.GetToolTip(themeButton) == "深色模式" && themeButton.AccessibleName == "深色模式",
+            "Light mode theme button describes the dark mode it will activate");
         Check(tray.TipWindow.BackColor == PlayerTheme.Light.Surface && tray.TipWindow.ForeColor == PlayerTheme.Light.Text,
             "Switching to light mode also updates the tray tooltip");
         Check(tray.ContextMenuStrip!.BackColor == PlayerTheme.Light.Surface && tray.ContextMenuStrip.ForeColor == PlayerTheme.Light.Text,
@@ -257,6 +265,8 @@ internal static class UiChecks
             "Switching to light mode also updates tooltip colors");
         Capture(form, "artifacts/direction-c-light-playing.png");
         form.ToggleTheme();
+        Check(tips.GetToolTip(themeButton) == "淺色模式" && themeButton.AccessibleName == "淺色模式",
+            "Returning to dark mode restores the light mode action tooltip");
         Capture(form, "artifacts/direction-c-dark-playing.png");
         play.PerformClick();
         Check(form.LatestStatus.State == AudioState.Stopped && form.PlayingStationId is null && !form.MetadataRunning, "Stop disconnects and clears metadata");
