@@ -31,6 +31,8 @@ internal sealed class MainForm : Form
     private readonly PlayerButton _official = new() { Name = "OfficialLink", Glyph = PlayerGlyph.External, AccessibleName = "電台官網", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly Label _status = TextLabel("PlaybackStatus", card: true);
     private readonly Label _title = TextLabel("NowPlayingTitle", card: true);
+    private readonly Label _location = TextLabel("StationLocation", card: true);
+    private readonly Panel _titleRow = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly Label _frequency = TextLabel("Frequency", card: true);
     private readonly Label _fm = TextLabel("FrequencyUnit", card: true);
     private readonly MarqueeLabel _metadataTitle = new() { Name = "MetadataTitle" };
@@ -258,6 +260,7 @@ internal sealed class MainForm : Form
         _frequencyFont = OwnFont(8.5f, family: "Segoe UI");
         Controls.Find("AppTitle", true).Single().Font = OwnFont(11, family: "Segoe UI");
         _status.Font = OwnFont(9); _title.Font = OwnFont(11, FontStyle.Bold);
+        _location.Font = OwnFont(9, family: "Segoe UI");
         _frequency.Font = OwnFont(16, FontStyle.Bold, "Segoe UI"); _fm.Font = OwnFont(9, family: "Segoe UI");
         _metadataTitle.Font = OwnFont(10.5f); _metadataPerson.Font = OwnFont(9.5f);
         ResumeLayout(true);
@@ -322,7 +325,14 @@ internal sealed class MainForm : Form
         _status.Font = OwnFont(9);
         statusRow.Controls.Add(_status, 0, 0); statusRow.Controls.Add(_official, 1, 0);
         table.Controls.Add(statusRow, 0, 0);
-        _title.Font = OwnFont(11, FontStyle.Bold); table.Controls.Add(_title, 0, 1);
+        _title.Font = OwnFont(11, FontStyle.Bold);
+        _location.Font = OwnFont(9, family: "Segoe UI");
+        _title.Dock = _location.Dock = DockStyle.None;
+        _titleRow.Controls.Add(_title); _titleRow.Controls.Add(_location);
+        _titleRow.Layout += (_, _) => LayoutStationTitle();
+        _title.FontChanged += (_, _) => LayoutStationTitle();
+        _location.FontChanged += (_, _) => LayoutStationTitle();
+        table.Controls.Add(_titleRow, 0, 1);
         var frequencyRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
         frequencyRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         frequencyRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); frequencyRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -342,6 +352,23 @@ internal sealed class MainForm : Form
         table.Controls.Add(transport, 0, 6);
         _card.Controls.Add(table);
         return _card;
+    }
+
+    private void LayoutStationTitle()
+    {
+        var width = _titleRow.ClientSize.Width;
+        var height = _titleRow.ClientSize.Height;
+        if (string.IsNullOrEmpty(_location.Text))
+        {
+            _title.SetBounds(0, 0, width, height);
+            _location.SetBounds(width, 0, 0, height);
+            return;
+        }
+        var gap = ScaleDip(7);
+        var locationWidth = Math.Min(TextRenderer.MeasureText(_location.Text, _location.Font).Width, width / 2);
+        var titleWidth = Math.Min(TextRenderer.MeasureText(_title.Text, _title.Font).Width, Math.Max(0, width - locationWidth - gap));
+        _title.SetBounds(0, 0, titleWidth, height);
+        _location.SetBounds(titleWidth + gap, 0, Math.Max(0, width - titleWidth - gap), height);
     }
 
     internal void ToggleTheme()
@@ -395,7 +422,7 @@ internal sealed class MainForm : Form
         _stations.BackColor = _theme.Canvas; _stations.ForeColor = _theme.Text;
         _stations.ScrollbarColor = _theme.Track;
         _search.SetTheme(_theme);
-        _title.ForeColor = _theme.Text; _frequency.ForeColor = _theme.Text; _fm.ForeColor = _theme.Muted;
+        _title.ForeColor = _theme.Text; _location.ForeColor = _theme.Muted; _frequency.ForeColor = _theme.Text; _fm.ForeColor = _theme.Muted;
         _metadataTitle.ForeColor = _theme.Text; _metadataPerson.ForeColor = _theme.Muted;
         _mute.Theme = _theme; _mute.BackColor = _theme.Surface;
         _volume.Theme = _theme; _volume.BackColor = _theme.Surface;
@@ -516,8 +543,11 @@ internal sealed class MainForm : Form
         PresentationUpdates++; _uiDirty = false;
         var station = DisplayedSource;
         _title.Text = station is null ? "選擇電台" : StationName(station);
-        _frequency.Text = station?.FrequencyLabel ?? "—";
-        _fm.Text = station is null || station.HasFrequency ? " FM" : "";
+        _location.Text = station?.LocationLabel ?? "";
+        _location.Visible = _location.Text.Length > 0;
+        LayoutStationTitle();
+        _frequency.Text = station?.CardFrequencyLabel ?? "—";
+        _fm.Text = station is null || station.HasCardFrequency ? " FM" : "";
         _status.Text = _latestStatus.State switch
         {
             AudioState.Playing => "● 播放中", AudioState.Opening => "● 連線中", AudioState.Buffering => "● 緩衝中",

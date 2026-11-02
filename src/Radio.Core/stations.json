@@ -87,6 +87,8 @@
   {
     "id": "esradio",
     "country": "Spain",
+    "city": "Madrid",
+    "broadcastFrequency": "99.1",
     "languages": ["es"],
     "genre": "News / Talk",
     "name": "esRadio",

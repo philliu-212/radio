@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        await CheckStationCardLocationAsync();
         await CheckEsRadioAsync();
         await ThemedToolTipChecks.RunAsync();
         await TrayToolTipChecks.RunAsync();
@@ -148,7 +149,7 @@ internal static class UiChecks
             "Queued slider wheel changes volume once and commits the routed final value");
         var playsBeforeScroll = player.Plays;
         var stationList = (StationListBox)list;
-        var card = Find<Label>(form, "NowPlayingTitle").Parent!.Parent!;
+        var card = Find<Control>(form, "PlaybackCard");
         Check(stationList.ItemContentWidth == 241 && card.Width == 283 && card.PointToScreen(Point.Empty).X - form.Left == 262,
             "Only gap grows by 4 DIP; item and status-card widths stay unchanged");
         SendMessage(list.Handle, 0x02A3, IntPtr.Zero, IntPtr.Zero);
@@ -880,6 +881,54 @@ internal static class UiChecks
         largeDialog.Close();
     }
 
+    private static async Task CheckStationCardLocationAsync()
+    {
+        var player = new FixturePlayer();
+        var settings = new ThemeSettings { StationSetupCompleted = true, MyStationIds = ["esradio", "rfi-monde", "best-989"] };
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), settings, autoPlayOnStartup: false);
+        form.Show(); await Task.Delay(30);
+        var title = Find<Label>(form, "NowPlayingTitle");
+        var location = Find<Label>(form, "StationLocation");
+        var frequency = Find<Label>(form, "Frequency");
+        var unit = Find<Label>(form, "FrequencyUnit");
+        var metadata = Find<Label>(form, "MetadataTitle");
+        var card = Find<Control>(form, "PlaybackCard");
+        var cardSize = card.Size;
+        var metadataTop = metadata.PointToScreen(Point.Empty).Y;
+        Check(!location.Visible && location.Text == "", "Idle card has no invented country/city");
+        foreach (var (id, name, place, number, suffix) in new[] {
+            ("esradio", "esRadio", "Spain Madrid", "99.1", " FM"),
+            ("rfi-monde", "RFI Monde", "France", "WEB", ""),
+            ("best-989", "好事989", "", "98.9", " FM") })
+        {
+            cardSize = card.Size;
+            metadataTop = metadata.PointToScreen(Point.Empty).Y;
+            var playing = form.PlayForProbeAsync(id); player.Emit(AudioState.Playing); await playing;
+            Check(title.Text == name && location.Text == place && frequency.Text == number && unit.Text == suffix,
+                id + ": card title/location and separate FM/WEB identification follow approved preview");
+            Check(card.Size == cardSize && metadata.PointToScreen(Point.Empty).Y == metadataTop,
+                id + ": same card height and metadata position; no additional line");
+            foreach (var dpi in new[] { 96, 120, 144, 192, 96 })
+            {
+                SimulateDpi(form, dpi); await Task.Delay(15);
+                if (place.Length > 0)
+                    Check(title.Parent == location.Parent && title.Top == location.Top && title.Height == location.Height &&
+                        title.Right < location.Left && location.Right <= location.Parent!.ClientSize.Width &&
+                        location.Font.Size < title.Font.Size && location.ForeColor == PlayerTheme.Dark.Muted,
+                        $"{id} DPI {dpi}: muted smaller location shares title row without overlap");
+                else Check(!location.Visible && title.Width == title.Parent!.ClientSize.Width, $"Taiwan DPI {dpi}: title keeps original full width");
+            }
+            form.ToggleTheme();
+            Check(location.ForeColor == PlayerTheme.Light.Muted && frequency.ForeColor == PlayerTheme.Light.Text, "Light theme preserves location hierarchy");
+            form.ToggleTheme();
+        }
+        title.Text = new string('W', 200); location.Text = new string('W', 200); location.Visible = true;
+        typeof(MainForm).GetMethod("LayoutStationTitle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(form, null);
+        Check(title.Right < location.Left && location.Right <= location.Parent!.ClientSize.Width && title.AutoEllipsis && location.AutoEllipsis,
+            "Long title/location are bounded and ellipsized, never create a third line or overlap");
+        form.ExitPlayer();
+    }
+
     private static async Task CheckEsRadioAsync()
     {
         var settings = new ThemeSettings { StationSetupCompleted = true };
@@ -1208,8 +1257,9 @@ internal static class UiChecks
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x23), IntPtr.Zero);
         Check(list.SelectedIndex == 7 && list.TopIndex == 3 && player.Plays == 3 && form.SelectedStationId == "esradio", "Keyboard End scrolls to esRadio and tunes it");
-        Check(Find<Label>(form, "Frequency").Text == "WEB" && Find<Label>(form, "FrequencyUnit").Text == "",
-            "esRadio status card retains internet-only fallback without an FM unit (list alone shows ES)");
+        Check(Find<Label>(form, "Frequency").Text == "99.1" && Find<Label>(form, "FrequencyUnit").Text == " FM" &&
+            Find<Label>(form, "StationLocation").Text == "Spain Madrid",
+            "esRadio card shows verified Madrid FM while the list remains ES");
         player.Emit(AudioState.Playing); await form.SelectionPlaybackTask;
         SendMessage(list.Handle, 0x0100, new IntPtr(0x24), IntPtr.Zero);
         Check(list.SelectedIndex == 0 && list.TopIndex == 0 && player.Plays == 4, "Keyboard Home scrolls back without changing layout");

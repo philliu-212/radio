@@ -20,6 +20,11 @@ internal static class EsRadioChecks
         var catalog = StationCatalog.Load();
         var station = catalog.Single(s => s.Id == "esradio");
         Check(station is { Country: "Spain", Genre: "News / Talk", ListLabel: "ES", Frequency: "" } && station.Languages!.SequenceEqual(["es"]), "esRadio verified catalog fields");
+        Check(station is { LocationLabel: "Spain Madrid", CardFrequencyLabel: "99.1", HasCardFrequency: true, FrequencyLabel: "WEB", HasFrequency: false }, "Verified Madrid FM is card-only; original frequency and sorting remain untouched");
+        Check(catalog.Single(s => s.Id == "rfi-monde") is { LocationLabel: "France", CardFrequencyLabel: "WEB", HasCardFrequency: false } &&
+            catalog.Where(s => s.Country == "Taiwan").All(s => s.LocationLabel == "" && s.CardFrequencyLabel == s.Frequency), "RFI location/WEB and original Taiwan frequency presentation");
+        Check((station with { Country = null, City = "Madrid", BroadcastFrequency = null }).LocationLabel == "" &&
+            (station with { BroadcastFrequency = " " }).CardFrequencyLabel == "WEB", "Missing location/frequency stays unknown without guessing");
         var stream = await new OfficialStreamResolver().ResolveAsync(station, default);
         Check(stream.Uri == station.EndpointUrl && stream.MediaType == "audio/mpeg" && stream.Uri.AbsolutePath.EndsWith("-high.mp3"), "esRadio direct high MP3 uses existing resolver");
         Check(catalog.Single(s => s.Id == "rfi-monde").ListLabel == "FR" &&

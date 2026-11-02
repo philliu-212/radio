@@ -65,6 +65,12 @@ RFI 初次回傳 null 的解析問題已修正：真實頁面 live 項目顯示 
 - high MP3、low MP3、high AAC 皆 HTTP 200、`icy-metaint: 1024`；分別取樣約 20.4 秒，共讀 463／232／352 個 ICY block，未取得非空 metadata 或 `StreamTitle`。不能據此保證永遠沒有，但本次沒有可可靠辨識的歌名／節目標題，因此不把 ICY 接入歌曲欄位，執行時也不另開第二條音訊連線探測。
 - 官方 Logo 與本次不改 UI 的限制見 [電台資產說明](../src/Radio.Windows/Assets/Stations/README.md)。
 
+### 狀態卡片地區與頻率（#86）
+
+使用者核准將 `Spain Madrid`／`France` 以灰色小字接在台名後方，頻率列保留大字 `99.1`＋小字 `FM`／大字 `WEB`，不增加行數或移動節目欄位。官方 [節目表](https://esradio.libertaddigital.com/programacion.html) 明列「Kilómetro Cero - Madrid 99.1」及另一頻率「Con ánimo de lucro - Madrid 105.7」；先前同一 `ld-live1` 全國直播頁使用的 current JSON，其下一節目為 Kilómetro Cero。以此交叉確認 Madrid 99.1 識別，不選 105.7，也不宣稱地方 FM 與網路直播每一刻完全同步。
+
+目錄新增 `city: Madrid`、`broadcastFrequency: 99.1` 供卡片使用，不覆寫原本空白的 `frequency` 或任何 URL／語言。RFI Monde 沿用已知國家 France，不猜地方城市與 FM 頻率。國家／城市不是播放來源選擇條件；不增加任何備援或自動切台。
+
 明確啟用線上測試（不含於離線套件、不錄音、不寫使用者設定）：
 
 ```powershell
