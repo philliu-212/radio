@@ -38,7 +38,7 @@ internal sealed class MainForm : Form
     private readonly MuteButton _mute = new() { Name = "Mute", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly VolumeSlider _volume = new() { Name = "Volume", AccessibleName = "音量", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly PlayerCard _card = new() { Name = "PlaybackCard", Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly ToolTip _tips = new() { ShowAlways = true };
+    private readonly ThemedToolTip _tips = new() { ShowAlways = true };
     private Icon _appIcon = AppIcon.Load();
     private Icon _trayIcon = AppIcon.Load(16);
     private readonly List<Font> _fonts = [];
@@ -386,6 +386,7 @@ internal sealed class MainForm : Form
     }
     private void ApplyTheme()
     {
+        _tips.SetTheme(_theme);
         BackColor = _theme.Canvas; ForeColor = _theme.Text;
         _card.BackColor = _theme.Surface;
         _stations.BackColor = _theme.Canvas; _stations.ForeColor = _theme.Text;
