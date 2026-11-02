@@ -11,6 +11,17 @@ internal static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (args.Length == 2 && args[0] == "--instance-client")
+        {
+            using var instance = new SingleInstance(args[1]);
+            Environment.ExitCode = !instance.IsPrimary && instance.ActivateExistingAsync().GetAwaiter().GetResult() ? 0 : 1;
+            return;
+        }
+        if (args.Length >= 2 && args[0] == "--instance-host")
+        {
+            SingleInstanceChecks.RunHost(args[1], !args.Contains("--no-listen"));
+            return;
+        }
         var tests = new TestForm(args);
         Application.Run(tests);
         Environment.ExitCode = tests.ResultExitCode;
@@ -26,6 +37,13 @@ internal sealed class TestForm(string[] args) : Form
         Hide();
         try
         {
+            if (args.Contains("--single-instance"))
+            {
+                await SingleInstanceChecks.RunAsync();
+                await UiChecks.CheckWindowActivationAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--ota-stage"))
             {
                 await OtaPackageChecks.StageAsync(args);

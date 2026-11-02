@@ -5,6 +5,14 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Diagnostic probes are isolated test windows, not interactive players.
+        // Check before OTA's run lease and, importantly, before creating audio/UI.
+        using var instance = args.Contains("--probe") ? null : new SingleInstance();
+        if (instance is { IsPrimary: false })
+        {
+            if (!instance.ActivateExistingAsync().GetAwaiter().GetResult()) Environment.ExitCode = 1;
+            return;
+        }
         FileStream? runLease;
         try { if (!OtaRuntime.Initialize(args, out runLease)) return; }
         catch (Exception error)
@@ -43,6 +51,7 @@ internal static class Program
             try
             {
                 using var form = new MainForm(PlayerBackend.Create(args), autoPlayOnStartup: !args.Contains("--no-autoplay"), checkUpdates: !args.Contains("--no-update-check"));
+                instance!.Listen(form, form.ShowPlayer);
                 form.Shown += (_, _) => form.BeginInvoke(OtaRuntime.Healthy);
                 Application.Run(form);
             }

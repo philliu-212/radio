@@ -591,8 +591,17 @@ internal sealed class MainForm : Form
     }
     internal void ShowPlayer()
     {
-        Show(); WindowState = FormWindowState.Normal; ResumePresentation(); Activate();
+        if (_closing || IsDisposed) return;
+        ShowInTaskbar = true;
+        Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        ResumePresentation();
+        BringToFront(); Activate();
+        SetForegroundWindow(Handle);
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr window);
     internal void SelectForProbe(string id)
     {
         _suppressSelectionPlayback = true;

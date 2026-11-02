@@ -300,6 +300,7 @@ internal static class UiChecks
         await CheckLanguageFiltersAsync();
         await CheckStartupAutoplayAsync();
         await CheckCardVolumeAndTipsAsync();
+        await CheckWindowActivationAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
@@ -496,6 +497,42 @@ internal static class UiChecks
         dialog.Close();
         Check(!timer.Enabled, "Closing during an animation disposes the hover timer");
         Cursor.Position = new Point(0, 0);
+    }
+
+    internal static async Task CheckWindowActivationAsync()
+    {
+        var player = new FixturePlayer();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+        form.Show();
+        var opening = form.PlayForProbeAsync("bcc-ilike");
+        player.Emit(AudioState.Playing);
+        await opening;
+        var search = Find<StationSearchBox>(form, "StationSearch");
+        var volume = Find<TrackBar>(form, "Volume");
+        volume.Value = 63;
+        var tray = (NotifyIcon)typeof(MainForm).GetField("_tray", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(form)!;
+        var handle = form.Handle;
+        var plays = player.Plays;
+        var stops = player.Stops;
+        var station = form.PlayingStationId;
+        var originalVolume = volume.Value;
+        var query = search.Query;
+        search.Query = "107.7";
+        var selected = form.SelectedStationId;
+        foreach (var state in new[] { "visible", "minimized", "tray" })
+        {
+            if (state != "visible") form.WindowState = FormWindowState.Minimized;
+            if (state == "tray") form.Hide(); // Match the existing minimize-to-tray button.
+            form.ShowPlayer();
+            await Task.Delay(30);
+            Check(form.Handle == handle && form.Visible && form.ShowInTaskbar && form.WindowState == FormWindowState.Normal,
+                state + ": activation restores the same window and taskbar entry");
+            Check(player.Plays == plays && player.Stops == stops && form.PlayingStationId == station &&
+                form.SelectedStationId == selected && form.LatestStatus.State == AudioState.Playing &&
+                volume.Value == originalVolume && search.Query == "107.7" && tray.Visible,
+                state + ": activation preserves playback, selection, volume, search and tray icon");
+        }
+        search.Query = query;
     }
 
     internal static async Task CheckStationManagerDpiAsync()
