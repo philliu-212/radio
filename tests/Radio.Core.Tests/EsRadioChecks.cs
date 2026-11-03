@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Radio.Core;
 
 internal static class EsRadioChecks
@@ -40,6 +41,38 @@ internal static class EsRadioChecks
         var result = EsRadioProgram.Parse(Fixture(), now);
         Check(result is { Kind: MetadataKind.Program, Title: "Es la Mañana de Federico", Person: "Federico Jiménez Losantos", NextProgram: "Kilómetro Cero" } && result.ExpiresAt == now.AddSeconds(90), "Official current program/DJ/next only, never audios as songs");
         Check(EsRadioProgram.Parse(Fixture(presenter: null), now)?.Person is null, "Missing host stays empty; no historical hard-coded mapping");
+        var musicNow = DateTimeOffset.Parse("2026-11-03T01:34:00Z");
+        foreach (var url in new[] { "null", "\"\"", "\"   \"", "missing" })
+        {
+            var feed = JsonNode.Parse(Fixture("02:00", "04:30", "", "Es Música"))!.AsObject();
+            if (url == "missing")
+            {
+                feed.Remove("url");
+                feed["siguiente"]!.AsObject().Remove("url");
+            }
+            else
+            {
+                feed["url"] = JsonNode.Parse(url);
+                feed["siguiente"]!["url"] = JsonNode.Parse(url);
+            }
+            var music = EsRadioProgram.Parse(feed.ToJsonString(), musicNow);
+            Check(music is { Kind: MetadataKind.Program, Title: "Es Música", Person: null,
+                    TimeSlot: "02:00–04:30（Madrid）", NextProgram: "Kilómetro Cero" } &&
+                music.ExpiresAt == musicNow.AddSeconds(90), "Current/next program without page still displays official text: " + url);
+            Check(EsRadioProgram.Parse(feed.ToJsonString(), DateTimeOffset.Parse("2026-11-03T03:30:00Z")) is null,
+                "Missing page does not bypass program expiry: " + url);
+        }
+        foreach (var url in new[] { "\"https://other.example/program\"", "\"not a URL\"", "123", "{}",
+            "\"http://esradio.libertaddigital.com/program/\"", "\"https://user@esradio.libertaddigital.com/program/\"" })
+        {
+            var feed = JsonNode.Parse(Fixture())!;
+            feed["url"] = JsonNode.Parse(url);
+            Check(EsRadioProgram.Parse(feed.ToJsonString(), now) is null, "Invalid supplied current URL is rejected: " + url);
+            feed = JsonNode.Parse(Fixture())!;
+            feed["siguiente"]!["url"] = JsonNode.Parse(url);
+            Check(EsRadioProgram.Parse(feed.ToJsonString(), now) is { Title: "Es la Mañana de Federico", NextProgram: null },
+                "Invalid next URL does not hide valid current program: " + url);
+        }
         Check(EsRadioProgram.Parse(Fixture(), DateTimeOffset.Parse("2026-11-02T11:00:00Z")) is null, "End boundary rejects old official selection");
         Check(EsRadioProgram.Parse(Fixture(), DateTimeOffset.Parse("2026-11-02T10:59:40Z"))?.ExpiresAt == DateTimeOffset.Parse("2026-11-02T11:00:00Z"), "TTL never passes slot end");
         Check(EsRadioProgram.Parse(Fixture("09:00", "10:00"), DateTimeOffset.Parse("2026-07-06T07:30:00Z")) is not null &&
