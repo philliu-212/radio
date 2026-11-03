@@ -44,9 +44,18 @@ internal static class EsRadioProgram
         };
     }
 
-    private static bool OfficialProgram(JsonElement item) =>
-        Uri.TryCreate(Text(item, "url"), UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
-        uri.Host == "esradio.libertaddigital.com" && uri.IsDefaultPort && uri.UserInfo.Length == 0;
+    private static bool OfficialProgram(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object) return false;
+        // The official feed includes programs without a page (e.g. Es Música).
+        // A missing page must not discard their name, presenter or time slot.
+        if (!item.TryGetProperty("url", out var value) || value.ValueKind == JsonValueKind.Null) return true;
+        if (value.ValueKind != JsonValueKind.String) return false;
+        var url = value.GetString();
+        if (string.IsNullOrWhiteSpace(url)) return true;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+            uri.Host == "esradio.libertaddigital.com" && uri.IsDefaultPort && uri.UserInfo.Length == 0;
+    }
 
     private static string? Text(JsonElement item, string key)
     {
