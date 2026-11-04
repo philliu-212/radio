@@ -49,6 +49,8 @@ Release **只有兩個完整 ZIP 與一份 SHA256SUMS**，不逐檔發布。ZIP 
 
 封裝保留 Lite／Full readme、`THIRD-PARTY-NOTICES.txt`，Full 另保留實際 runtime 原始 LICENSE／NOTICE。不能以縮小體積為由刪除。
 
+Full 封裝在產生 portable／ZIP 前執行 `scripts/Assert-FullRuntime.ps1`：核對 Core／WindowsDesktop 實際解析的套件版本，並將發布目錄中對應的 runtime 檔案逐一與指定版本 NuGet 套件比對 SHA-256（必含 `coreclr.dll` 與 `System.Windows.Forms.dll`）。不可僅以 runtimeconfig 或版本說明判定正確；任何混版即中止封裝。驗證器離線回歸：`powershell -NoProfile -File scripts/Test-FullRuntime.ps1`。
+
 ## 一鍵更新
 
 啟動及每 6 小時檢查 GitHub 最新穩定 Release。背景下載完整同模式 ZIP，核對 API 提供的 SHA-256／大小，在 `data/ota/staging/隨機值/` 解壓、驗證全部清單檔案，再將 hash 資源目錄搬至 portable 根目錄、原子記錄 Pending。這些工作都在使用者仍可收聽時完成。

@@ -28,6 +28,7 @@ $readme = if ($SelfContained) { 'docs/portable-full-readme.txt' } else { 'docs/p
 Copy-Item (Join-Path $ProjectRoot $readme) (Join-Path $payload 'READ-ME.txt')
 Copy-Item (Join-Path $ProjectRoot 'docs/third-party-notices.txt') (Join-Path $payload 'THIRD-PARTY-NOTICES.txt')
 if ($SelfContained) {
+    & (Join-Path $PSScriptRoot 'Assert-FullRuntime.ps1') -PayloadDirectory $payload -AssetsPath (Join-Path $ProjectRoot 'artifacts/release-build/Full/obj/Radio.Windows/project.assets.json') -RuntimeVersion $runtime.version
     $assets = Get-Content -Raw (Join-Path $ProjectRoot ('artifacts/release-build/' + $mode + '/obj/Radio.Windows/project.assets.json')) | ConvertFrom-Json
     $cache = @($assets.packageFolders.PSObject.Properties.Name)[0]
     foreach ($id in @('microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64')) {
