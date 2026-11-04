@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -7,7 +6,7 @@ using Radio.Core;
 
 namespace Radio.Windows;
 
-// Bounded, best-effort diagnostics. Never retain exceptions, URLs or metadata.
+// Bounded, best-effort local diagnostics. No upload or metadata polling.
 internal sealed class PlaybackDiagnostics : IDisposable
 {
     internal const int MaxFileBytes = 256 * 1024;
@@ -39,29 +38,35 @@ internal sealed class PlaybackDiagnostics : IDisposable
         lock (_gate)
         {
             _lastStatus = null;
-            Write("play-request", new { station = StationKey(stationId) });
+            Write("play-request", new { station = Clip(stationId) });
         }
     }
+
+    internal void Resolved(string stationId, ResolvedStream stream) => Write("stream-resolved", new
+    {
+        station = Clip(stationId), url = Clip(stream.Uri.OriginalString),
+        referrer = Clip(stream.Referrer.OriginalString), mediaType = Clip(stream.MediaType), isHls = stream.IsHls
+    });
 
     internal void Status(PlaybackStatus status, string? stationId)
     {
         lock (_gate)
         {
-            // Only numeric native error codes are extracted from messages. Messages may contain URLs.
-            var codes = Regex.Matches(status.Message ?? "", @"0x[0-9a-fA-F]{8}|(?<=代碼 )[0-9]+")
+            var message = Clip(status.Message ?? "");
+            var codes = Regex.Matches(message, @"0x[0-9a-fA-F]{8}|(?<=代碼 )[0-9]+")
                 .Cast<Match>().Take(4).Select(m => m.Value).ToArray();
-            var station = StationKey(stationId ?? "");
-            var key = $"{station}:{status.State}:{string.Join(',', codes)}";
+            var station = Clip(stationId ?? "");
+            var key = $"{station}:{status.State}:{message}";
             if (_lastStatus == key) return;
             _lastStatus = key;
-            Write("playback", new { station, state = status.State.ToString(), codes });
+            Write("playback", new { station, state = status.State.ToString(), message, codes });
             if (status.State == AudioState.Failed) Sample();
         }
     }
 
     internal void Error(Exception error) => Write("exception", new
     {
-        type = error.GetType().Name, hresult = $"0x{error.HResult:X8}"
+        type = error.GetType().Name, hresult = $"0x{error.HResult:X8}", details = Clip(error.ToString())
     });
 
     internal void Sample()
@@ -81,7 +86,8 @@ internal sealed class PlaybackDiagnostics : IDisposable
         }
     }
 
-    private static string StationKey(string id) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..12];
+    // Bound even pathological messages/URLs; normal signed URLs remain verbatim.
+    internal static string Clip(string value) => value.Length <= 8192 ? value : value[..8192] + "[truncated]";
 
     private void Write(string kind, object data)
     {

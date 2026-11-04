@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Radio.Core;
+using Radio.Windows.UI;
 
 namespace Radio.Windows.Tests;
 
@@ -30,34 +31,71 @@ internal static class PlaybackDiagnosticsChecks
                 foreach (var line in File.ReadLines(file))
                     using (JsonDocument.Parse(line)) { }
 
-            var privacy = Path.Combine(root, "privacy");
-            using (var log = new PlaybackDiagnostics(privacy, false, clock: () => now))
+            var details = Path.Combine(root, "details");
+            const string url = "https://stream.invalid/live.m3u8?token=public-token&signature=a%2Bb&expires=123456";
+            const string referrer = "https://radio.invalid/player?station=989";
+            const string message = "播放失敗（代碼 4／0x80004005）。 https://stream.invalid/live.m3u8?token=public-token\n網路錯誤";
+            using (var log = new PlaybackDiagnostics(details, false, clock: () => now))
             {
-                log.Request("https://secret.invalid/?token=password");
+                log.Request("best-989");
+                log.Resolved("best-989", new(new Uri(url), new Uri(referrer), "application/vnd.apple.mpegurl"));
                 for (var i = 0; i < 100; i++)
-                    log.Status(new(AudioState.Failed, "播放失敗（代碼 4／0x80004005）。 https://secret.invalid/?token=password\n歌曲"), "secret");
-                log.Error(new InvalidOperationException("password https://secret.invalid/"));
+                    log.Status(new(AudioState.Failed, message), "best-989");
+                try { throw new InvalidOperationException("outer failure", new IOException("inner failure " + url)); }
+                catch (Exception error) { log.Error(error); }
                 log.Sample();
             }
-            var lines = File.ReadAllLines(Path.Combine(privacy, "playback.log"));
+            var lines = File.ReadAllLines(Path.Combine(details, "playback.log"));
             var text = string.Join('\n', lines);
             Check(lines.Count(l => l.Contains("\"kind\":\"playback\"")) == 1, "consecutive duplicate failures suppressed");
-            Check(!text.Contains("secret") && !text.Contains("password") && !text.Contains("歌曲"), "URLs, station IDs, messages and metadata excluded");
+            using (var resolved = JsonDocument.Parse(lines.Single(l => l.Contains("\"kind\":\"stream-resolved\""))))
+            {
+                var data = resolved.RootElement.GetProperty("data");
+                Check(data.GetProperty("url").GetString() == url && data.GetProperty("referrer").GetString() == referrer,
+                    "full URL, encoded signature, token, expiry and referrer preserved");
+                Check(data.GetProperty("station").GetString() == "best-989" && data.GetProperty("isHls").GetBoolean(), "readable station and stream type recorded");
+                Check(resolved.RootElement.GetProperty("time").GetDateTimeOffset() == now, "event timestamp retained");
+            }
+            using (var playback = JsonDocument.Parse(lines.Single(l => l.Contains("\"kind\":\"playback\""))))
+                Check(playback.RootElement.GetProperty("data").GetProperty("message").GetString() == message,
+                    "full multiline playback error preserved in one JSON line");
+            using (var exception = JsonDocument.Parse(lines.Single(l => l.Contains("\"kind\":\"exception\""))))
+            {
+                var detail = exception.RootElement.GetProperty("data").GetProperty("details").GetString()!;
+                Check(detail.Contains("outer failure") && detail.Contains("inner failure " + url) && detail.Contains(nameof(Run)),
+                    "exception message, inner exception and stack retained");
+            }
             Check(text.Contains("0x80004005") && text.Contains("InvalidOperationException"), "native error and exception type retained");
             Check(text.Contains("workingSetBytes") && text.Contains("privateBytes") && text.Contains("managedBytes"), "distinct memory metrics recorded");
+
+            var oversized = Path.Combine(root, "oversized");
+            using (var log = new PlaybackDiagnostics(oversized, false))
+            {
+                log.Resolved("best-989", new(new Uri("https://stream.invalid/?token=" + new string('a', 20000)), new Uri(referrer), "audio/mpeg"));
+                log.Error(new IOException(new string('錯', 100000)));
+            }
+            var oversizedLines = File.ReadAllLines(Path.Combine(oversized, "playback.log"));
+            Check(oversizedLines.Count(l => l.Contains("[truncated]")) == 2, "oversized URL and error explicitly truncated rather than silently dropped");
+            Check(new FileInfo(Path.Combine(oversized, "playback.log")).Length <= PlaybackDiagnostics.MaxFileBytes, "large details respect file byte cap");
 
             var integration = Path.Combine(root, "integration");
             var player = new FailingPlayer();
             using (var log = new PlaybackDiagnostics(integration, false))
             using (var form = new MainForm(player, persistPreferences: false,
-                autoPlayOnStartup: false, checkUpdates: false, diagnostics: log))
+                autoPlayOnStartup: false, checkUpdates: false, diagnostics: log,
+                resolver: new FixtureResolver(new(new Uri(url), new Uri(referrer), "application/vnd.apple.mpegurl")),
+                settings: new ThemeSettings { MyStationIds = ["best-989"] }))
             {
-                // Exercise the real adapter-status subscription without network or playback.
-                player.Fail();
+                Check(form.PlayForProbeAsync("best-989").IsCompletedSuccessfully,
+                    "fixture resolves and fails synchronously without network");
                 Check(form.LatestStatus.State == AudioState.Failed, "diagnostics preserve failure UI state");
             }
             Check(File.ReadAllText(Path.Combine(integration, "playback.log")).Contains("0x80004005"),
                 "MainForm forwards underlying native error rather than generic UI label");
+            using (var entry = JsonDocument.Parse(File.ReadLines(Path.Combine(integration, "playback.log"))
+                .Single(l => l.Contains("\"kind\":\"stream-resolved\""))))
+                Check(entry.RootElement.GetProperty("data").GetProperty("url").GetString() == url,
+                    "MainForm logs the full resolved source before handing it to the player");
 
             var rate = Path.Combine(root, "rate");
             using (var log = new PlaybackDiagnostics(rate, false, clock: () => now))
@@ -107,9 +145,14 @@ internal static class PlaybackDiagnosticsChecks
         public double Volume { get; set; }
         public bool IsMuted { get; set; }
         public TimeSpan Position => TimeSpan.Zero;
-        public Task PlayAsync(ResolvedStream stream, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task PlayAsync(ResolvedStream stream, CancellationToken cancellationToken) { Fail(); return Task.CompletedTask; }
         public void Stop() { }
         public void Dispose() { }
         internal void Fail() => StatusChanged?.Invoke(new(AudioState.Failed, "播放失敗（代碼 2／0x80004005）。"));
+    }
+
+    private sealed class FixtureResolver(ResolvedStream stream) : IStreamResolver
+    {
+        public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken cancellationToken) => Task.FromResult(stream);
     }
 }

@@ -472,6 +472,7 @@ internal sealed class MainForm : Form
         {
             var stream = await _resolver.ResolveAsync(station, request.Token);
             if (_playRequest != request || _closing) return;
+            _diagnostics?.Resolved(station.Id, stream);
             await _player.PlayAsync(stream, request.Token);
             await started.Task.WaitAsync(request.Token);
         }
