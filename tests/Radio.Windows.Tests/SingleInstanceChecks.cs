@@ -24,6 +24,7 @@ internal static class SingleInstanceChecks
 
     internal static async Task RunAsync()
     {
+        await CheckDirectoriesAsync();
         var scope = "RadioMini.Test." + Guid.NewGuid().ToString("N");
         using (var host = StartHost(scope))
         {
@@ -81,6 +82,37 @@ internal static class SingleInstanceChecks
             }
             finally { if (!host.HasExited) { host.Kill(); await host.WaitForExitAsync(); } }
         }
+    }
+
+    private static async Task CheckDirectoriesAsync()
+    {
+        // Synthetic unique directories: never acquire the real player's scope.
+        var directory = Path.Combine(AppContext.BaseDirectory, "instance-" + Guid.NewGuid().ToString("N"));
+        var scope = SingleInstance.CreateScope(directory);
+        var equivalent = SingleInstance.CreateScope(directory.ToLowerInvariant() + Path.DirectorySeparatorChar);
+        var other = SingleInstance.CreateScope(directory + "-other");
+        Check(scope == equivalent, "Directory casing and trailing separator share a scope");
+        Check(scope == SingleInstance.CreateScope(Path.Combine(directory, ".")), "Equivalent full paths share a scope");
+        Check(scope != other, "Different executable directories have different scopes");
+        Check(SingleInstance.Scope == SingleInstance.CreateScope(Path.GetDirectoryName(Environment.ProcessPath!)!),
+            "Default scope uses the executable directory, not the working or managed package directory");
+        using var first = StartHost(scope);
+        using var firstCleanup = new HostCleanup(first);
+        using var second = StartHost(other);
+        using var secondCleanup = new HostCleanup(second);
+        Check(await ReadLineAsync(first) == "OWNED" && await ReadLineAsync(second) == "OWNED",
+            "Different directories can own independent players concurrently");
+        using var firstClient = new SingleInstance(equivalent);
+        using var secondClient = new SingleInstance(other);
+        Check(!firstClient.IsPrimary && !secondClient.IsPrimary, "Each directory rejects duplicate players");
+        Check(await firstClient.ActivateExistingAsync(), "Equivalent directory activates its original player");
+        Check(await ReadLineAsync(first) == "ACTIVATED", "First directory receives its activation");
+        Check(await secondClient.ActivateExistingAsync(), "Other directory activates independently");
+        Check(await ReadLineAsync(second) == "ACTIVATED", "Other directory receives its own activation");
+        await first.StandardInput.WriteLineAsync("exit");
+        await second.StandardInput.WriteLineAsync("exit");
+        await Task.WhenAll(first.WaitForExitAsync(), second.WaitForExitAsync()).WaitAsync(TimeSpan.FromSeconds(5));
+        Check(first.ExitCode == 0 && second.ExitCode == 0, "Both directory hosts exit cleanly");
     }
 
     private static Process StartHost(string scope, bool listen = true)

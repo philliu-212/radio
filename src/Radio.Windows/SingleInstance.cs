@@ -2,22 +2,27 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Radio.Windows;
 
-// One player per user/session, independent of install path or package version.
+// One player per executable directory/user/session, independent of package version.
 // Ownership is acquired and released on the startup STA thread.
 internal sealed class SingleInstance : IDisposable
 {
     internal static string Scope
+        // Portable's root apphost stays here while managed package directories change.
+        => CreateScope(Path.GetDirectoryName(Environment.ProcessPath!)!);
+
+    internal static string CreateScope(string executableDirectory)
     {
-        get
-        {
-            using var identity = WindowsIdentity.GetCurrent();
-            using var process = Process.GetCurrentProcess();
-            return $"RadioMini.{identity.User!.Value}.{process.SessionId}";
-        }
+        var directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(executableDirectory)).ToUpperInvariant();
+        var directoryHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(directory)));
+        using var identity = WindowsIdentity.GetCurrent();
+        using var process = Process.GetCurrentProcess();
+        return $"RadioMini.{identity.User!.Value}.{process.SessionId}.{directoryHash}";
     }
     private const byte ActivateWindow = 1;
     private readonly Mutex _mutex;
