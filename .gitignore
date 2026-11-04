@@ -7,3 +7,4 @@ tools/*
 dist/
 *.user
 *.suo
+**/logs/
