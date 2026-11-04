@@ -57,6 +57,15 @@ internal sealed class MainForm : Form
     private CancellationTokenSource? _playRequest;
     private CancellationTokenSource? _metadataRequest;
     private TaskCompletionSource? _started;
+    private readonly System.Windows.Forms.Timer _sourceWatch = new() { Interval = 1000 };
+    private readonly PlaybackStability _stability = new();
+    private readonly Func<TimeSpan> _playbackNow;
+    private int _nextSourceAttempt;
+    private int _playbackGeneration;
+    private bool _sourceSwitchQueued;
+    private bool _openingSourceFailed;
+    private readonly HashSet<string> _attemptedStreams = new(StringComparer.Ordinal);
+    internal bool PlaybackWatchRunning => _sourceWatch.Enabled;
     private Station? _targetStation;
     private Station? _playingStation;
     private StationMetadata? _metadata;
@@ -90,10 +99,13 @@ internal sealed class MainForm : Form
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
-        bool autoPlayOnStartup = true, bool checkUpdates = true, PlaybackDiagnostics? diagnostics = null)
+        bool autoPlayOnStartup = true, bool checkUpdates = true, PlaybackDiagnostics? diagnostics = null,
+        Func<TimeSpan>? playbackNow = null)
     {
         _player = player;
         _diagnostics = diagnostics;
+        _playbackNow = playbackNow ?? (() => Stopwatch.GetElapsedTime(0));
+        _sourceWatch.Tick += (_, _) => CheckPlaybackProgress();
         _resolver = resolver ?? new OfficialStreamResolver();
         _metadataProvider = metadataProvider ?? new OfficialMetadataProvider();
         _persistPreferences = persistPreferences;
@@ -464,17 +476,59 @@ internal sealed class MainForm : Form
         StopPlayback();
         _hasStarted = true; _active = true; _targetStation = station; _countPending = true;
         _diagnostics?.Request(station.Id);
-        var request = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        _nextSourceAttempt = 0;
+        _attemptedStreams.Clear();
+        await OpenNextSourceAsync(station);
+    }
+
+    private async Task OpenNextSourceAsync(Station station, bool stopCurrentSource = false)
+    {
+        _sourceWatch.Stop();
+        var request = new CancellationTokenSource(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 * (station.BackupCount + 1 - _nextSourceAttempt) + 10 : 40));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
-        UpdateStatus(new PlaybackStatus(AudioState.Opening, "正在取得官方直播來源…"));
+        if (stopCurrentSource) _player.Stop();
+        UpdateStatus(new PlaybackStatus(AudioState.Opening, _nextSourceAttempt == 0
+            ? "正在取得官方直播來源…" : $"直播不穩，正在取得備援 {_nextSourceAttempt}/{station.BackupCount}…"));
         try
         {
-            var stream = await _resolver.ResolveAsync(station, request.Token);
-            if (_playRequest != request || _closing) return;
-            _diagnostics?.Resolved(station.Id, stream);
-            await _player.PlayAsync(stream, request.Token);
-            await started.Task.WaitAsync(request.Token);
+            Exception? lastError = null;
+            for (var attempt = _nextSourceAttempt; attempt <= station.BackupCount; attempt++)
+            {
+                _nextSourceAttempt = attempt + 1;
+                _openingSourceFailed = false;
+                using var opening = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
+                opening.CancelAfter(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 : 40));
+                try
+                {
+                    var stream = attempt == 0
+                        ? await _resolver.ResolveAsync(station, opening.Token)
+                        : await _resolver.ResolveFallbackAsync(station, opening.Token, attempt - 1);
+                    if (_playRequest != request || _closing) return;
+                    if (stream is null) throw lastError ?? new SourceResolutionException("目前沒有可用的備援來源。");
+                    if (!_attemptedStreams.Add(stream.Uri.AbsoluteUri))
+                        throw new SourceResolutionException("備援與已嘗試的串流相同，無其他可用來源；請稍後重試。");
+                    _diagnostics?.Resolved(station.Id, stream);
+                    await _player.PlayAsync(stream, opening.Token);
+                    await started.Task.WaitAsync(opening.Token);
+                    if (_openingSourceFailed) throw new SourceResolutionException("直播來源開播後立即失敗。");
+                    if (_playRequest == request && _active && !_closing)
+                    {
+                        _stability.Reset(_playbackNow(), _player.Position.TotalSeconds);
+                        _sourceWatch.Start();
+                    }
+                    break;
+                }
+                catch (Exception error) when (attempt < station.BackupCount &&
+                    !request.IsCancellationRequested && _playRequest == request && !_closing)
+                {
+                    lastError = error;
+                    _player.Stop();
+                    started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _started = started;
+                    UpdateStatus(new PlaybackStatus(AudioState.Opening, $"來源無法開播，正在取得備援 {attempt + 1}/{station.BackupCount}…"));
+                }
+            }
         }
         catch (OperationCanceledException) when (request.IsCancellationRequested)
         {
@@ -499,18 +553,48 @@ internal sealed class MainForm : Form
 
     private void FailPlayback(string message)
     {
+        _sourceWatch.Stop();
         _active = false; _countPending = false; _playingStation = null; CancelMetadata();
         _player.Stop();
         UpdateStatus(new PlaybackStatus(AudioState.Failed, message));
     }
     private void StopPlayback()
     {
+        _sourceWatch.Stop(); _sourceSwitchQueued = false; _playbackGeneration++;
         var request = _playRequest; _playRequest = null; _started = null;
         request?.Cancel();
         _active = false; _countPending = false; _playingStation = null; _targetStation = null;
         CancelMetadata();
         _player.Stop();
         UpdateStatus(new PlaybackStatus(AudioState.Stopped, "已停止；再次播放將連接當下直播。"));
+    }
+
+    internal void CheckPlaybackProgress()
+    {
+        if (_closing || !_active || _playRequest is not null || _sourceSwitchQueued || _targetStation is null) return;
+        if (_stability.Observe(_playbackNow(), _player.Position.TotalSeconds)) QueueSourceSwitch();
+    }
+
+    private void QueueSourceSwitch()
+    {
+        if (_closing || !_active || _sourceSwitchQueued || _playRequest is not null || !IsHandleCreated) return;
+        _sourceSwitchQueued = true; _sourceWatch.Stop();
+        var generation = _playbackGeneration;
+        BeginInvoke(async () =>
+        {
+            if (_closing || generation != _playbackGeneration || !_active || _targetStation is not { } station) return;
+            _sourceSwitchQueued = false;
+            if (_nextSourceAttempt > station.BackupCount)
+            {
+                FailPlayback(station.BackupCount == 0
+                    ? "直播持續不穩，且無其他可用來源；請稍後按播放重新嘗試。"
+                    : "所有直播來源皆無法穩定播放，請稍後按播放重新嘗試。");
+                return;
+            }
+            CancelMetadata(); _playingStation = null;
+            // OpenNextSourceAsync installs the opening request before adapters emit replacement Stopped.
+            await OpenNextSourceAsync(station, stopCurrentSource: true);
+        });
     }
 
     private void UpdateStatus(PlaybackStatus status)
@@ -522,7 +606,22 @@ internal sealed class MainForm : Form
             return;
         }
         // Adapters emit Stopped while replacing their internal source; that is not user Stop.
-        if (status.State == AudioState.Stopped && _playRequest is not null && _active) return;
+        if (status.State == AudioState.Stopped && _active) return;
+        // Opening failures are handled by the bounded source-attempt loop. Keep the pending
+        // success count intact until the backup plays or the entire request fails.
+        if (status.State == AudioState.Failed && _playRequest is not null && _active)
+        {
+            _openingSourceFailed = true;
+            _diagnostics?.Status(status, _targetStation?.Id);
+            _started?.TrySetException(new SourceResolutionException(status.Message));
+            return;
+        }
+        if (status.State == AudioState.Failed && _active)
+        {
+            _diagnostics?.Status(status, _targetStation?.Id);
+            QueueSourceSwitch();
+            return;
+        }
         if (status.State is AudioState.Playing or AudioState.Buffering && !_active) return;
         _latestStatus = status;
         _diagnostics?.Status(status, _targetStation?.Id);
@@ -779,6 +878,7 @@ internal sealed class MainForm : Form
     {
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
+        _sourceWatch.Stop(); _sourceWatch.Dispose(); _playbackGeneration++;
         _updateTimer.Stop(); _updateTimer.Dispose(); _updater.Dispose();
         _volumeWheel.Dispose();
         SavePreferences();

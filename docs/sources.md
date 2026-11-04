@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `best-989` | `http://www.bestradio.com.tw/` | 擷取 989 的 `RA000013` HLS，保留官方生成的 query string |
 | `kiss-999` | `https://www.kiss.com.tw/radio_hq.php?radio_id=156` 內嵌 `/test/hichannel2.php?api=1` | 從官方嵌入頁擷取 `RA000040` HLS |
+| `kiss-999` 備援 | `https://www.twitch.tv/livekiss` | 匿名取得 Twitch 播放授權及 usher HLS 清單，僅選 `audio_only`，不載入 Twitch 網頁或保存短效 token |
 | `pop-917` | `https://www.pop917.com/liveStream.aspx?id=1` | 初始化頁面 session，再 POST `https://www.pop917.com/ajax.aspx`，表單為 `channelID=1&action=getLIVEURL` |
 | `ufo-921` | `https://www.uforadio.com.tw/` 公開 `<source>` | 保存經核對的固定 Revma 公開入口 `https://stream.rcs.revma.com/em90w4aeewzuv`，不在每次收聽前下載整個首頁 |
 | `bcc-ilike` | `https://www.bcc.com.tw/onAir.asp?nid=2` 使用的官方 API | GET `https://www.bcc.com.tw/webapi/BCCRadioWebAPI/ChannelInfoBat`，依名稱「中廣流行網」選取 `iosStream`，不依陣列序號選台 |
@@ -20,11 +21,27 @@
 - 好事官網目前由 HTTP 入口提供來源；HTTPS 在此次調查逾時。音訊串流本身仍要求 HTTPS。未來手機端若使用同一 HTTP 入口，需另評估平台安全政策；不預先關閉整個 App 的傳輸安全限制。
 - POP、Hit FM 官方頁面提示最長播放約六小時。原型不宣稱能連續播放超過此限制；來源失效後需使用者手動重新播放。
 - KISS 的官方頁面請求曾出現 403，另一次請求可正常取得；網路可達性不代表所有裝置／時間都能播放。拒絕回應時應正常報錯。
+- KISS 優先 HiNet，失敗或持續不穩時嘗試一次 Twitch 備援；全部電台（含只有單一來源者）共用穩定度判斷。中廣、RFI 與 esRadio 另有逐台查核的替代入口；每輪有界限地換源，不把其他電台的 Twitch 當成備援。手動重播重新由主來源開始。完整順序、門檻、七台掃描結果與失敗紀錄見[備援來源與穩定度機制](backup-sources.md)。
+- Twitch 僅使用公開匿名播放流程，接受 `*.ttvnw.net`／`*.live-video.net` 的 HTTPS 純音訊 HLS。離線、拒絕、需要登入、限流、缺少音軌或格式改變都正常報錯，不繞過限制、不移除廣告。公開 web client ID／未版本化 API 可能變更，無可用純音訊時不退回含影片音軌。
+- #94 線上驗證：本機 .NET 一般開播實際切換至 Twitch；另以模擬主來源失敗驗證相同 UI 路徑，兩次 Windows 系統音訊均靜音觀察 20 秒，播放時鐘各前進約 20.1 秒。這不是人工聽音、長時間穩定性或所有網路環境的驗收。
+
 - 靜態頁面正規表示式及官方 API 均可能變動；應維護小型、可離線測試的解析器，而不是啟動瀏覽器抓整站。
 - Windows 使用系統 HLS 引擎。`DesiredSeekableWindowSize` 是向系統提出的請求，不是整個程序記憶體的硬上限，也不代表所有來源都會遵守。
 - 現行 `SystemAudioPlayer` 對 Hit FM 採 Windows MediaPlayer 相容路徑，其餘採 Media Engine `AUDIOONLY` 模式；不再提供 mpv。KISS 的來源可包含影像，不能把舊相容路徑的成本當成現行預設結果；傳輸是否只有音訊仍需另外量測，不從「畫面沒有影像」推論。
-- Media Engine 的 `WAITING` 表示缺少下一段音訊而停播，不是一般背景收資料。某些 MP3 直播恢復時不會再次送出 `PLAYING`；僅在等待恢復期間處理原生 `TIMEUPDATE`，以播放時鐘確實前進且已有後續資料、未暫停／跳轉／結束為依據恢復「播放中」。單純 ready-state／來源預抓事件不代表已恢復；不新增輪詢 timer、重連或常駐 UI 時鐘。離線原生 WAV 測試與線上串流驗證分開記錄。
+- Media Engine 的 `WAITING` 表示缺少下一段音訊而停播，不是一般背景收資料。某些 MP3 直播恢復時不會再次送出 `PLAYING`；引擎僅在等待恢復期間處理原生 `TIMEUPDATE`，以播放時鐘確實前進且已有後續資料、未暫停／跳轉／結束為依據恢復「播放中」。單純 ready-state／來源預抓事件不代表已恢復。#97 另在來源編排層加入每秒穩定度取樣，不改引擎恢復判斷、不新增常駐 UI 時鐘。離線原生 WAV 測試與線上串流驗證分開記錄。
 - RFI 不增加額外開播等待。3 秒預載在同資料對照未減少時鐘停頓，20 秒等待不符合使用者需求，原生 buffering-time 屬性也曾出現反例，這些候選均未保留。停頓仍由 [#43](https://github.com/philliu-212/radio/issues/43) 追蹤；狀態修正不代表音訊停頓已解決。
+
+### KISS 備援驗證
+
+後兩個指令會連線；`--kiss-live` 靜音、不寫使用者設定：
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --kiss-backup
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --kiss-live
+dotnet run --project src/Radio.Windows -c Release -- --probe --station kiss-999 --fallback --seconds 20 --output artifacts/kiss-fallback-probe.json
+```
+
+`--kiss-backup` 是離線 UI fixture；`--kiss-live` 包含實際主來源解析，以及模擬主來源故障後的真實 Twitch 播放；`--probe --fallback` 僅獨立量測備援，不驗證自動切換。診斷不輸出完整播放網址或 token，產物不提交。
 
 ## Metadata 維護摘要
 
@@ -56,7 +73,7 @@ RFI 初次回傳 null 的解析問題已修正：真實頁面 live 項目顯示 
 ## esRadio 官方來源查核（2026-11-02，#83／#84）
 
 - 官方直播頁 `<audio>` 列出 `ld-live1-med.aac` 與 `ld-live1-low.mp3`；採用同一 `libertaddigital-radio-live1.flumotion.com/libertaddigital/` 頻道的 high MP3。FFmpeg 實際解碼 high MP3 90 秒、low MP3 60 秒成功且有非零 PCM 音訊，分別辨識為 128／64 kbps、44.1 kHz stereo；HTTP `icy-br` 卻皆聲稱 56，音質以解碼資訊為準。
-- 備用官方 MP3：`https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-low.mp3`。目前沒有多 URL 自動備援機制，因此只記錄並實測備用，不為本次重構引擎或增加自動切換。AAC `ld-live1-high.aac` HTTP 200，僅作來源／ICY 抽查，未宣稱已驗收 AAC 播放。
+- 備用官方 MP3：`https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-low.mp3`。原調查僅記錄未接入；#96 已加入 low MP3 與官網列出的 med AAC 有限次數自動備援，當日連續性失敗亦如實記於[備援掃描](backup-sources.md)。此處的 high AAC 仍僅作歷史來源／ICY 抽查，不宣稱已驗收或啟用 high AAC。
 - 官方 JS `https://s1.staticld.com/js/299/210318.min.js` 使用 `https://s1.staticld.com/rt/programa-actual-radio.json` 更新全國站導覽列 `#directoesradio`，因此直接沿用此結構化來源，不解析地方分台節目表，也不由文章猜測直播內容。JSON 的 `nombre`、`presentadores`、`hora_inicio`、`hora_final`、`siguiente.nombre` 可取得；忽略 `audios`（Podcast／文章），不當歌曲。
 - 2026-11-03 查核（#89）：官方回傳 **Es Música**、Madrid **02:00–04:30**，`url: null`、`presentadores` 為空。節目介紹頁不是顯示名稱的必要條件；目前與下一節目允許缺少／null／空白網址，有提供非空網址時仍驗證官方 HTTPS 網址。名稱與有效時段照官方顯示，缺主持人留白；時段與過期檢查不放寬。
 - 本機 .NET provider 於約 09:26 UTC 實際取得 **Es la Mañana de Federico**、**Federico Jiménez Losantos**、Madrid **06:00–12:00**、下一節目 **Kilómetro Cero**。只代表當次抽查，不是寫死顯示內容。
@@ -70,7 +87,7 @@ RFI 初次回傳 null 的解析問題已修正：真實頁面 live 項目顯示 
 
 使用者核准將 `Spain Madrid`／`France` 以灰色小字接在台名後方，頻率列保留大字 `99.1`＋小字 `FM`／大字 `WEB`，不增加行數或移動節目欄位。官方 [節目表](https://esradio.libertaddigital.com/programacion.html) 明列「Kilómetro Cero - Madrid 99.1」及另一頻率「Con ánimo de lucro - Madrid 105.7」；先前同一 `ld-live1` 全國直播頁使用的 current JSON，其下一節目為 Kilómetro Cero。以此交叉確認 Madrid 99.1 識別，不選 105.7，也不宣稱地方 FM 與網路直播每一刻完全同步。
 
-目錄新增 `city: Madrid`、`broadcastFrequency: 99.1` 供卡片使用，不覆寫原本空白的 `frequency` 或任何 URL／語言。RFI Monde 沿用已知國家 France，不猜地方城市與 FM 頻率。國家／城市不是播放來源選擇條件；不增加任何備援或自動切台。
+目錄新增 `city: Madrid`、`broadcastFrequency: 99.1` 供卡片使用，不覆寫原本空白的 `frequency` 或任何 URL／語言。RFI Monde 沿用已知國家 France，不猜地方城市與 FM 頻率。國家／城市不是播放來源選擇條件；此卡片變更本身不增加任何備援或自動切台（後續 #96／#97 的來源機制另見上方連結）。
 
 明確啟用線上測試（不含於離線套件、不錄音、不寫使用者設定）：
 
@@ -81,7 +98,7 @@ dotnet run --project tests/Radio.Windows.Tests -c Release -- --esradio
 
 前者讀取真實節目 JSON 並分別抽查三個串流的 ICY；後者用正式 `SystemAudioPlayer` 靜音觀測 high MP3 120 秒、low MP3 60 秒、切 RFI 20 秒再回 esRadio 30 秒，檢查播放事件、時鐘持續前進與錯誤。這不是實際聽感、數小時穩定性、斷網恢復或實體多螢幕驗收；執行結果應另見 PR 紀錄。初次 low 30 秒量測僅前進 16.7 秒，連續性檢查失敗（無引擎錯誤），因此延長備用來源觀測並讓診斷在個別連續性失敗後繼續測切台；不放寬檢查門檻、不把失敗刪除。
 
-延長觀測實際結果：high 120.1 秒前進 116.7 秒，low 60 秒前進 46.7 秒，切 RFI 20 秒前進 16.0 秒、再回 high 30 秒前進 26.4 秒，皆無引擎錯誤；high／RFI／回切符合短測門檻，**low 仍未通過時鐘連續性門檻，因此整個線上診斷回傳失敗**。最長停滯取樣為 high 3 秒／low 8 秒，不將時鐘取樣直接描述為已聽見的靜音。正式目錄維持 high MP3，不啟用未驗收的自動備援，也不為備用問題改播放引擎。
+延長觀測實際結果：high 120.1 秒前進 116.7 秒，low 60 秒前進 46.7 秒，切 RFI 20 秒前進 16.0 秒、再回 high 30 秒前進 26.4 秒，皆無引擎錯誤；high／RFI／回切符合短測門檻，**low 仍未通過時鐘連續性門檻，因此整個線上診斷回傳失敗**。最長停滯取樣為 high 3 秒／low 8 秒，不將時鐘取樣直接描述為已聽見的靜音。當時正式目錄維持 high MP3，未啟用自動備援；後續依使用者 #96／#97 要求，加入已確認同台且能解碼的替代來源與持續不穩時的有界限切換，不宣稱 low／AAC 已通過穩定播放驗收，也不為備用問題改播放引擎。
 
 ## 參考
 

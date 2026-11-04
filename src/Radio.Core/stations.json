@@ -21,7 +21,16 @@
     "resolver": "Html",
     "match": "(https://kissradiow-hichannel\\.cdn\\.hinet\\.net/live/RA000040/[^\\s\"<>]+)",
     "streamHost": "kissradiow-hichannel.cdn.hinet.net",
-    "mediaType": "application/vnd.apple.mpegurl"
+    "mediaType": "application/vnd.apple.mpegurl",
+    "backupSources": [
+      {
+        "name": "Twitch livekiss 純音訊",
+        "pageUrl": "https://www.twitch.tv/livekiss",
+        "resolver": "Twitch",
+        "streamHost": "usher.ttvnw.net",
+        "mediaType": "application/vnd.apple.mpegurl"
+      }
+    ]
   },
   {
     "id": "pop-917",
@@ -58,7 +67,17 @@
     "endpointUrl": "https://www.bcc.com.tw/webapi/BCCRadioWebAPI/ChannelInfoBat",
     "match": "中廣流行網",
     "streamHost": "stream.rcs.revma.com",
-    "mediaType": "audio/aac"
+    "mediaType": "audio/aac",
+    "backupSources": [
+      {
+        "name": "Revma 固定入口（避開官網 API）",
+        "pageUrl": "https://www.bcc.com.tw/stream.html?c=0",
+        "resolver": "Direct",
+        "endpointUrl": "https://stream.rcs.revma.com/s1zttsg3qtzuv",
+        "streamHost": "stream.rcs.revma.com",
+        "mediaType": "audio/aac"
+      }
+    ]
   },
   {
     "id": "hit-north",
@@ -82,7 +101,17 @@
     "resolver": "Direct",
     "endpointUrl": "https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3",
     "streamHost": "rfimonde64k.ice.infomaniak.ch",
-    "mediaType": "audio/mpeg"
+    "mediaType": "audio/mpeg",
+    "backupSources": [
+      {
+        "name": "Infomaniak 替代入口（Monde 掛載點）",
+        "pageUrl": "https://www.rfi.fr/fr/direct-monde",
+        "resolver": "Direct",
+        "endpointUrl": "https://rfiafrique64k.ice.infomaniak.ch/rfimonde-64.mp3",
+        "streamHost": "rfiafrique64k.ice.infomaniak.ch",
+        "mediaType": "audio/mpeg"
+      }
+    ]
   },
   {
     "id": "esradio",
@@ -97,6 +126,24 @@
     "resolver": "Direct",
     "endpointUrl": "https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-high.mp3",
     "streamHost": "libertaddigital-radio-live1.flumotion.com",
-    "mediaType": "audio/mpeg"
+    "mediaType": "audio/mpeg",
+    "backupSources": [
+      {
+        "name": "Flumotion 低碼率 MP3",
+        "pageUrl": "https://esradio.libertaddigital.com/directo.html",
+        "resolver": "Direct",
+        "endpointUrl": "https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-low.mp3",
+        "streamHost": "libertaddigital-radio-live1.flumotion.com",
+        "mediaType": "audio/mpeg"
+      },
+      {
+        "name": "Flumotion 中碼率 AAC",
+        "pageUrl": "https://esradio.libertaddigital.com/directo.html",
+        "resolver": "Direct",
+        "endpointUrl": "https://libertaddigital-radio-live1.flumotion.com/libertaddigital/ld-live1-med.aac",
+        "streamHost": "libertaddigital-radio-live1.flumotion.com",
+        "mediaType": "audio/aac"
+      }
+    ]
   }
 ]

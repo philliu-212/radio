@@ -68,6 +68,14 @@ internal static class PlaybackDiagnosticsChecks
             Check(text.Contains("0x80004005") && text.Contains("InvalidOperationException"), "native error and exception type retained");
             Check(text.Contains("workingSetBytes") && text.Contains("privateBytes") && text.Contains("managedBytes"), "distinct memory metrics recorded");
 
+            var twitch = Path.Combine(root, "twitch");
+            using (var log = new PlaybackDiagnostics(twitch, false))
+                log.Resolved("kiss-999", new(new Uri("https://fixture.hls.ttvnw.net/signed-secret/index.m3u8?token=secret"),
+                    new Uri("https://www.twitch.tv/livekiss"), "application/vnd.apple.mpegurl"));
+            var twitchText = File.ReadAllText(Path.Combine(twitch, "playback.log"));
+            Check(twitchText.Contains("fixture.hls.ttvnw.net") && !twitchText.Contains("signed-secret") &&
+                !twitchText.Contains("token="), "Twitch diagnostic retains CDN host but never persists signed path/query");
+
             var oversized = Path.Combine(root, "oversized");
             using (var log = new PlaybackDiagnostics(oversized, false))
             {

@@ -3,7 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace Radio.Core;
 
-public enum ResolverKind { Html, Form, BccJson, Direct }
+public enum ResolverKind { Html, Form, BccJson, Direct, Twitch }
+
+public sealed record BackupSource(string Name, Uri PageUrl, ResolverKind Resolver,
+    string StreamHost, string MediaType, Uri? EndpointUrl = null);
 
 public sealed record Station(
     string Id,
@@ -19,13 +22,15 @@ public sealed record Station(
     string? Country = null,
     string? Genre = null,
     string? City = null,
-    string? BroadcastFrequency = null)
+    string? BroadcastFrequency = null,
+    IReadOnlyList<BackupSource>? BackupSources = null)
 {
     private static readonly HashSet<string> LanguageCodes = System.Globalization.CultureInfo
         .GetCultures(System.Globalization.CultureTypes.NeutralCultures)
         .Select(culture => culture.TwoLetterISOLanguageName)
         .Where(code => code.Length == 2 && code != "iv").ToHashSet(StringComparer.OrdinalIgnoreCase);
     public bool HasFrequency => !string.IsNullOrWhiteSpace(Frequency);
+    public int BackupCount => Math.Min(BackupSources?.Count ?? 0, 3);
     public string FrequencyLabel => HasFrequency ? Frequency : "WEB";
     // Optional, verified local FM identification for the card only. Keep catalog sorting/search intact.
     public bool HasCardFrequency => HasFrequency || !string.IsNullOrWhiteSpace(BroadcastFrequency);

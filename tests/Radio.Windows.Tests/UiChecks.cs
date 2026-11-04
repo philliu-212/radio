@@ -342,6 +342,10 @@ internal static class UiChecks
         await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
         await CheckStartupAutoplayAsync();
+        await CheckKissBackupAsync();
+        await CheckGeneralBackupsAsync();
+        PlaybackStabilityChecks.Run();
+        await CheckPlaybackStabilityAsync();
         await CheckCardVolumeAndTipsAsync();
         await CheckWindowActivationAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
@@ -1165,6 +1169,166 @@ internal static class UiChecks
         }
     }
 
+    internal static async Task CheckKissBackupAsync()
+    {
+        foreach (var resolutionFailure in new[] { false, true })
+        {
+            var settings = CatalogSettings();
+            var player = new FixturePlayer();
+            var resolver = new FixtureResolver { Fail = resolutionFailure, Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings, autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync("kiss-999");
+            if (!resolutionFailure) player.Emit(AudioState.Failed);
+            await Task.Delay(30);
+            Check(resolver.Calls == 1 && resolver.BackupCalls == 1 && player.Plays == (resolutionFailure ? 1 : 2),
+                "KISS resolution/startup failure switches to backup exactly once");
+            Check(!settings.PlayCounts.ContainsKey("kiss-999"), "Failed primary does not count as listening");
+            player.Emit(AudioState.Playing); await task;
+            Check(form.PlayingStationId == "kiss-999" && settings.PlayCounts["kiss-999"] == 1,
+                "Backup success counts once under the original KISS station");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Playing); await task;
+            Check(resolver.BackupCalls == 0, "Healthy primary never requests Twitch");
+            task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Failed); await Task.Delay(30);
+            player.Emit(AudioState.Failed); await task;
+            Check(form.LatestStatus.State == AudioState.Failed && resolver.BackupCalls == 1,
+                "Failed backup stops without a retry loop");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Backup = true, BackupPending = new() };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Failed); await Task.Delay(30);
+            Find<Button>(form, "PlayButton").PerformClick();
+            resolver.BackupPending.SetResult(new ResolvedStream(new Uri("https://example.invalid/backup"), new Uri("https://www.twitch.tv/livekiss"), "audio/aac"));
+            await task;
+            Check(player.Plays == 1 && form.LatestStatus.State == AudioState.Stopped,
+                "Stop during backup resolution prevents late playback");
+            form.ExitPlayer();
+        }
+    }
+
+    internal static async Task CheckGeneralBackupsAsync()
+    {
+        foreach (var id in new[] { "bcc-ilike", "rfi-monde", "esradio" })
+        {
+            var settings = CatalogSettings(); var player = new FixturePlayer();
+            var resolver = new FixtureResolver { Fail = true, Backup = true, BackupFailures = id == "esradio" ? 1 : 0 };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings, autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync(id);
+            Check(resolver.BackupIndices.SequenceEqual(id == "esradio" ? [0, 1] : new[] { 0 }) && player.Plays == 1,
+                id + ": configured backups attempted in order despite earlier backup failure");
+            player.Emit(AudioState.Playing); await task;
+            Check(settings.PlayCounts[id] == 1 && form.PlayingStationId == id, id + ": backup success records only original station once");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, Backup = true, BackupFailures = 10 };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show(); await form.PlayForProbeAsync("esradio");
+            Check(resolver.BackupIndices.SequenceEqual([0, 1]) && form.LatestStatus.State == AudioState.Failed && player.Plays == 0,
+                "All esRadio backups failing stops after exactly two, without looping");
+            await form.PlayForProbeAsync("ufo-921");
+            Check(resolver.BackupCalls == 2 && form.LatestStatus.State == AudioState.Failed,
+                "Station with no verified backup never borrows another station's source");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Backup = true, DuplicateBackup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show(); var task = form.PlayForProbeAsync("bcc-ilike"); player.Emit(AudioState.Playing); await task;
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.BackupCalls == 1 && player.Plays == 1 && form.LatestStatus.State == AudioState.Failed,
+                "API-independent backup equal to the already tried stream is skipped, not reopened");
+            task = form.PlayForProbeAsync("bcc-ilike"); player.Emit(AudioState.Playing); await task;
+            Check(player.Plays == 2, "Manual replay clears resolved-URL deduplication");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer { FailImmediatelyAfterPlaying = true }; var resolver = new FixtureResolver { Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show(); var task = form.PlayForProbeAsync("kiss-999");
+            Check(player.Plays == 2 && resolver.BackupCalls == 1, "Playing then Failed in the same callback turn still advances source");
+            player.Emit(AudioState.Playing); await task;
+            Check(form.LatestStatus.State == AudioState.Playing, "Immediate primary failure does not mask backup success");
+            form.ExitPlayer();
+        }
+    }
+
+    internal static async Task CheckPlaybackStabilityAsync()
+    {
+        foreach (var station in StationCatalog.Load())
+        {
+            var now = TimeSpan.Zero;
+            var player = new FixturePlayer { FixedPositionSeconds = 0, IsMuted = true };
+            var resolver = new FixtureResolver { Backup = true };
+            var settings = CatalogSettings(); settings.Volume = 37;
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings,
+                autoPlayOnStartup: false, playbackNow: () => now);
+            form.Show();
+            var initial = form.PlayForProbeAsync(station.Id); player.Emit(AudioState.Playing); await initial;
+            Check(form.PlaybackWatchRunning, station.Id + ": stability monitoring runs even with only one source");
+            form.Hide();
+            for (var source = 0; source <= station.BackupCount; source++)
+            {
+                for (var second = 1; second <= 7; second++)
+                {
+                    now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress();
+                }
+                Check(player.Plays == source + 1, station.Id + ": short buffering does not change source");
+                now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress();
+                await Task.Delay(30);
+                if (source < station.BackupCount)
+                {
+                    Check(player.Plays == source + 2, station.Id + ": persistent stall switches next while hidden");
+                    player.Emit(AudioState.Playing); await Task.Delay(30);
+                    Check(player.IsMuted && Math.Abs(player.Volume - .37) < .001 && settings.PlayCounts[station.Id] == 1,
+                        station.Id + ": automatic switch preserves mute/volume and never recounts");
+                }
+            }
+            Check(form.LatestStatus.State == AudioState.Failed && !form.PlaybackWatchRunning &&
+                resolver.BackupIndices.SequenceEqual(Enumerable.Range(0, station.BackupCount)),
+                station.Id + ": exhaustion stops monitor without looping, including single-source stations");
+            form.Show();
+            initial = form.PlayForProbeAsync(station.Id); player.Emit(AudioState.Playing); await initial;
+            Check(resolver.Calls == 2 && settings.PlayCounts[station.Id] == 2, station.Id + ": manual replay starts fresh at primary");
+            Find<Button>(form, "PlayButton").PerformClick();
+            Check(!form.PlaybackWatchRunning, station.Id + ": user Stop stops monitoring");
+            form.ExitPlayer();
+        }
+        {
+            var now = TimeSpan.Zero; var player = new FixturePlayer { FixedPositionSeconds = 0 };
+            var resolver = new FixtureResolver { Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(),
+                autoPlayOnStartup: false, playbackNow: () => now);
+            form.Show(); var task = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing); await task;
+            for (var second = 1; second <= 8; second++) { now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress(); }
+            Find<Button>(form, "PlayButton").PerformClick();
+            await Task.Delay(30);
+            Check(resolver.BackupCalls == 0 && form.LatestStatus.State == AudioState.Stopped,
+                "Stop invalidates a queued automatic source switch");
+            task = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing); await task;
+            player.Emit(AudioState.Stopped); player.Emit(AudioState.Failed); player.Emit(AudioState.Failed);
+            await Task.Delay(30);
+            Check(resolver.BackupCalls == 1 && player.Plays == 3, "Native Stopped/Failed sequence queues exactly one mid-play switch");
+            player.Emit(AudioState.Playing); await Task.Delay(30);
+            for (var second = 1; second <= 8; second++) { now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress(); }
+            task = form.PlayForProbeAsync("ufo-921"); player.Emit(AudioState.Playing); await task;
+            await Task.Delay(30);
+            Check(resolver.BackupCalls == 1 && form.PlayingStationId == "ufo-921", "Station change invalidates old queued source switch");
+            form.ExitPlayer();
+            Check(!form.PlaybackWatchRunning, "Exit disposes playback watchdog");
+        }
+    }
+
     private static async Task CheckCardVolumeAndTipsAsync()
     {
         var settings = CatalogSettings(); settings.Volume = 40;
@@ -1299,6 +1463,20 @@ internal static class UiChecks
     {
         public TaskCompletionSource<ResolvedStream>? Pending { get; set; }
         public bool Fail { get; set; }
+        public bool Backup { get; set; }
+        public int BackupCalls { get; private set; }
+        public int BackupFailures { get; set; }
+        public bool DuplicateBackup { get; set; }
+        public List<int> BackupIndices { get; } = [];
+        public TaskCompletionSource<ResolvedStream>? BackupPending { get; set; }
+        public async Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken token, int index = 0)
+        {
+            BackupCalls++;
+            BackupIndices.Add(index);
+            if (index < BackupFailures) throw new SourceResolutionException("Fixture backup unavailable");
+            if (BackupPending is not null) return await BackupPending.Task;
+            return Backup ? new ResolvedStream(new Uri(DuplicateBackup ? "https://example.invalid/audio" : $"https://example.invalid/backup/{index}"), new Uri("https://www.twitch.tv/livekiss"), "audio/aac") : null;
+        }
         public int Calls { get; private set; }
         public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token)
         {
@@ -1312,13 +1490,31 @@ internal static class UiChecks
         public event Action<PlaybackStatus>? StatusChanged;
         public double Volume { get; set; } = .4;
         public bool IsMuted { get; set; }
-        public TimeSpan Position => TimeSpan.Zero;
+        private readonly System.Diagnostics.Stopwatch _clock = new();
+        public double? FixedPositionSeconds { get; set; }
+        public TimeSpan Position => FixedPositionSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : _clock.Elapsed;
         public int Plays { get; private set; }
+        public bool FailImmediatelyAfterPlaying { get; set; }
         public int Stops { get; private set; }
         public bool Disposed { get; private set; }
-        public Task PlayAsync(ResolvedStream stream, CancellationToken token) { Plays++; Emit(AudioState.Opening); return Task.CompletedTask; }
+        public Task PlayAsync(ResolvedStream stream, CancellationToken token)
+        {
+            Plays++; Emit(AudioState.Opening);
+            if (FailImmediatelyAfterPlaying)
+            {
+                FailImmediatelyAfterPlaying = false;
+                Emit(AudioState.Playing); Emit(AudioState.Failed);
+            }
+            return Task.CompletedTask;
+        }
         public void Stop() { Stops++; Emit(AudioState.Stopped); }
-        public void Emit(AudioState state) => StatusChanged?.Invoke(new(state, "Fixture status"));
+        public void Emit(AudioState state)
+        {
+            if (state == AudioState.Playing) _clock.Start();
+            else if (state is AudioState.Stopped or AudioState.Opening) _clock.Reset();
+            else _clock.Stop();
+            StatusChanged?.Invoke(new(state, "Fixture status"));
+        }
         public void Dispose() { Disposed = true; Stop(); }
     }
     private sealed class FixtureMetadata : IStationMetadataProvider
