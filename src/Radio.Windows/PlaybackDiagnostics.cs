@@ -44,7 +44,8 @@ internal sealed class PlaybackDiagnostics : IDisposable
 
     internal void Resolved(string stationId, ResolvedStream stream) => Write("stream-resolved", new
     {
-        station = Clip(stationId), url = Clip(stream.Uri.OriginalString),
+        station = Clip(stationId), url = stream.Referrer.Host.Equals("www.twitch.tv", StringComparison.OrdinalIgnoreCase)
+            ? stream.Uri.GetLeftPart(UriPartial.Authority) + "/[redacted-twitch-stream]" : Clip(stream.Uri.OriginalString),
         referrer = Clip(stream.Referrer.OriginalString), mediaType = Clip(stream.MediaType), isHls = stream.IsHls
     });
 

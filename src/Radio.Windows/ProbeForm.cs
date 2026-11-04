@@ -60,7 +60,7 @@ internal sealed class ProbeForm(string[] args) : Form
                 {
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
                     var stream = args.Contains("--fallback")
-                        ? await resolver.ResolveFallbackAsync(station, timeout.Token)
+                        ? await resolver.ResolveFallbackAsync(station, timeout.Token, int.Parse(Option(args, "--fallback-index", "0")))
                             ?? throw new SourceResolutionException("此電台沒有備援來源。")
                         : await resolver.ResolveAsync(station, timeout.Token);
                     host = stream.Uri.Host; // Never store signed query parameters.
@@ -100,6 +100,8 @@ internal sealed class ProbeForm(string[] args) : Form
                 results.Add(new
                 {
                     station.Id, station.Name, host, passed = error is null, error,
+                    source = args.Contains("--fallback") ? "backup" : "primary",
+                    backupIndex = args.Contains("--fallback") ? int.Parse(Option(args, "--fallback-index", "0")) : (int?)null,
                     startupSeconds = Math.Round(startup.Elapsed.TotalSeconds, 2),
                     playbackClockAdvanceSeconds = Math.Round(positionAdvance, 2), media, metrics, stopped,
                     childrenStopped, events = snapshots

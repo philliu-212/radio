@@ -35,10 +35,10 @@ internal static class KissPlaybackChecks
         public int BackupCalls { get; private set; }
         public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token) => forcePrimaryFailure
             ? throw new SourceResolutionException("Simulated primary failure") : _inner.ResolveAsync(station, token);
-        public Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken token)
+        public Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken token, int index = 0)
         {
             BackupCalls++;
-            return _inner.ResolveFallbackAsync(station, token);
+            return _inner.ResolveFallbackAsync(station, token, index);
         }
     }
 }

@@ -3,6 +3,7 @@ using Radio.Core;
 
 internal static class TwitchChecks
 {
+    private static readonly Uri Page = new("https://www.twitch.tv/livekiss");
     private const string Token = """{"data":{"streamPlaybackAccessToken":{"signature":"fixture-signature","value":"{\"fixture\":true}"}}}""";
     private const string Playlist = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=700000,VIDEO=\"chunked\"\nhttps://video.example/video.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=160000,CODECS=\"mp4a.40.2\",VIDEO=\"audio_only\"\nhttps://fixture.hls.ttvnw.net/audio/index.m3u8?token=fixture\n";
 
@@ -27,17 +28,19 @@ internal static class TwitchChecks
             stream.Referrer.AbsoluteUri == "https://www.twitch.tv/livekiss" && !stream.ToString().Contains("token="), "Audio-only backup without leaking token");
         await resolver.ResolveFallbackAsync(kiss, default);
         Check(calls == 4, "Each backup attempt resolves fresh credentials");
-        Check(await resolver.ResolveFallbackAsync(kiss with { Id = "best-989" }, default) is null && calls == 4, "Other stations never use livekiss");
+        Check(await resolver.ResolveFallbackAsync(StationCatalog.Load().Single(station => station.Id == "best-989"), default) is null && calls == 4, "Unconfigured stations never use livekiss");
 
         foreach (var body in new[] { "{}", "null", "{", """{"errors":[{"message":"denied"}]}""", """{"data":{"streamPlaybackAccessToken":null}}""" })
             await Fails(async () => await new OfficialStreamResolver(() => new Handler(_ => Response(body))).ResolveFallbackAsync(kiss, default));
         foreach (var code in new[] { HttpStatusCode.Forbidden, HttpStatusCode.NotFound, HttpStatusCode.TooManyRequests })
             await Fails(async () => await new OfficialStreamResolver(() => new Handler(_ => new HttpResponseMessage(code))).ResolveFallbackAsync(kiss, default));
         foreach (var url in new[] { "https://evil.example/audio.m3u8", "http://fixture.ttvnw.net/audio.m3u8", "https://ttvnw.net.evil.example/audio.m3u8", "https://user@fixture.ttvnw.net/audio.m3u8", "https://fixture.ttvnw.net:444/audio.m3u8", "https://fixture.ttvnw.net/error.html" })
-            await Fails(() => Task.FromResult<ResolvedStream?>(TwitchStreamResolver.ParseAudioPlaylist(Playlist.Replace("https://fixture.hls.ttvnw.net/audio/index.m3u8?token=fixture", url))));
+            await Fails(() => Task.FromResult<ResolvedStream?>(TwitchStreamResolver.ParseAudioPlaylist(Playlist.Replace("https://fixture.hls.ttvnw.net/audio/index.m3u8?token=fixture", url), Page)));
         foreach (var body in new[] { "<html>error</html>", "#EXTM3U\n", Playlist.Replace("VIDEO=\"audio_only\"", "VIDEO=\"chunked\"") })
-            await Fails(() => Task.FromResult<ResolvedStream?>(TwitchStreamResolver.ParseAudioPlaylist(body)));
-        Check(TwitchStreamResolver.ParseAudioPlaylist(Playlist.Replace("fixture.hls.ttvnw.net", "fixture.hls.live-video.net")).IsHls, "Twitch alternate CDN accepted");
+            await Fails(() => Task.FromResult<ResolvedStream?>(TwitchStreamResolver.ParseAudioPlaylist(body, Page)));
+        Check(TwitchStreamResolver.ParseAudioPlaylist(Playlist.Replace("fixture.hls.ttvnw.net", "fixture.hls.live-video.net"), Page).IsHls, "Twitch alternate CDN accepted");
+        foreach (var url in new[] { "http://www.twitch.tv/livekiss", "https://evil.example/livekiss", "https://www.twitch.tv/livekiss?token=bad", "https://www.twitch.tv/a/b", "https://user@www.twitch.tv/livekiss" })
+            await Fails(async () => await resolver.ResolveFallbackAsync(kiss with { BackupSources = [kiss.BackupSources![0] with { PageUrl = new Uri(url) }] }, default));
         using var canceled = new CancellationTokenSource(); canceled.Cancel();
         try { await resolver.ResolveFallbackAsync(kiss, canceled.Token); throw new Exception("Ignored cancellation"); }
         catch (OperationCanceledException) { Check(calls == 4, "Canceled fallback makes no request"); }

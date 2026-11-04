@@ -7,21 +7,24 @@ namespace Radio.Core;
 // Anonymous playback only. No account credentials, persisted tokens or access-control workarounds.
 internal static class TwitchStreamResolver
 {
-    private static readonly Uri Page = new("https://www.twitch.tv/livekiss");
-
-    internal static async Task<ResolvedStream> ResolveAsync(HttpClient client, CancellationToken cancellationToken)
+    internal static async Task<ResolvedStream> ResolveAsync(HttpClient client, Uri page, CancellationToken cancellationToken)
     {
+        if (!page.IsAbsoluteUri || page.Scheme != "https" || page.Host != "www.twitch.tv" ||
+            !page.IsDefaultPort || !string.IsNullOrEmpty(page.UserInfo) || page.Query.Length != 0 || page.Fragment.Length != 0 ||
+            !Regex.IsMatch(page.AbsolutePath, "^/[a-z0-9_]{1,25}$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+            throw new SourceResolutionException("Twitch 備援頻道網址格式不正確。");
+        var channel = page.AbsolutePath[1..];
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql");
             // Public Twitch web-player client identifier; not an account secret.
             request.Headers.Add("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko");
-            request.Headers.Referrer = Page;
+            request.Headers.Referrer = page;
             request.Content = JsonContent.Create(new
             {
                 operationName = "PlaybackAccessToken_Template",
                 query = "query PlaybackAccessToken_Template($login: String!) { streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
-                variables = new { login = "livekiss" }
+                variables = new { login = channel }
             });
             using var response = await client.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
@@ -35,10 +38,10 @@ internal static class TwitchStreamResolver
                 string.IsNullOrWhiteSpace(signature.GetString()) || string.IsNullOrWhiteSpace(value.GetString()))
                 throw new SourceResolutionException("Twitch 備援未提供公開播放授權，請使用官方播放器。");
 
-            var manifest = "https://usher.ttvnw.net/api/channel/hls/livekiss.m3u8?allow_audio_only=true&allow_source=true&sig=" +
+            var manifest = $"https://usher.ttvnw.net/api/channel/hls/{channel}.m3u8?allow_audio_only=true&allow_source=true&sig=" +
                 Uri.EscapeDataString(signature.GetString()!) + "&token=" + Uri.EscapeDataString(value.GetString()!);
             var playlist = await client.GetStringAsync(manifest, cancellationToken);
-            return ParseAudioPlaylist(playlist);
+            return ParseAudioPlaylist(playlist, page);
         }
         catch (HttpRequestException error)
         {
@@ -56,7 +59,7 @@ internal static class TwitchStreamResolver
         }
     }
 
-    internal static ResolvedStream ParseAudioPlaylist(string playlist)
+    internal static ResolvedStream ParseAudioPlaylist(string playlist, Uri page)
     {
         var lines = playlist.TrimStart('\uFEFF').Split('\n').Select(line => line.Trim()).ToArray();
         if (lines.FirstOrDefault() == "#EXTM3U")
@@ -69,7 +72,7 @@ internal static class TwitchStreamResolver
                     (uri.Host.EndsWith(".ttvnw.net", StringComparison.OrdinalIgnoreCase) ||
                      uri.Host.EndsWith(".live-video.net", StringComparison.OrdinalIgnoreCase)) &&
                     uri.AbsolutePath.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
-                    return new ResolvedStream(uri, Page, "application/vnd.apple.mpegurl");
+                    return new ResolvedStream(uri, page, "application/vnd.apple.mpegurl");
                 break;
             }
         throw new SourceResolutionException("Twitch 備援未提供預期的純音訊直播，可能離線或格式已變更。");

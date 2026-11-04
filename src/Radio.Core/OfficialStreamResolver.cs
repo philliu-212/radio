@@ -8,17 +8,18 @@ public sealed class SourceResolutionException(string message) : Exception(messag
 
 public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFactory = null) : IStreamResolver
 {
-    public async Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken cancellationToken)
+    public async Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken cancellationToken, int index = 0)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (station.Id != "kiss-999") return null;
-        using var client = new HttpClient(handlerFactory?.Invoke() ?? new HttpClientHandler
+        if (index < 0 || index >= station.BackupCount) return null;
+        var source = station.BackupSources![index];
+        if (source.Resolver is not (ResolverKind.Direct or ResolverKind.Twitch))
+            throw new SourceResolutionException("不支援的備援來源解析方式。");
+        return await ResolveAsync(station with
         {
-            AutomaticDecompression = DecompressionMethods.All
-        });
-        client.Timeout = TimeSpan.FromSeconds(20);
-        client.MaxResponseContentBufferSize = 2 * 1024 * 1024;
-        return await TwitchStreamResolver.ResolveAsync(client, cancellationToken);
+            PageUrl = source.PageUrl, Resolver = source.Resolver, StreamHost = source.StreamHost,
+            MediaType = source.MediaType, EndpointUrl = source.EndpointUrl, Match = null
+        }, cancellationToken);
     }
 
     public async Task<ResolvedStream> ResolveAsync(Station station, CancellationToken cancellationToken)
@@ -39,6 +40,8 @@ public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFact
             string url;
             switch (station.Resolver)
             {
+                case ResolverKind.Twitch:
+                    return await TwitchStreamResolver.ResolveAsync(client, station.PageUrl, cancellationToken);
                 case ResolverKind.Direct:
                     url = station.EndpointUrl?.AbsoluteUri ?? "";
                     break;

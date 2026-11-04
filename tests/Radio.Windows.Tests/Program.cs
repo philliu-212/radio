@@ -61,15 +61,35 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
-            if (args.Contains("--kiss-backup"))
+            if (args.Contains("--kiss-backup") || args.Contains("--backups"))
             {
                 await UiChecks.CheckKissBackupAsync();
+                await UiChecks.CheckGeneralBackupsAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--stability"))
+            {
+                PlaybackStabilityChecks.Run();
+                await UiChecks.CheckPlaybackStabilityAsync();
                 ResultExitCode = 0;
                 return;
             }
             if (args.Contains("--kiss-live"))
             {
                 await KissPlaybackChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--backups-live"))
+            {
+                await BackupPlaybackChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--stability-live"))
+            {
+                await StabilityLiveChecks.RunAsync();
                 ResultExitCode = 0;
                 return;
             }
