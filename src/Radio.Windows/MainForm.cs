@@ -9,6 +9,7 @@ internal sealed class MainForm : Form
 {
     private readonly IStreamResolver _resolver;
     private readonly IAudioPlayer _player;
+    private readonly PlaybackDiagnostics? _diagnostics;
     private readonly IStationMetadataProvider _metadataProvider;
     private readonly StationListBox _stations = new() { Name = "StationList", AccessibleName = "電台清單", Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly StationSearchBox _search = new() { Name = "StationSearch", Dock = DockStyle.Fill, Margin = Padding.Empty };
@@ -89,9 +90,10 @@ internal sealed class MainForm : Form
 
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
-        bool autoPlayOnStartup = true, bool checkUpdates = true)
+        bool autoPlayOnStartup = true, bool checkUpdates = true, PlaybackDiagnostics? diagnostics = null)
     {
         _player = player;
+        _diagnostics = diagnostics;
         _resolver = resolver ?? new OfficialStreamResolver();
         _metadataProvider = metadataProvider ?? new OfficialMetadataProvider();
         _persistPreferences = persistPreferences;
@@ -461,6 +463,7 @@ internal sealed class MainForm : Form
         if (station is null || _closing) return;
         StopPlayback();
         _hasStarted = true; _active = true; _targetStation = station; _countPending = true;
+        _diagnostics?.Request(station.Id);
         var request = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
@@ -469,16 +472,22 @@ internal sealed class MainForm : Form
         {
             var stream = await _resolver.ResolveAsync(station, request.Token);
             if (_playRequest != request || _closing) return;
+            _diagnostics?.Resolved(station.Id, stream);
             await _player.PlayAsync(stream, request.Token);
             await started.Task.WaitAsync(request.Token);
         }
         catch (OperationCanceledException) when (request.IsCancellationRequested)
         {
-            if (_playRequest == request && !_closing) FailPlayback("連線逾時，請按播放重試。");
+            if (_playRequest == request && !_closing)
+            {
+                _diagnostics?.Error(new TimeoutException());
+                FailPlayback("連線逾時，請按播放重試。");
+            }
         }
         catch (Exception error)
         {
             if (_playRequest != request || _closing) return;
+            _diagnostics?.Error(error);
             FailPlayback(error is SourceResolutionException ? error.Message : "無法播放此直播，請重試或開啟電台官網。");
         }
         finally
@@ -516,6 +525,7 @@ internal sealed class MainForm : Form
         if (status.State == AudioState.Stopped && _playRequest is not null && _active) return;
         if (status.State is AudioState.Playing or AudioState.Buffering && !_active) return;
         _latestStatus = status;
+        _diagnostics?.Status(status, _targetStation?.Id);
         if (status.State == AudioState.Playing)
         {
             _playingStation = _targetStation;

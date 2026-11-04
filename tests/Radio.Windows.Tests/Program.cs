@@ -11,6 +11,11 @@ internal static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (args.Contains("--diagnostics"))
+        {
+            PlaybackDiagnosticsChecks.Run();
+            return;
+        }
         if (args.Length == 2 && args[0] == "--instance-client")
         {
             using var instance = new SingleInstance(args[1]);
