@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `best-989` | `http://www.bestradio.com.tw/` | 擷取 989 的 `RA000013` HLS，保留官方生成的 query string |
 | `kiss-999` | `https://www.kiss.com.tw/radio_hq.php?radio_id=156` 內嵌 `/test/hichannel2.php?api=1` | 從官方嵌入頁擷取 `RA000040` HLS |
+| `kiss-999` 備援 | `https://www.twitch.tv/livekiss` | 匿名取得 Twitch 播放授權及 usher HLS 清單，僅選 `audio_only`，不載入 Twitch 網頁或保存短效 token |
 | `pop-917` | `https://www.pop917.com/liveStream.aspx?id=1` | 初始化頁面 session，再 POST `https://www.pop917.com/ajax.aspx`，表單為 `channelID=1&action=getLIVEURL` |
 | `ufo-921` | `https://www.uforadio.com.tw/` 公開 `<source>` | 保存經核對的固定 Revma 公開入口 `https://stream.rcs.revma.com/em90w4aeewzuv`，不在每次收聽前下載整個首頁 |
 | `bcc-ilike` | `https://www.bcc.com.tw/onAir.asp?nid=2` 使用的官方 API | GET `https://www.bcc.com.tw/webapi/BCCRadioWebAPI/ChannelInfoBat`，依名稱「中廣流行網」選取 `iosStream`，不依陣列序號選台 |
@@ -20,11 +21,27 @@
 - 好事官網目前由 HTTP 入口提供來源；HTTPS 在此次調查逾時。音訊串流本身仍要求 HTTPS。未來手機端若使用同一 HTTP 入口，需另評估平台安全政策；不預先關閉整個 App 的傳輸安全限制。
 - POP、Hit FM 官方頁面提示最長播放約六小時。原型不宣稱能連續播放超過此限制；來源失效後需使用者手動重新播放。
 - KISS 的官方頁面請求曾出現 403，另一次請求可正常取得；網路可達性不代表所有裝置／時間都能播放。拒絕回應時應正常報錯。
+- KISS 開播優先使用 HiNet；解析、引擎開播失敗或單次開播超過 30 秒時，只嘗試一次 Twitch 備援。整體上限 70 秒，停止／切台會取消，不無限重試；播放成功後的中途斷線不自動換來源，再按播放會重新由 HiNet 開始。其他電台不使用此備援。
+- Twitch 僅使用公開匿名播放流程，接受 `*.ttvnw.net`／`*.live-video.net` 的 HTTPS 純音訊 HLS。離線、拒絕、需要登入、限流、缺少音軌或格式改變都正常報錯，不繞過限制、不移除廣告。公開 web client ID／未版本化 API 可能變更，無可用純音訊時不退回含影片音軌。
+- #94 線上驗證：本機 .NET 一般開播實際切換至 Twitch；另以模擬主來源失敗驗證相同 UI 路徑，兩次 Windows 系統音訊均靜音觀察 20 秒，播放時鐘各前進約 20.1 秒。這不是人工聽音、長時間穩定性或所有網路環境的驗收。
+
 - 靜態頁面正規表示式及官方 API 均可能變動；應維護小型、可離線測試的解析器，而不是啟動瀏覽器抓整站。
 - Windows 使用系統 HLS 引擎。`DesiredSeekableWindowSize` 是向系統提出的請求，不是整個程序記憶體的硬上限，也不代表所有來源都會遵守。
 - 現行 `SystemAudioPlayer` 對 Hit FM 採 Windows MediaPlayer 相容路徑，其餘採 Media Engine `AUDIOONLY` 模式；不再提供 mpv。KISS 的來源可包含影像，不能把舊相容路徑的成本當成現行預設結果；傳輸是否只有音訊仍需另外量測，不從「畫面沒有影像」推論。
 - Media Engine 的 `WAITING` 表示缺少下一段音訊而停播，不是一般背景收資料。某些 MP3 直播恢復時不會再次送出 `PLAYING`；僅在等待恢復期間處理原生 `TIMEUPDATE`，以播放時鐘確實前進且已有後續資料、未暫停／跳轉／結束為依據恢復「播放中」。單純 ready-state／來源預抓事件不代表已恢復；不新增輪詢 timer、重連或常駐 UI 時鐘。離線原生 WAV 測試與線上串流驗證分開記錄。
 - RFI 不增加額外開播等待。3 秒預載在同資料對照未減少時鐘停頓，20 秒等待不符合使用者需求，原生 buffering-time 屬性也曾出現反例，這些候選均未保留。停頓仍由 [#43](https://github.com/philliu-212/radio/issues/43) 追蹤；狀態修正不代表音訊停頓已解決。
+
+### KISS 備援驗證
+
+後兩個指令會連線；`--kiss-live` 靜音、不寫使用者設定：
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --kiss-backup
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --kiss-live
+dotnet run --project src/Radio.Windows -c Release -- --probe --station kiss-999 --fallback --seconds 20 --output artifacts/kiss-fallback-probe.json
+```
+
+`--kiss-backup` 是離線 UI fixture；`--kiss-live` 包含實際主來源解析，以及模擬主來源故障後的真實 Twitch 播放；`--probe --fallback` 僅獨立量測備援，不驗證自動切換。診斷不輸出完整播放網址或 token，產物不提交。
 
 ## Metadata 維護摘要
 

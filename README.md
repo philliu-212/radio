@@ -18,7 +18,7 @@
 | 飛碟電台 | 92.1 | Revma |
 | 中廣流行網 i like radio | 96.3 | Revma |
 | 好事989 | 98.9 | 動態 HLS |
-| KISS Radio | 99.9 | 動態 HLS |
+| KISS Radio | 99.9 | 動態 HLS；開播失敗自動嘗試 Twitch 純音訊備援 |
 | Hit FM 北部 | 107.7 | 動態 HLS |
 | RFI Monde | FR | MP3 64 kbps |
 | esRadio | ES | MP3 128 kbps |

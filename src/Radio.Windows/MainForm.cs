@@ -464,17 +464,39 @@ internal sealed class MainForm : Form
         StopPlayback();
         _hasStarted = true; _active = true; _targetStation = station; _countPending = true;
         _diagnostics?.Request(station.Id);
-        var request = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        var request = new CancellationTokenSource(TimeSpan.FromSeconds(station.Id == "kiss-999" ? 70 : 40));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
         UpdateStatus(new PlaybackStatus(AudioState.Opening, "正在取得官方直播來源…"));
         try
         {
-            var stream = await _resolver.ResolveAsync(station, request.Token);
-            if (_playRequest != request || _closing) return;
-            _diagnostics?.Resolved(station.Id, stream);
-            await _player.PlayAsync(stream, request.Token);
-            await started.Task.WaitAsync(request.Token);
+            Exception? primaryError = null;
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var opening = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
+                opening.CancelAfter(TimeSpan.FromSeconds(station.Id == "kiss-999" ? 30 : 40));
+                try
+                {
+                    var stream = attempt == 0
+                        ? await _resolver.ResolveAsync(station, opening.Token)
+                        : await _resolver.ResolveFallbackAsync(station, opening.Token);
+                    if (_playRequest != request || _closing) return;
+                    if (stream is null) throw primaryError!;
+                    _diagnostics?.Resolved(station.Id, stream);
+                    await _player.PlayAsync(stream, opening.Token);
+                    await started.Task.WaitAsync(opening.Token);
+                    break;
+                }
+                catch (Exception error) when (attempt == 0 && station.Id == "kiss-999" &&
+                    !request.IsCancellationRequested && _playRequest == request && !_closing)
+                {
+                    primaryError = error;
+                    _player.Stop();
+                    started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _started = started;
+                    UpdateStatus(new PlaybackStatus(AudioState.Opening, "主來源無法開播，正在取得 Twitch 備援…"));
+                }
+            }
         }
         catch (OperationCanceledException) when (request.IsCancellationRequested)
         {
@@ -523,6 +545,13 @@ internal sealed class MainForm : Form
         }
         // Adapters emit Stopped while replacing their internal source; that is not user Stop.
         if (status.State == AudioState.Stopped && _playRequest is not null && _active) return;
+        // Opening failures are handled by the bounded source-attempt loop. Keep the pending
+        // success count intact until the backup plays or the entire request fails.
+        if (status.State == AudioState.Failed && _playRequest is not null && _countPending && _targetStation?.Id == "kiss-999")
+        {
+            _started?.TrySetException(new SourceResolutionException("無法開播此直播來源。"));
+            return;
+        }
         if (status.State is AudioState.Playing or AudioState.Buffering && !_active) return;
         _latestStatus = status;
         _diagnostics?.Status(status, _targetStation?.Id);

@@ -59,7 +59,10 @@ internal sealed class ProbeForm(string[] args) : Form
                 try
                 {
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
-                    var stream = await resolver.ResolveAsync(station, timeout.Token);
+                    var stream = args.Contains("--fallback")
+                        ? await resolver.ResolveFallbackAsync(station, timeout.Token)
+                            ?? throw new SourceResolutionException("此電台沒有備援來源。")
+                        : await resolver.ResolveAsync(station, timeout.Token);
                     host = stream.Uri.Host; // Never store signed query parameters.
                     await player.PlayAsync(stream, timeout.Token);
                     var state = await ready.Task.WaitAsync(timeout.Token);

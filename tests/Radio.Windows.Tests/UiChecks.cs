@@ -342,6 +342,7 @@ internal static class UiChecks
         await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
         await CheckStartupAutoplayAsync();
+        await CheckKissBackupAsync();
         await CheckCardVolumeAndTipsAsync();
         await CheckWindowActivationAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
@@ -1165,6 +1166,52 @@ internal static class UiChecks
         }
     }
 
+    internal static async Task CheckKissBackupAsync()
+    {
+        foreach (var resolutionFailure in new[] { false, true })
+        {
+            var settings = CatalogSettings();
+            var player = new FixturePlayer();
+            var resolver = new FixtureResolver { Fail = resolutionFailure, Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings, autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync("kiss-999");
+            if (!resolutionFailure) player.Emit(AudioState.Failed);
+            await Task.Delay(30);
+            Check(resolver.Calls == 1 && resolver.BackupCalls == 1 && player.Plays == (resolutionFailure ? 1 : 2),
+                "KISS resolution/startup failure switches to backup exactly once");
+            Check(!settings.PlayCounts.ContainsKey("kiss-999"), "Failed primary does not count as listening");
+            player.Emit(AudioState.Playing); await task;
+            Check(form.PlayingStationId == "kiss-999" && settings.PlayCounts["kiss-999"] == 1,
+                "Backup success counts once under the original KISS station");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Playing); await task;
+            Check(resolver.BackupCalls == 0, "Healthy primary never requests Twitch");
+            task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Failed); await Task.Delay(30);
+            player.Emit(AudioState.Failed); await task;
+            Check(form.LatestStatus.State == AudioState.Failed && resolver.BackupCalls == 1,
+                "Failed backup stops without a retry loop");
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Backup = true, BackupPending = new() };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
+            form.Show();
+            var task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Failed); await Task.Delay(30);
+            Find<Button>(form, "PlayButton").PerformClick();
+            resolver.BackupPending.SetResult(new ResolvedStream(new Uri("https://example.invalid/backup"), new Uri("https://www.twitch.tv/livekiss"), "audio/aac"));
+            await task;
+            Check(player.Plays == 1 && form.LatestStatus.State == AudioState.Stopped,
+                "Stop during backup resolution prevents late playback");
+            form.ExitPlayer();
+        }
+    }
+
     private static async Task CheckCardVolumeAndTipsAsync()
     {
         var settings = CatalogSettings(); settings.Volume = 40;
@@ -1299,6 +1346,15 @@ internal static class UiChecks
     {
         public TaskCompletionSource<ResolvedStream>? Pending { get; set; }
         public bool Fail { get; set; }
+        public bool Backup { get; set; }
+        public int BackupCalls { get; private set; }
+        public TaskCompletionSource<ResolvedStream>? BackupPending { get; set; }
+        public async Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken token)
+        {
+            BackupCalls++;
+            if (BackupPending is not null) return await BackupPending.Task;
+            return Backup ? new ResolvedStream(new Uri("https://example.invalid/backup"), new Uri("https://www.twitch.tv/livekiss"), "audio/aac") : null;
+        }
         public int Calls { get; private set; }
         public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token)
         {

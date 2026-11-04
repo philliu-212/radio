@@ -61,6 +61,18 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
+            if (args.Contains("--kiss-backup"))
+            {
+                await UiChecks.CheckKissBackupAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--kiss-live"))
+            {
+                await KissPlaybackChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--esradio"))
             {
                 await EsRadioPlaybackChecks.RunAsync();

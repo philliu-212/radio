@@ -8,6 +8,19 @@ public sealed class SourceResolutionException(string message) : Exception(messag
 
 public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFactory = null) : IStreamResolver
 {
+    public async Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (station.Id != "kiss-999") return null;
+        using var client = new HttpClient(handlerFactory?.Invoke() ?? new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.All
+        });
+        client.Timeout = TimeSpan.FromSeconds(20);
+        client.MaxResponseContentBufferSize = 2 * 1024 * 1024;
+        return await TwitchStreamResolver.ResolveAsync(client, cancellationToken);
+    }
+
     public async Task<ResolvedStream> ResolveAsync(Station station, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -16,4 +16,7 @@ public interface IAudioPlayer : IDisposable
 public interface IStreamResolver
 {
     Task<ResolvedStream> ResolveAsync(Station station, CancellationToken cancellationToken);
+    // A single optional backup, freshly resolved after primary resolution/startup fails.
+    Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken cancellationToken) =>
+        Task.FromResult<ResolvedStream?>(null);
 }

@@ -103,6 +103,7 @@ try
 catch (OperationCanceledException) { Console.WriteLine("PASS: Cancellation"); }
 await MetadataChecks.RunAsync();
 await EsRadioChecks.RunAsync();
+await TwitchChecks.RunAsync();
 Console.WriteLine("All offline checks passed.");
 
 static void Check(bool condition, string name)
