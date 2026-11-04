@@ -27,8 +27,9 @@
       <KnownAppHostPack Update="@(KnownAppHostPack)"
                         Condition="'%(KnownAppHostPack.Identity)' == 'Microsoft.NETCore.App' And '%(KnownAppHostPack.TargetFramework)' == 'net8.0'"
                         AppHostPackVersion="$(PortableRuntimeVersion)" />
+      <!-- The unprofiled Desktop reference determines the shared runtime pack version. -->
       <KnownFrameworkReference Update="@(KnownFrameworkReference)"
-          Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net8.0' And ('%(KnownFrameworkReference.Identity)' == 'Microsoft.NETCore.App' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WPF')"
+          Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net8.0' And ('%(KnownFrameworkReference.Identity)' == 'Microsoft.NETCore.App' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms' Or '%(KnownFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WPF')"
           DefaultRuntimeFrameworkVersion="$(PortableRuntimeVersion)" LatestRuntimeFrameworkVersion="$(PortableRuntimeVersion)" />
       <KnownRuntimePack Update="@(KnownRuntimePack)"
           Condition="'%(KnownRuntimePack.TargetFramework)' == 'net8.0' And '%(KnownRuntimePack.Identity)' == 'Microsoft.WindowsDesktop.App'"
