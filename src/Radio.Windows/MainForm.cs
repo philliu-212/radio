@@ -66,7 +66,10 @@ internal sealed class MainForm : Form
     private bool _openingSourceFailed;
     private TimeSpan? _reconnectAt;
     private int _reconnectStep;
-    private bool _budgetRestored;
+    private bool _backoffRestored;
+    private bool _renewSourceRound;
+    private readonly PlaybackSourcePreference _sourcePreference = new();
+    private int[] _sourceOrder = [];
     internal bool ReconnectPending => _reconnectAt is not null;
     private readonly HashSet<string> _attemptedStreams = new(StringComparer.Ordinal);
     internal bool PlaybackWatchRunning => _sourceWatch.Enabled;
@@ -480,35 +483,43 @@ internal sealed class MainForm : Form
         StopPlayback();
         _hasStarted = true; _active = true; _targetStation = station; _countPending = true;
         _diagnostics?.Request(station.Id);
-        _nextSourceAttempt = 0;
-        _attemptedStreams.Clear();
+        _sourcePreference.Reset(station.BackupCount + 1);
+        BeginSourceRound();
         await OpenNextSourceAsync(station);
+    }
+
+    private void BeginSourceRound()
+    {
+        _sourceOrder = _sourcePreference.Order();
+        _nextSourceAttempt = 0; _attemptedStreams.Clear();
     }
 
     private async Task OpenNextSourceAsync(Station station, bool stopCurrentSource = false)
     {
         _sourceWatch.Stop();
-        _budgetRestored = false;
+        _backoffRestored = false; _renewSourceRound = false;
         var request = new CancellationTokenSource(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 * (station.BackupCount + 1 - _nextSourceAttempt) + 10 : 40));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
         if (stopCurrentSource) _player.Stop();
         UpdateStatus(new PlaybackStatus(AudioState.Opening, _nextSourceAttempt == 0
-            ? "正在取得官方直播來源…" : $"直播不穩，正在取得備援 {_nextSourceAttempt}/{station.BackupCount}…"));
+            ? "正在取得直播來源…" : "直播不穩，正在切換來源…"));
         try
         {
             Exception? lastError = null;
             for (var attempt = _nextSourceAttempt; attempt <= station.BackupCount; attempt++)
             {
                 _nextSourceAttempt = attempt + 1;
+                var sourceIndex = _sourceOrder[attempt];
+                _sourcePreference.BeginAttempt(sourceIndex);
                 _openingSourceFailed = false;
                 using var opening = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
                 opening.CancelAfter(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 : 40));
                 try
                 {
-                    var stream = attempt == 0
+                    var stream = sourceIndex == 0
                         ? await _resolver.ResolveAsync(station, opening.Token)
-                        : await _resolver.ResolveFallbackAsync(station, opening.Token, attempt - 1);
+                        : await _resolver.ResolveFallbackAsync(station, opening.Token, sourceIndex - 1);
                     if (_playRequest != request || _closing) return;
                     if (stream is null) throw lastError ?? new SourceResolutionException("目前沒有可用的備援來源。");
                     if (!_attemptedStreams.Add(stream.Uri.AbsoluteUri))
@@ -528,10 +539,11 @@ internal sealed class MainForm : Form
                     !request.IsCancellationRequested && _playRequest == request && !_closing)
                 {
                     lastError = error;
+                    _sourcePreference.EndAttempt();
                     _player.Stop();
                     started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     _started = started;
-                    UpdateStatus(new PlaybackStatus(AudioState.Opening, $"來源無法開播，正在取得備援 {attempt + 1}/{station.BackupCount}…"));
+                    UpdateStatus(new PlaybackStatus(AudioState.Opening, "來源無法開播，正在切換來源…"));
                 }
             }
         }
@@ -558,6 +570,7 @@ internal sealed class MainForm : Form
 
     private void ScheduleReconnect(string message)
     {
+        _sourcePreference.EndAttempt();
         _sourceWatch.Stop();
         _playingStation = null; CancelMetadata();
         _player.Stop();
@@ -588,15 +601,20 @@ internal sealed class MainForm : Form
         {
             if (now < reconnectAt) return;
             _reconnectAt = null;
-            _nextSourceAttempt = 0; _attemptedStreams.Clear();
+            BeginSourceRound();
             QueueSourceSwitch();
             return;
         }
         if (_stability.Observe(now, _player.Position.TotalSeconds)) QueueSourceSwitch();
-        else if (!_budgetRestored && _stability.StableFor >= TimeSpan.FromMinutes(2))
+        else
         {
-            _budgetRestored = true;
-            _nextSourceAttempt = 0; _attemptedStreams.Clear(); _reconnectStep = 0;
+            _sourcePreference.Observe(_stability.StableFor);
+            if (!_backoffRestored && _stability.StableFor >= TimeSpan.FromMinutes(2))
+            {
+                _backoffRestored = true; _reconnectStep = 0;
+            }
+            // Three-minute disconnects must advance to another source, not renew the same one.
+            if (_stability.StableFor >= TimeSpan.FromMinutes(10)) _renewSourceRound = true;
         }
     }
 
@@ -609,6 +627,8 @@ internal sealed class MainForm : Form
         {
             if (_closing || generation != _playbackGeneration || !_active || _targetStation is not { } station) return;
             _sourceSwitchQueued = false;
+            _sourcePreference.EndAttempt();
+            if (_renewSourceRound) { _renewSourceRound = false; BeginSourceRound(); }
             if (_nextSourceAttempt > station.BackupCount)
             {
                 ScheduleReconnect(station.BackupCount == 0

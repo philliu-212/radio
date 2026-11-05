@@ -6,11 +6,21 @@ internal static class PlaybackStabilityChecks
 {
     internal static void Run()
     {
+        var preference = new PlaybackSourcePreference();
+        preference.Reset(3);
+        Check(preference.Order().SequenceEqual([0, 1, 2]), "Unknown stability preserves configured order");
+        preference.BeginAttempt(0); preference.Observe(TimeSpan.FromMinutes(3)); preference.EndAttempt();
+        preference.BeginAttempt(1); preference.Observe(TimeSpan.FromHours(1)); preference.EndAttempt();
+        Check(preference.Order().SequenceEqual([1, 0, 2]), "One-hour source outranks three-minute source regardless of bitrate");
+        preference.BeginAttempt(1); preference.EndAttempt();
+        Check(preference.Order().SequenceEqual([0, 1, 2]), "New failure replaces obsolete healthy-source evidence");
+        preference.Reset(3);
+        Check(preference.Order().SequenceEqual([0, 1, 2]), "New manual session clears nonpersistent source evidence");
         var policy = new PlaybackStability();
         policy.Reset(TimeSpan.Zero, 0);
         for (var second = 1; second <= 120; second++)
             Check(!policy.Observe(TimeSpan.FromSeconds(second), second), "Advancing playback remains healthy");
-        Check(policy.StableFor >= TimeSpan.FromMinutes(2), "Two minutes of real progress restores retry budget");
+        Check(policy.StableFor >= TimeSpan.FromMinutes(2), "Two minutes of real progress earns backoff reset, not source budget renewal");
         policy.Reset(TimeSpan.Zero, 0);
         for (var second = 1; second <= 120; second++)
             Check(!policy.Observe(TimeSpan.FromSeconds(second), second / 2 * 2), "Coarse clock catch-up is not repeated playback loss");

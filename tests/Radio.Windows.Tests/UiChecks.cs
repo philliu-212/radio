@@ -1325,10 +1325,46 @@ internal static class UiChecks
                 now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
             }
             player.Emit(AudioState.Failed); await Task.Delay(30);
-            Check(resolver.Calls == 2 && player.Plays == 2 && !form.ReconnectPending,
-                "Final backup healthy for four hours restores primary attempt on ENDED");
+            Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0, 1, 1]) && player.Plays == 2 && !form.ReconnectPending,
+                "Final backup healthy for four hours retries proven source, not failed primary, on ENDED");
             player.Emit(AudioState.Playing); await Task.Delay(20);
             Check(settings.PlayCounts["esradio"] == 1 && player.IsMuted, "Long-run recovery preserves mute and never recounts");
+            form.ExitPlayer();
+        }
+        {
+            var now = TimeSpan.Zero;
+            var player = new FixturePlayer { FixedPositionSeconds = 0 };
+            var resolver = new FixtureResolver { Backup = true };
+            var settings = CatalogSettings();
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings,
+                autoPlayOnStartup: false, playbackNow: () => now);
+            form.Show(); var task = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing); await task;
+            for (var second = 1; second <= 180; second++)
+            {
+                now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
+            }
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0]),
+                "High bitrate failing after three minutes advances to low bitrate, never renews itself");
+            player.FixedPositionSeconds = 0;
+            player.Emit(AudioState.Playing); await Task.Delay(20);
+            for (var second = 1; second <= 3600; second++)
+            {
+                now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
+            }
+            Check(player.Plays == 2 && resolver.Calls == 1, "One-hour low bitrate playback is never interrupted to upgrade quality");
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0, 0]) && player.Plays == 3,
+                "After one healthy hour, low bitrate is preferred over three-minute high bitrate on reconnect");
+            player.Emit(AudioState.Playing); await Task.Delay(20);
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == 2 && player.Plays == 4,
+                "Preferred source failing immediately still falls through to other sources within bounded round");
+            player.Emit(AudioState.Playing); await Task.Delay(20);
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.BackupIndices.SequenceEqual([0, 0, 1]), "Repeated short failures advance without retrying preferred source in same round");
+            player.Emit(AudioState.Playing); await Task.Delay(20);
+            Check(settings.PlayCounts["esradio"] == 1, "Stability-first source ranking never adds listening counts");
             form.ExitPlayer();
         }
         foreach (var queued in new[] { false, true })
