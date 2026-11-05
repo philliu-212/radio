@@ -1265,6 +1265,29 @@ internal static class UiChecks
 
     private static async Task CheckReconnectAsync()
     {
+        foreach (var seconds in new[] { 120, 121, 599, 600 })
+        {
+            var now = TimeSpan.Zero; var player = new FixturePlayer { FixedPositionSeconds = 0 };
+            var resolver = new FixtureResolver { Backup = true };
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(),
+                autoPlayOnStartup: false, playbackNow: () => now);
+            form.Show(); var task = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing); await task;
+            for (var second = 1; second <= seconds; second++)
+            {
+                now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
+            }
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == (seconds == 600 ? 2 : 1) && resolver.BackupCalls == (seconds == 600 ? 0 : 1),
+                seconds + "s boundary: only ten healthy minutes qualify for same-source retry");
+            for (var failure = 0; failure < 3 && !form.ReconnectPending; failure++)
+            {
+                player.Emit(AudioState.Playing); await Task.Delay(20);
+                player.Emit(AudioState.Failed); await Task.Delay(30);
+            }
+            Check(form.ReconnectPending && player.Plays == (seconds == 120 ? 3 : 4),
+                seconds + "s boundary: budget renews only over two minutes and rapid failures remain bounded");
+            form.ExitPlayer();
+        }
         // Every failed round is bounded, but playback intent survives a long outage.
         {
             var now = TimeSpan.Zero;
@@ -1296,7 +1319,7 @@ internal static class UiChecks
                 "Brief Playing then failure does not reset maximum backoff");
             now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress(); await Task.Delay(30);
             player.Emit(AudioState.Playing); await Task.Delay(20);
-            for (var second = 1; second <= 120; second++)
+            for (var second = 1; second <= 121; second++)
             {
                 now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
             }
@@ -1307,7 +1330,7 @@ internal static class UiChecks
             Check(form.ReconnectPending && resolver.Calls == callsBefore, "Stable recovery resets backoff, not below 15 seconds");
             now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress(); await Task.Delay(30);
             Check(resolver.Calls == callsBefore + 1 && settings.PlayCounts["esradio"] == 1,
-                "Two healthy minutes restore initial 15-second backoff without recounting");
+                "Over two healthy minutes restore initial 15-second backoff without recounting");
             form.ExitPlayer();
         }
         // Reproduce the overnight path: final backup is healthy, then ENDED arrives.
@@ -1326,9 +1349,12 @@ internal static class UiChecks
             }
             player.Emit(AudioState.Failed); await Task.Delay(30);
             Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0, 1, 1]) && player.Plays == 2 && !form.ReconnectPending,
-                "Final backup healthy for four hours retries proven source, not failed primary, on ENDED");
+                "Final backup healthy for four hours gets one same-source reconnect without backoff");
             player.Emit(AudioState.Playing); await Task.Delay(20);
             Check(settings.PlayCounts["esradio"] == 1 && player.IsMuted, "Long-run recovery preserves mute and never recounts");
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == 2 && player.Plays == 3 && !form.ReconnectPending,
+                "Long-running last backup failing again immediately wraps to primary instead of retrying itself");
             form.ExitPlayer();
         }
         {
@@ -1345,7 +1371,7 @@ internal static class UiChecks
             }
             player.Emit(AudioState.Failed); await Task.Delay(30);
             Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0]),
-                "High bitrate failing after three minutes advances to low bitrate, never renews itself");
+                "Three-minute primary renews budget but advances to next source, not itself");
             player.FixedPositionSeconds = 0;
             player.Emit(AudioState.Playing); await Task.Delay(20);
             for (var second = 1; second <= 3600; second++)
@@ -1354,17 +1380,36 @@ internal static class UiChecks
             }
             Check(player.Plays == 2 && resolver.Calls == 1, "One-hour low bitrate playback is never interrupted to upgrade quality");
             player.Emit(AudioState.Failed); await Task.Delay(30);
-            Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0, 0]) && player.Plays == 3,
-                "After one healthy hour, low bitrate is preferred over three-minute high bitrate on reconnect");
+            Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0, 0]) && player.Plays == 3 && !form.ReconnectPending,
+                "One-hour backup gets a single same-source retry without ranking or backoff");
+            player.FixedPositionSeconds = 0;
+            player.Emit(AudioState.Playing); await Task.Delay(20);
+            for (var second = 1; second <= 180; second++)
+            {
+                now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
+            }
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == 1 && resolver.BackupIndices.SequenceEqual([0, 0, 1]) && player.Plays == 4,
+                "Long-running backup retry failing after three minutes advances, never retries itself again");
+            player.FixedPositionSeconds = 0;
+            player.Emit(AudioState.Playing); await Task.Delay(20);
+            for (var second = 1; second <= 121; second++)
+            {
+                now += TimeSpan.FromSeconds(1); player.FixedPositionSeconds = second; form.CheckPlaybackProgress();
+            }
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(resolver.Calls == 2 && player.Plays == 5 && !form.ReconnectPending,
+                "Last backup playing over two minutes wraps directly to primary even in a rotated round");
             player.Emit(AudioState.Playing); await Task.Delay(20);
             player.Emit(AudioState.Failed); await Task.Delay(30);
-            Check(resolver.Calls == 2 && player.Plays == 4,
-                "Preferred source failing immediately still falls through to other sources within bounded round");
+            Check(resolver.BackupIndices.SequenceEqual([0, 0, 1, 0]), "Short primary failure advances in catalog order without another reset");
             player.Emit(AudioState.Playing); await Task.Delay(20);
             player.Emit(AudioState.Failed); await Task.Delay(30);
-            Check(resolver.BackupIndices.SequenceEqual([0, 0, 1]), "Repeated short failures advance without retrying preferred source in same round");
+            Check(resolver.BackupIndices.SequenceEqual([0, 0, 1, 0, 1]), "Renewed round includes each source once in cyclic order");
             player.Emit(AudioState.Playing); await Task.Delay(20);
-            Check(settings.PlayCounts["esradio"] == 1, "Stability-first source ranking never adds listening counts");
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(form.ReconnectPending && player.Plays == 7, "Only renewed budget exhausted by short failures enters backoff");
+            Check(settings.PlayCounts["esradio"] == 1, "Cyclic source renewal never adds listening counts");
             form.ExitPlayer();
         }
         foreach (var queued in new[] { false, true })

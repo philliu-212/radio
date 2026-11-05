@@ -66,9 +66,8 @@ internal sealed class MainForm : Form
     private bool _openingSourceFailed;
     private TimeSpan? _reconnectAt;
     private int _reconnectStep;
-    private bool _backoffRestored;
     private bool _renewSourceRound;
-    private readonly PlaybackSourcePreference _sourcePreference = new();
+    private bool _retryCurrentSource;
     private int[] _sourceOrder = [];
     internal bool ReconnectPending => _reconnectAt is not null;
     private readonly HashSet<string> _attemptedStreams = new(StringComparer.Ordinal);
@@ -483,21 +482,21 @@ internal sealed class MainForm : Form
         StopPlayback();
         _hasStarted = true; _active = true; _targetStation = station; _countPending = true;
         _diagnostics?.Request(station.Id);
-        _sourcePreference.Reset(station.BackupCount + 1);
         BeginSourceRound();
         await OpenNextSourceAsync(station);
     }
 
-    private void BeginSourceRound()
+    private void BeginSourceRound(int firstSource = 0)
     {
-        _sourceOrder = _sourcePreference.Order();
+        var count = _targetStation!.BackupCount + 1;
+        _sourceOrder = Enumerable.Range(0, count).Select(offset => (firstSource + offset) % count).ToArray();
         _nextSourceAttempt = 0; _attemptedStreams.Clear();
     }
 
     private async Task OpenNextSourceAsync(Station station, bool stopCurrentSource = false)
     {
         _sourceWatch.Stop();
-        _backoffRestored = false; _renewSourceRound = false;
+        _renewSourceRound = false; _retryCurrentSource = false;
         var request = new CancellationTokenSource(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 * (station.BackupCount + 1 - _nextSourceAttempt) + 10 : 40));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
@@ -511,7 +510,6 @@ internal sealed class MainForm : Form
             {
                 _nextSourceAttempt = attempt + 1;
                 var sourceIndex = _sourceOrder[attempt];
-                _sourcePreference.BeginAttempt(sourceIndex);
                 _openingSourceFailed = false;
                 using var opening = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
                 opening.CancelAfter(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 : 40));
@@ -539,7 +537,6 @@ internal sealed class MainForm : Form
                     !request.IsCancellationRequested && _playRequest == request && !_closing)
                 {
                     lastError = error;
-                    _sourcePreference.EndAttempt();
                     _player.Stop();
                     started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     _started = started;
@@ -570,7 +567,6 @@ internal sealed class MainForm : Form
 
     private void ScheduleReconnect(string message)
     {
-        _sourcePreference.EndAttempt();
         _sourceWatch.Stop();
         _playingStation = null; CancelMetadata();
         _player.Stop();
@@ -606,15 +602,13 @@ internal sealed class MainForm : Form
             return;
         }
         if (_stability.Observe(now, _player.Position.TotalSeconds)) QueueSourceSwitch();
-        else
+        else if (_stability.StableFor > TimeSpan.FromMinutes(2))
         {
-            _sourcePreference.Observe(_stability.StableFor);
-            if (!_backoffRestored && _stability.StableFor >= TimeSpan.FromMinutes(2))
-            {
-                _backoffRestored = true; _reconnectStep = 0;
-            }
-            // Three-minute disconnects must advance to another source, not renew the same one.
-            if (_stability.StableFor >= TimeSpan.FromMinutes(10)) _renewSourceRound = true;
+            _reconnectStep = 0;
+            _renewSourceRound = true;
+            // A long-running source gets one fresh attempt before moving on. Opening it
+            // clears this privilege; a short-lived retry must advance to the next source.
+            if (_stability.StableFor >= TimeSpan.FromMinutes(10)) _retryCurrentSource = true;
         }
     }
 
@@ -627,8 +621,12 @@ internal sealed class MainForm : Form
         {
             if (_closing || generation != _playbackGeneration || !_active || _targetStation is not { } station) return;
             _sourceSwitchQueued = false;
-            _sourcePreference.EndAttempt();
-            if (_renewSourceRound) { _renewSourceRound = false; BeginSourceRound(); }
+            if (_renewSourceRound)
+            {
+                _renewSourceRound = false;
+                var first = _retryCurrentSource ? _nextSourceAttempt - 1 : _nextSourceAttempt % _sourceOrder.Length;
+                BeginSourceRound(_sourceOrder[first]);
+            }
             if (_nextSourceAttempt > station.BackupCount)
             {
                 ScheduleReconnect(station.BackupCount == 0
