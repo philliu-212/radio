@@ -96,7 +96,10 @@ internal static class PlaybackDiagnosticsChecks
             {
                 Check(form.PlayForProbeAsync("best-989").IsCompletedSuccessfully,
                     "fixture resolves and fails synchronously without network");
-                Check(form.LatestStatus.State == AudioState.Failed, "diagnostics preserve failure UI state");
+                Check(form.LatestStatus.State == AudioState.Buffering && form.ReconnectPending && form.PlaybackWatchRunning,
+                    "diagnostics preserve automatic reconnect backoff after playback failure");
+                Check(form.LatestStatus.Message.Contains("0x80004005", StringComparison.Ordinal),
+                    "reconnect status retains the underlying native error for diagnosis");
             }
             Check(File.ReadAllText(Path.Combine(integration, "playback.log")).Contains("0x80004005"),
                 "MainForm forwards underlying native error rather than generic UI label");
