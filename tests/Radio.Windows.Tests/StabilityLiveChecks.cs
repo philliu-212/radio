@@ -19,7 +19,7 @@ internal static class StabilityLiveChecks
             form.Show(); await form.PlayForProbeAsync(id);
             var watch = Stopwatch.StartNew(); var lastState = form.LatestStatus.State;
             Console.WriteLine($"LIVE {id}: initialState={lastState}");
-            while (watch.Elapsed.TotalSeconds < 120 && form.LatestStatus.State != AudioState.Failed)
+            while (watch.Elapsed.TotalSeconds < 120 && !form.ReconnectPending)
             {
                 await Task.Delay(1000);
                 if (form.LatestStatus.State != lastState)
@@ -32,11 +32,11 @@ internal static class StabilityLiveChecks
             Console.WriteLine($"LIVE {id}: observed={watch.Elapsed.TotalSeconds:F1}s, finalState={form.LatestStatus.State}, primaryCalls={resolver.PrimaryCalls}, backupIndices=[{string.Join(',', resolver.Indices)}], listeningCount={counts}, monitor={form.PlaybackWatchRunning}");
             if (resolver.PrimaryCalls != 1 || !resolver.Indices.SequenceEqual(Enumerable.Range(0, resolver.Indices.Count)) ||
                 resolver.Indices.Count > station.BackupCount || counts > 1 ||
-                (form.LatestStatus.State == AudioState.Failed && (resolver.Indices.Count != station.BackupCount || form.PlaybackWatchRunning)))
+                (form.ReconnectPending && (resolver.Indices.Count != station.BackupCount || !form.PlaybackWatchRunning)))
                 throw new Exception(id + " bounded source policy violated");
             form.ExitPlayer();
         }
-        Console.WriteLine("PASS: Real-network automatic failover is ordered/bounded and does not recount. Failed finalState means all sources exhausted, NOT stable playback acceptance.");
+        Console.WriteLine("PASS: Real-network first-round failover is ordered/bounded and does not recount. ReconnectPending means this round exhausted, NOT stable playback acceptance.");
     }
 
     private sealed class Resolver : IStreamResolver

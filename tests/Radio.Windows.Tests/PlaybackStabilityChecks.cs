@@ -10,9 +10,11 @@ internal static class PlaybackStabilityChecks
         policy.Reset(TimeSpan.Zero, 0);
         for (var second = 1; second <= 120; second++)
             Check(!policy.Observe(TimeSpan.FromSeconds(second), second), "Advancing playback remains healthy");
+        Check(policy.StableFor == TimeSpan.FromMinutes(2), "Healthy playback duration follows real progress");
         policy.Reset(TimeSpan.Zero, 0);
         for (var second = 1; second <= 120; second++)
             Check(!policy.Observe(TimeSpan.FromSeconds(second), second / 2 * 2), "Coarse clock catch-up is not repeated playback loss");
+        Check(policy.StableFor >= TimeSpan.FromMinutes(2), "Coarse progress can earn stable playback credit");
         policy.Reset(TimeSpan.Zero, 0);
         for (var second = 1; second < 8; second++)
             Check(!policy.Observe(TimeSpan.FromSeconds(second), 0), "Short buffer does not switch");
@@ -25,6 +27,7 @@ internal static class PlaybackStabilityChecks
             triggered |= policy.Observe(TimeSpan.FromSeconds(second), position);
         }
         Check(triggered, "Repeated brief stalls accumulate to twelve lost seconds in thirty seconds");
+        Check(policy.StableFor < TimeSpan.FromMinutes(2), "Repeated stalls cannot restore retry budget");
         policy.Reset(TimeSpan.Zero, 0);
         position = 0;
         for (var second = 1; second <= 120; second++)
@@ -34,6 +37,7 @@ internal static class PlaybackStabilityChecks
         }
         policy.Reset(TimeSpan.Zero, 0);
         Check(!policy.Observe(TimeSpan.FromSeconds(100), 0), "Sleep/long UI scheduling gap resets baseline, not source");
+        Check(policy.StableFor == TimeSpan.Zero, "Sleep alone cannot earn stable playback credit");
         Check(!policy.Observe(TimeSpan.FromSeconds(101), 500), "Large timeline jump resets baseline");
         Check(!policy.Observe(TimeSpan.FromSeconds(102), 1), "Backwards timeline resets baseline");
         policy.Reset(TimeSpan.Zero, double.NaN);

@@ -93,6 +93,12 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
+            if (args.Contains("--reconnect-live"))
+            {
+                await ReconnectLiveChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--esradio"))
             {
                 await EsRadioPlaybackChecks.RunAsync();

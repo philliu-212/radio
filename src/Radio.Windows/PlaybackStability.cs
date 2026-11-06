@@ -7,10 +7,13 @@ internal sealed class PlaybackStability
     private TimeSpan _lastSample;
     private TimeSpan _lastProgress;
     private double _position;
+    private TimeSpan _healthySince;
+    public TimeSpan StableFor { get; private set; }
 
     public void Reset(TimeSpan now, double position)
     {
         _samples.Clear(); _lastSample = _lastProgress = now; _position = position;
+        _healthySince = now; StableFor = TimeSpan.Zero;
     }
 
     public bool Observe(TimeSpan now, double position)
@@ -34,6 +37,8 @@ internal sealed class PlaybackStability
         var lostInWindow = _samples.Sum(sample => sample.Lost *
             (sample.End - (sample.Start > windowStart ? sample.Start : windowStart)).TotalSeconds /
             (sample.End - sample.Start).TotalSeconds);
+        if (lostInWindow >= 2 || now - _lastProgress >= TimeSpan.FromSeconds(3)) _healthySince = now;
+        StableFor = now - _healthySince;
         return now - _lastProgress >= TimeSpan.FromSeconds(8) || lostInWindow >= 12;
     }
 }
