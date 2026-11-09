@@ -537,6 +537,8 @@ internal sealed class MainForm : Form
                     !request.IsCancellationRequested && _playRequest == request && !_closing)
                 {
                     lastError = error;
+                    if (error is OperationCanceledException or TimeoutException)
+                        PreparePlayerRecovery("source-opening-timeout");
                     _player.Stop();
                     started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     _started = started;
@@ -544,10 +546,11 @@ internal sealed class MainForm : Form
                 }
             }
         }
-        catch (OperationCanceledException) when (request.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             if (_playRequest == request && !_closing)
             {
+                PreparePlayerRecovery("opening-timeout");
                 _diagnostics?.Error(new TimeoutException());
                 ScheduleReconnect("連線逾時。");
             }
@@ -577,6 +580,14 @@ internal sealed class MainForm : Form
         UpdateStatus(new PlaybackStatus(AudioState.Buffering, $"{message} 將於 {delay.TotalSeconds:0} 秒後自動重連。"));
         _sourceWatch.Start();
     }
+
+    private void PreparePlayerRecovery(string reason)
+    {
+        _diagnostics?.Snapshot(reason, _player as IPlayerDiagnostics);
+        if (_player is SystemAudioPlayer player && player.PreferCompatibilityForCurrentSource())
+            _diagnostics?.Snapshot("prefer-windows-compatibility", player);
+    }
+
     private void StopPlayback()
     {
         _sourceWatch.Stop(); _sourceSwitchQueued = false; _playbackGeneration++;
@@ -601,7 +612,11 @@ internal sealed class MainForm : Form
             QueueSourceSwitch();
             return;
         }
-        if (_stability.Observe(now, _player.Position.TotalSeconds)) QueueSourceSwitch();
+        if (_stability.Observe(now, _player.Position.TotalSeconds))
+        {
+            PreparePlayerRecovery("playback-stalled");
+            QueueSourceSwitch();
+        }
         else if (_stability.StableFor > TimeSpan.FromMinutes(2))
         {
             _reconnectStep = 0;

@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        await HlsRecoveryChecks.RunAsync();
         await CheckStationCardLocationAsync();
         await CheckEsRadioAsync();
         await ThemedToolTipChecks.RunAsync();

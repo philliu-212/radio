@@ -1,6 +1,6 @@
 # 播放診斷紀錄
 
-一般啟動播放器時自動啟用，無須設定，不改變播放／重連策略或 UI。
+一般啟動播放器時自動啟用，無須設定；紀錄本身不改變播放／重連策略或 UI。
 此功能用於調查長時間播放失敗及記憶體變化，不代表已確認或修復 memory leak。
 
 ## 位置及容量
@@ -21,6 +21,7 @@
 - 每個文字欄位超過 8192 個 UTF-16 code units 時截斷並附 `[truncated]`，避免異常巨大的網址或堆疊擠爆單檔；正常長度的網址與錯誤完整保留。
 - 相鄰相同電台／狀態／訊息不重複記錄；每個工作階段每分鐘最多 30 筆，超量略過，在下一筆成功紀錄的 `suppressed` 欄位累計。極端事件風暴可能略過部分錯誤。
 - 啟動、結束、失敗時與每 **5 分鐘**記錄記憶體快照，不記逐幀／播放進度；不呼叫強制 GC。
+- HLS 開播逾時或播放時鐘卡住時，在停止引擎前額外記錄 `player-snapshot`：原因、引擎、generation、最近關鍵原生事件、network／ready state、播放位置與等待狀態；僅故障時取樣，新增欄位不含完整網址／token。診斷失敗不阻止恢復。
 - `workingSetBytes` 是工作集，`privateBytes` 是私有記憶體，`managedBytes` 是當下 .NET managed heap 估計；另含 handle、thread 與 GC 次數。這些數字定義不同，不應直接與工作管理員任何單一欄位混用。
 
 ## 發生問題時
@@ -30,6 +31,17 @@
 3. 提供四個檔案中實際存在的紀錄及上述資訊。畫面仍顯示簡短錯誤，詳細原因查看 `playback` 的 `message`／`codes`、`exception` 的 `details`，來源查看 `stream-resolved`。
 
 判斷洩漏需看同條件長期趨勢、反覆切台／失敗後是否累積，必要時另採集記憶體 dump；重開後恢復不能單獨證明洩漏。
+
+## HLS 開播／卡住恢復
+
+預設 system backend 若 MediaEngine 的 HLS 開播逾時，或播放時鐘看門狗判定卡住，後續來源嘗試／重連會改用既有 Windows 相容引擎及其獨立 HLS HTTP client，不再無限重建同一個失效路徑。同 host 在本程序中保留相容模式，其他 host 與非 HLS 不受影響；不寫入 portable 設定，不自動重啟播放器。來源額度、退避及使用者停止行為維持不變。兩條路徑皆失敗時仍有界退避，不保證上游斷線也能播放。
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --hls-recovery
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --hls-recovery-live
+```
+
+前者為離線 fixture；後者刻意使第一個引擎無回應，使用真實 40 秒逾時、15 秒重連計時與好事989官方串流驗證相容引擎恢復。不是原故障根因重現、耳聽或長時間驗收。
 
 ## 離線驗證
 
