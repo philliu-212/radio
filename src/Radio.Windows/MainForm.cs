@@ -48,6 +48,13 @@ internal sealed class MainForm : Form
     private readonly Dictionary<(float Size, FontStyle Style, string Family, int Dpi), Font> _fontCache = [];
     private readonly ThemedTrayIcon _tray;
     private readonly ToolStripMenuItem _trayTransport;
+    private readonly ToolStripMenuItem _compatibilityRetry;
+    private readonly HashSet<string> _compatibilityStations = new(StringComparer.Ordinal);
+    private ResolvedStream? _resolvedStream;
+    private string? _manualRetryStation;
+    private TimeSpan _manualRetryAt;
+    private double? _manualRetryPosition;
+    internal Task CompatibilityRetryTask { get; private set; } = Task.CompletedTask;
     private readonly bool _persistPreferences;
     private readonly bool _autoPlayOnStartup;
     private readonly bool _checkUpdates;
@@ -183,6 +190,10 @@ internal sealed class MainForm : Form
             StartMetadata();
         };
         menu.Items.Add(metadataOption);
+        _compatibilityRetry = new ToolStripMenuItem("使用相容模式重試") { Enabled = false };
+        _compatibilityRetry.Click += (_, _) => CompatibilityRetryTask = RetryWithCompatibilityAsync();
+        menu.Items.Add(_compatibilityRetry);
+        menu.Opening += (_, _) => _compatibilityRetry.Enabled = CanRetryWithCompatibility;
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(AppTitle).Enabled = false;
         menu.Items.Add("退出", null, (_, _) => ExitPlayer());
@@ -523,6 +534,9 @@ internal sealed class MainForm : Form
                     if (!_attemptedStreams.Add(stream.Uri.AbsoluteUri))
                         throw new SourceResolutionException("備援與已嘗試的串流相同，無其他可用來源；請稍後重試。");
                     _diagnostics?.Resolved(station.Id, stream);
+                    _resolvedStream = stream;
+                    if (_player is SystemAudioPlayer systemPlayer)
+                        systemPlayer.PreferCompatibility = _compatibilityStations.Contains(station.Id);
                     await _player.PlayAsync(stream, opening.Token);
                     await started.Task.WaitAsync(opening.Token);
                     if (_openingSourceFailed) throw new SourceResolutionException("直播來源開播後立即失敗。");
@@ -570,6 +584,7 @@ internal sealed class MainForm : Form
 
     private void ScheduleReconnect(string message)
     {
+        FinishManualRetry("attempt-failed");
         _sourceWatch.Stop();
         _playingStation = null; CancelMetadata();
         _player.Stop();
@@ -584,12 +599,39 @@ internal sealed class MainForm : Form
     private void PreparePlayerRecovery(string reason)
     {
         _diagnostics?.Snapshot(reason, _player as IPlayerDiagnostics);
-        if (_player is SystemAudioPlayer player && player.PreferCompatibilityForCurrentSource())
-            _diagnostics?.Snapshot("prefer-windows-compatibility", player);
+        FinishManualRetry(reason, _manualRetryPosition is { } position ? _player.Position.TotalSeconds - position : null);
+    }
+
+    private bool CanRetryWithCompatibility => !_closing && _active && _targetStation is not null &&
+        _resolvedStream is { IsHls: true } && _player is SystemAudioPlayer && _manualRetryStation is null;
+
+    private async Task RetryWithCompatibilityAsync()
+    {
+        if (!CanRetryWithCompatibility) return;
+        var station = _targetStation!;
+        var countPending = _countPending;
+        _diagnostics?.ManualRetry(station.Id, "requested");
+        _diagnostics?.Snapshot("manual-compatibility-before", _player as IPlayerDiagnostics);
+        StopPlayback(); // Invalidates in-flight opening and queued source switches before replacing the adapter.
+        _compatibilityStations.Add(station.Id);
+        _active = true; _hasStarted = true; _targetStation = station; _countPending = countPending;
+        _manualRetryStation = station.Id; _manualRetryAt = _playbackNow(); _manualRetryPosition = null;
+        BeginSourceRound();
+        await OpenNextSourceAsync(station);
+    }
+
+    private void FinishManualRetry(string stage, double? advance = null)
+    {
+        if (_manualRetryStation is not { } station) return;
+        _diagnostics?.ManualRetry(station, stage, advance);
+        _diagnostics?.Snapshot("manual-compatibility-" + stage, _player as IPlayerDiagnostics);
+        _manualRetryStation = null; _manualRetryPosition = null;
     }
 
     private void StopPlayback()
     {
+        FinishManualRetry("canceled");
+        _resolvedStream = null;
         _sourceWatch.Stop(); _sourceSwitchQueued = false; _playbackGeneration++;
         _reconnectAt = null; _reconnectStep = 0;
         var request = _playRequest; _playRequest = null; _started = null;
@@ -602,6 +644,12 @@ internal sealed class MainForm : Form
 
     internal void CheckPlaybackProgress()
     {
+        if (_manualRetryStation is not null && _manualRetryPosition is { } position)
+        {
+            var advance = _player.Position.TotalSeconds - position;
+            if (advance >= 5) FinishManualRetry("clock-progress", advance);
+            else if (_playbackNow() - _manualRetryAt >= TimeSpan.FromSeconds(30)) FinishManualRetry("no-clock-progress", advance);
+        }
         if (_closing || !_active || _playRequest is not null || _sourceSwitchQueued || _targetStation is null) return;
         var now = _playbackNow();
         if (_reconnectAt is { } reconnectAt)
@@ -687,6 +735,13 @@ internal sealed class MainForm : Form
         _diagnostics?.Status(status, _targetStation?.Id);
         if (status.State == AudioState.Playing)
         {
+            if (_manualRetryStation is not null && _manualRetryPosition is null)
+            {
+                _manualRetryPosition = _player.Position.TotalSeconds;
+                _manualRetryAt = _playbackNow();
+                _diagnostics?.ManualRetry(_manualRetryStation, "playing-event");
+                _diagnostics?.Snapshot("manual-compatibility-opened", _player as IPlayerDiagnostics);
+            }
             _playingStation = _targetStation;
             if (_countPending && _targetStation is { } successfulStation)
             {

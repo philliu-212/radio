@@ -7,10 +7,9 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
 {
     private readonly Func<IAudioPlayer> _mediaFactory;
     private readonly Func<IAudioPlayer> _nativeFactory;
-    private readonly HashSet<string> _compatibilityHosts = new(StringComparer.OrdinalIgnoreCase);
     private IAudioPlayer? _current;
     private Action<PlaybackStatus>? _forwardStatus;
-    private ResolvedStream? _stream;
+    internal bool PreferCompatibility { get; set; }
     private bool _usingCompatibility;
     private double _volume = 0.4;
     private bool _muted;
@@ -26,17 +25,8 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     public event Action<PlaybackStatus>? StatusChanged;
     public string DisplayName => "Windows 系統音訊";
     public IReadOnlyList<int> ChildProcessIds => (_current as IPlayerDiagnostics)?.ChildProcessIds ?? [];
-    public object Describe() => new { backend = "system", compatibilityHosts = _compatibilityHosts.ToArray(),
+    public object Describe() => new { backend = "system", preferCompatibility = PreferCompatibility,
         active = (_current as IPlayerDiagnostics)?.Describe() };
-
-    // Called before Stop disposes the stalled source. Recreating the same MediaEngine
-    // cannot recover every process-local HLS failure; the other adapter has its own HTTP client.
-    // Keep the alternative path for this host until exit, rather than oscillating.
-    internal bool PreferCompatibilityForCurrentSource()
-    {
-        if (_current is null || _stream is not { IsHls: true } stream || _usingCompatibility) return false;
-        return _compatibilityHosts.Add(stream.Uri.Host);
-    }
 
     public TimeSpan Position => _current?.Position ?? TimeSpan.Zero;
     public double Volume
@@ -56,10 +46,9 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         cancellationToken.ThrowIfCancellationRequested();
         Stop();
         _usingCompatibility = stream.Uri.Host.Equals("hitoradio-ott2b2.cdn.hinet.net", StringComparison.OrdinalIgnoreCase)
-            || (stream.IsHls && _compatibilityHosts.Contains(stream.Uri.Host));
+            || (stream.IsHls && PreferCompatibility);
         IAudioPlayer player = _usingCompatibility ? _nativeFactory() : _mediaFactory();
         _current = player;
-        _stream = stream;
         player.Volume = _volume;
         player.IsMuted = _muted;
         _forwardStatus = status => { if (_current == player) ForwardStatus(status); };
@@ -82,7 +71,6 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     {
         var player = _current;
         _current = null;
-        _stream = null;
         if (player is not null)
         {
             player.StatusChanged -= _forwardStatus;

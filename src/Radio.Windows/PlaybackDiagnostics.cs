@@ -77,6 +77,9 @@ internal sealed class PlaybackDiagnostics : IDisposable
         catch (Exception) { /* Native diagnostics must not block recovery. */ }
     }
 
+    internal void ManualRetry(string station, string stage, double? clockAdvanceSeconds = null) =>
+        Write("manual-compatibility-retry", new { station = Clip(station), stage, clockAdvanceSeconds });
+
     internal void Sample()
     {
         lock (_gate)
