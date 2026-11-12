@@ -2,18 +2,32 @@ using Radio.Core;
 
 namespace Radio.Windows;
 
-// Deterministic source compatibility, not an error-triggered retry or external-player fallback.
+// Keep recovery inside the existing Windows adapters; never launch an external player.
 internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
 {
+    private readonly Func<IAudioPlayer> _mediaFactory;
+    private readonly Func<IAudioPlayer> _nativeFactory;
     private IAudioPlayer? _current;
+    private Action<PlaybackStatus>? _forwardStatus;
+    internal bool PreferCompatibility { get; set; }
+    private bool _usingCompatibility;
     private double _volume = 0.4;
     private bool _muted;
     private bool _disposed;
 
+    public SystemAudioPlayer() : this(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer()) { }
+    internal SystemAudioPlayer(Func<IAudioPlayer> mediaFactory, Func<IAudioPlayer> nativeFactory)
+    {
+        _mediaFactory = mediaFactory;
+        _nativeFactory = nativeFactory;
+    }
+
     public event Action<PlaybackStatus>? StatusChanged;
     public string DisplayName => "Windows 系統音訊";
     public IReadOnlyList<int> ChildProcessIds => (_current as IPlayerDiagnostics)?.ChildProcessIds ?? [];
-    public object Describe() => new { backend = "system", active = (_current as IPlayerDiagnostics)?.Describe() };
+    public object Describe() => new { backend = "system", preferCompatibility = PreferCompatibility,
+        active = (_current as IPlayerDiagnostics)?.Describe() };
+
     public TimeSpan Position => _current?.Position ?? TimeSpan.Zero;
     public double Volume
     {
@@ -31,12 +45,14 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         Stop();
-        IAudioPlayer player = stream.Uri.Host.Equals("hitoradio-ott2b2.cdn.hinet.net", StringComparison.OrdinalIgnoreCase)
-            ? new WindowsAudioPlayer() : new MediaEngineAudioPlayer();
+        _usingCompatibility = stream.Uri.Host.Equals("hitoradio-ott2b2.cdn.hinet.net", StringComparison.OrdinalIgnoreCase)
+            || (stream.IsHls && PreferCompatibility);
+        IAudioPlayer player = _usingCompatibility ? _nativeFactory() : _mediaFactory();
         _current = player;
         player.Volume = _volume;
         player.IsMuted = _muted;
-        player.StatusChanged += ForwardStatus;
+        _forwardStatus = status => { if (_current == player) ForwardStatus(status); };
+        player.StatusChanged += _forwardStatus;
         try { await player.PlayAsync(stream, cancellationToken); }
         catch
         {
@@ -57,9 +73,10 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         _current = null;
         if (player is not null)
         {
-            player.StatusChanged -= ForwardStatus;
+            player.StatusChanged -= _forwardStatus;
             player.Dispose();
         }
+        _forwardStatus = null;
         StatusChanged?.Invoke(new PlaybackStatus(AudioState.Stopped, "已停止；重新播放會回到直播。"));
     }
 

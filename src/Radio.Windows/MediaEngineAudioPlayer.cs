@@ -18,6 +18,7 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     private readonly PlaybackRecovery _recovery = new();
     private int _waitingForProgress;
     private int _progressCheckQueued;
+    private int _lastNativeEvent;
 
     public MediaEngineAudioPlayer() => Marshal.ThrowExceptionForHR(MediaEngineInterop.MFStartup(0x20070, 0));
     public event Action<PlaybackStatus>? StatusChanged;
@@ -45,7 +46,11 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     {
         backend = "mediaengine", audioOnlyFlag = true,
         hasVideo = _engine?.HasVideo() ?? false, hasAudio = _engine?.HasAudio() ?? false,
-        volume = _engine?.GetVolume(), muted = _engine?.GetMuted()
+        volume = _engine?.GetVolume(), muted = _engine?.GetMuted(),
+        generation = _generation, lastNativeEvent = Volatile.Read(ref _lastNativeEvent),
+        networkState = _engine?.GetNetworkState(), readyState = _engine?.GetReadyState(),
+        positionSeconds = Position.TotalSeconds, paused = _engine?.IsPaused(), ended = _engine?.IsEnded(),
+        waitingForProgress = Volatile.Read(ref _waitingForProgress) != 0
     };
 
     public Task PlayAsync(ResolvedStream stream, CancellationToken cancellationToken)
@@ -54,6 +59,7 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         cancellationToken.ThrowIfCancellationRequested();
         Stop();
         var generation = _generation;
+        Volatile.Write(ref _lastNativeEvent, 0);
         _notify = new MediaEngineNotify(eventId => OnNativeEvent(generation, eventId));
         try
         {
@@ -71,6 +77,8 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
 
     private void OnNativeEvent(int generation, uint eventId)
     {
+        if (generation == _generation && eventId is 1 or 4 or 5 or 10 or 11 or 12 or 13 or 19)
+            Volatile.Write(ref _lastNativeEvent, (int)eventId);
         // Ignore progress and steady-playback time updates: there is no polling timer or UI clock.
         // BUFFERINGSTARTED (1005) describes source prefetch, not a playback stall.
         // WAITING (12) explicitly means playback stopped because the next frame is unavailable.

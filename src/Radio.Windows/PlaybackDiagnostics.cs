@@ -70,6 +70,16 @@ internal sealed class PlaybackDiagnostics : IDisposable
         type = error.GetType().Name, hresult = $"0x{error.HResult:X8}", details = Clip(error.ToString())
     });
 
+    internal void Snapshot(string reason, IPlayerDiagnostics? player)
+    {
+        if (player is null) return;
+        try { Write("player-snapshot", new { reason, player = player.Describe() }); }
+        catch (Exception) { /* Native diagnostics must not block recovery. */ }
+    }
+
+    internal void ManualRetry(string station, string stage, double? clockAdvanceSeconds = null) =>
+        Write("manual-compatibility-retry", new { station = Clip(station), stage, clockAdvanceSeconds });
+
     internal void Sample()
     {
         lock (_gate)

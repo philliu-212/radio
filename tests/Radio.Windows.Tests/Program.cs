@@ -42,6 +42,13 @@ internal sealed class TestForm(string[] args) : Form
         Hide();
         try
         {
+            if (args.Contains("--hls-recovery") || args.Contains("--hls-recovery-live"))
+            {
+                await HlsRecoveryChecks.RunAsync();
+                if (args.Contains("--hls-recovery-live")) await HlsRecoveryChecks.RunLiveAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--single-instance"))
             {
                 await SingleInstanceChecks.RunAsync();
