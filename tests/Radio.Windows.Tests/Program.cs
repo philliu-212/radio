@@ -131,6 +131,12 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
+            if (args.Contains("--focus"))
+            {
+                await UiChecks.CheckPointerFocusAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--dpi-ui"))
             {
                 await UiChecks.CheckStationManagerDpiAsync();
