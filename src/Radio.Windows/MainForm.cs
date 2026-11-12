@@ -265,7 +265,30 @@ internal sealed class MainForm : Form
         _tips.SetToolTip(_volume, $"音量 {_volume.Value}%");
         _tips.SetToolTip(_manage, "新增／管理電台"); _tips.SetToolTip(_emptyAdd, "新增電台");
         ApplyTheme();
+        WirePointerFocus(this);
         ResumeLayout(true);
+    }
+
+    private void WirePointerFocus(Control control)
+    {
+        control.MouseDown += PointerMouseDown;
+        control.MouseUp += PointerMouseUp;
+        control.ControlAdded += (_, e) => { if (e.Control is { } added) WirePointerFocus(added); };
+        foreach (Control child in control.Controls) WirePointerFocus(child);
+    }
+    private void PointerMouseDown(object? sender, MouseEventArgs e)
+    {
+        // Keep native caret, list navigation and slider dragging. Buttons are
+        // cleared on release so their normal click/capture behavior is intact.
+        if (sender is not (ButtonBase or TextBoxBase or ListBox or TrackBar)) ActiveControl = null;
+    }
+    private void PointerMouseUp(object? sender, MouseEventArgs e)
+    {
+        if (sender is ButtonBase && !IsDisposed) ActiveControl = null;
+    }
+    private void ClearPointerFocus()
+    {
+        ActiveControl = null;
     }
 
     private static Label TextLabel(string name, bool card = false)
@@ -844,6 +867,7 @@ internal sealed class MainForm : Form
     private void ResumePresentation()
     {
         var refresh = _uiSuspended || _uiDirty;
+        if (_uiSuspended) ClearPointerFocus();
         _uiSuspended = false;
         _metadataTitle.AnimationEnabled = true; _metadataPerson.AnimationEnabled = true;
         if (refresh) RefreshPresentation();
@@ -858,6 +882,7 @@ internal sealed class MainForm : Form
         ResumePresentation();
         BringToFront(); Activate();
         SetForegroundWindow(Handle);
+        ClearPointerFocus();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -967,6 +992,7 @@ internal sealed class MainForm : Form
     }
     private void DragWindow(object? sender, MouseEventArgs e)
     {
+        ClearPointerFocus();
         if (e.Button != MouseButtons.Left) return;
         ReleaseCapture(); SendMessage(Handle, 0x00A1, new IntPtr(2), IntPtr.Zero);
     }

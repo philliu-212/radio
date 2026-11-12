@@ -8,6 +8,7 @@ internal static class UiChecks
 {
     public static async Task RunAsync()
     {
+        await CheckPointerFocusAsync();
         await HlsRecoveryChecks.RunAsync();
         await CheckStationCardLocationAsync();
         await CheckEsRadioAsync();
@@ -350,6 +351,65 @@ internal static class UiChecks
         await CheckCardVolumeAndTipsAsync();
         await CheckWindowActivationAsync();
         Console.WriteLine("All offline Direction C UI checks passed.");
+    }
+
+    internal static async Task CheckPointerFocusAsync()
+    {
+        using var form = new MainForm(new FixturePlayer(), false, true, new FixtureResolver(), new FixtureMetadata(),
+            CatalogSettings(), autoPlayOnStartup: false, checkUpdates: false);
+        form.ShowPlayer();
+        await Task.Delay(60);
+        var close = Find<Button>(form, "CloseButton");
+        var theme = Find<Button>(form, "ThemeToggle");
+        var input = Find<TextBox>(form, "SearchInput");
+        var card = Find<Control>(form, "PlaybackCard");
+        bool ShowsFocusCues(Control control) => (bool)typeof(Control).GetProperty("ShowFocusCues",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(control)!;
+        void Click(Control control)
+        {
+            SendMouse(control, 0x0201, control.Width / 2, control.Height / 2);
+            SendMouse(control, 0x0202, control.Width / 2, control.Height / 2);
+        }
+
+        close.Focus(); close.PerformClick();
+        Check(!form.Visible, "Close still hides the player to the tray");
+        form.ShowPlayer();
+        await Task.Delay(60);
+        Check(form.ActiveControl is null && !close.Focused, "Tray restore clears focused X");
+        input.Focus();
+        form.WindowState = FormWindowState.Minimized;
+        form.WindowState = FormWindowState.Normal;
+        await Task.Delay(60);
+        Check(form.ActiveControl is null && !input.Focused, "Taskbar restore does not retain an input or button focus");
+
+        foreach (var blank in new[] { card, Find<Control>(form, "NowPlayingTitle"), form })
+        {
+            close.Focus();
+            SendMessage(form.Handle, 0x0127, new IntPtr(0x00010002), IntPtr.Zero); // reveal keyboard cues
+            Click(blank);
+            Check(form.ActiveControl is null && !close.Focused, "Pointer click clears focus on " + blank.Name);
+        }
+        var wasDark = form.IsDarkMode;
+        Click(theme);
+        Check(form.IsDarkMode != wasDark && form.ActiveControl is null && !theme.Focused,
+            "Mouse button click still runs its action without retaining button focus");
+        Click(input);
+        Check(input.Focused, "Search keeps its native mouse input focus");
+        input.Text = "91.7";
+        Check(Find<ListBox>(form, "StationList").Items.Count > 0, "Search remains usable after pointer focus reset");
+        Click(card);
+        Check(!input.Focused && form.ActiveControl is null, "Clicking blank card dismisses the search caret");
+
+        PostMessage(form.Handle, 0x0100, new IntPtr(0x09), IntPtr.Zero); // queued Tab through WinForms preprocessing
+        PostMessage(form.Handle, 0x0101, new IntPtr(0x09), IntPtr.Zero);
+        await Task.Delay(60);
+        Check(form.ActiveControl is { } active && ShowsFocusCues(active), "Tab restores keyboard focus and visible focus cues");
+        theme.Focus();
+        PostMessage(theme.Handle, 0x0100, new IntPtr(0x20), IntPtr.Zero);
+        PostMessage(theme.Handle, 0x0101, new IntPtr(0x20), IntPtr.Zero);
+        await Task.Delay(60);
+        Check(theme.Focused && form.IsDarkMode == wasDark, "Keyboard button activation retains focus and performs its action");
+        form.ExitPlayer();
     }
 
     private static void CheckLayout(Control parent)
