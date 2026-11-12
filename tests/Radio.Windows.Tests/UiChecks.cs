@@ -357,10 +357,11 @@ internal static class UiChecks
     {
         using var form = new MainForm(new FixturePlayer(), false, true, new FixtureResolver(), new FixtureMetadata(),
             CatalogSettings(), autoPlayOnStartup: false, checkUpdates: false);
-        form.ShowPlayer();
+        form.Show(); // Match normal startup, not the tray/second-instance restore path.
         await Task.Delay(60);
         var close = Find<Button>(form, "CloseButton");
         var theme = Find<Button>(form, "ThemeToggle");
+        Check(form.ActiveControl is null && !theme.Focused, "Initial startup does not auto-focus the theme toggle or another control");
         var input = Find<TextBox>(form, "SearchInput");
         var card = Find<Control>(form, "PlaybackCard");
         bool ShowsFocusCues(Control control) => (bool)typeof(Control).GetProperty("ShowFocusCues",

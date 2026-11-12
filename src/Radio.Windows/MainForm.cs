@@ -927,6 +927,9 @@ internal sealed class MainForm : Form
         base.OnShown(e); ApplyDpiTypography(); UpdateWindowShape(); RefreshPresentation();
         if (_startupHandled) return;
         _startupHandled = true;
+        // Initial Show/Application.Run selects the first tab stop before Shown.
+        // Startup, like tray restore, should not leave a button focused.
+        ClearPointerFocus();
         if (_persistPreferences && _checkUpdates && PortableUpdate.IsPortable)
         {
             _updateTimer.Start();
