@@ -14,6 +14,7 @@ internal static class HlsRecoveryChecks
 
     internal static async Task RunAsync()
     {
+        Check(MainForm.SourceOpeningTimeout == TimeSpan.FromSeconds(30), "Every source uses the same 30-second opening timeout, with or without backups");
         var now = TimeSpan.Zero;
         var reconnects = new Queue<Action>();
         var media = new List<FixturePlayer>(); var native = new List<FixturePlayer>();
@@ -39,7 +40,7 @@ internal static class HlsRecoveryChecks
         Check(reconnects.Count == 1 && media.Count == 1, "Opening timeout immediately queues one retry without advancing time");
         reconnects.Dequeue()(); await Task.Delay(40);
         Check(media.Count == 2 && native.Count == 0, "Automatic reconnect still uses the default engine");
-        await ClickRetryAsync(form); // Replaces an in-flight opening, without waiting another 40 seconds.
+        await ClickRetryAsync(form); // Replaces an in-flight opening, without waiting another 30 seconds.
         Check(native.Count == 1 && media[1].Disposed && form.LatestStatus.State == AudioState.Playing && !form.ReconnectPending,
             "Manual retry cancels pending opening and starts compatibility with a fresh resolution");
         Check(native[0].IsMuted && native[0].Volume == .23 && settings.PlayCounts.GetValueOrDefault("best-989") == 1,
@@ -136,7 +137,7 @@ internal static class HlsRecoveryChecks
         form.Show(); form.Hide();
         var watch = Stopwatch.StartNew();
         await form.PlayForProbeAsync("best-989");
-        Check(watch.Elapsed.TotalSeconds >= 39 && form.ReconnectPending && mediaCalls == 1 && nativeCalls == 0 && !player.PreferCompatibility,
+        Check(watch.Elapsed.TotalSeconds >= 29 && watch.Elapsed.TotalSeconds < 35 && form.ReconnectPending && mediaCalls == 1 && nativeCalls == 0 && !player.PreferCompatibility,
             "LIVE: actual opening deadline queues immediate recovery without switching engines");
         await ClickRetryAsync(form);
         await CheckLiveProgressAsync(form, player);

@@ -81,6 +81,7 @@ internal sealed class MainForm : Form
     private bool _retryCurrentSource;
     private int[] _sourceOrder = [];
     internal bool ReconnectPending => _reconnectPending;
+    internal static TimeSpan SourceOpeningTimeout => TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _attemptedStreams = new(StringComparer.Ordinal);
     internal bool PlaybackWatchRunning => _sourceWatch.Enabled;
     private Station? _targetStation;
@@ -537,7 +538,7 @@ internal sealed class MainForm : Form
     {
         _sourceWatch.Stop();
         _renewSourceRound = false; _retryCurrentSource = false;
-        var request = new CancellationTokenSource(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 * (station.BackupCount + 1 - _nextSourceAttempt) + 10 : 40));
+        var request = new CancellationTokenSource(SourceOpeningTimeout * (station.BackupCount + 1 - _nextSourceAttempt));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
         if (stopCurrentSource) _player.Stop();
@@ -552,7 +553,7 @@ internal sealed class MainForm : Form
                 var sourceIndex = _sourceOrder[attempt];
                 _openingSourceFailure = null;
                 using var opening = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
-                opening.CancelAfter(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 : 40));
+                opening.CancelAfter(SourceOpeningTimeout);
                 try
                 {
                     var stream = sourceIndex == 0
