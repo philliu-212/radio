@@ -96,8 +96,8 @@ internal static class PlaybackDiagnosticsChecks
             {
                 Check(form.PlayForProbeAsync("best-989").IsCompletedSuccessfully,
                     "fixture resolves and fails synchronously without network");
-                Check(form.LatestStatus.State == AudioState.Buffering && form.ReconnectPending && form.PlaybackWatchRunning,
-                    "diagnostics preserve queued automatic reconnect after playback failure");
+                Check(form.LatestStatus.State == AudioState.Failed && !form.ReconnectPending && !form.PlaybackWatchRunning,
+                    "explicit opening failure stops retries without losing diagnostics");
                 Check(form.LatestStatus.Message.Contains("0x80004005", StringComparison.Ordinal),
                     "reconnect status retains the underlying native error for diagnosis");
             }

@@ -47,11 +47,11 @@ internal static class TwitchStreamResolver
         {
             throw new SourceResolutionException(error.StatusCode is { } status
                 ? $"Twitch 備援回應 HTTP {(int)status}，可能離線或暫時無法播放。"
-                : "無法連接 Twitch 備援，請稍後重試。");
+                : "無法連接 Twitch 備援，請稍後重試。", SourceResolutionException.Classify(error));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new SourceResolutionException("取得 Twitch 備援逾時，請稍後重試。");
+            throw new SourceResolutionException("取得 Twitch 備援逾時，請稍後重試。", PlaybackFailureKind.Transient);
         }
         catch (JsonException)
         {

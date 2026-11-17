@@ -279,7 +279,8 @@ internal static class UiChecks
         player.Emit(AudioState.Failed);
         await retry;
         Check(settings.PlayCounts.GetValueOrDefault("best-989") == countBeforeFailure, "Failed stream never increments count");
-        Check(form.ReconnectPending && play.AccessibleName == "停止", "Engine errors keep a usable Stop button during queued reconnect");
+        Check(!form.ReconnectPending && form.LatestStatus.State == AudioState.Failed && play.Enabled,
+            "Explicit opening failure stops automatic retries and leaves manual Play available");
         var recovered = form.PlayForProbeAsync("best-989"); player.Emit(AudioState.Playing); await recovered;
         Check(settings.PlayCounts["best-989"] == countBeforeFailure + 1, "New successful manual retry counts once");
         Check(form.LatestStatus.State == AudioState.Playing, "Playback can recover after error");
@@ -293,7 +294,8 @@ internal static class UiChecks
             "Stop during source resolution cannot restart audio from a late result");
         resolver.Pending = null; resolver.Fail = true;
         await form.PlayForProbeAsync("best-989");
-        Check(form.ReconnectPending && play.Enabled, "Source errors leave UI responsive during queued reconnect");
+        Check(!form.ReconnectPending && form.LatestStatus.State == AudioState.Failed && play.Enabled,
+            "Unavailable sources stop automatic retry and leave UI responsive");
         resolver.Fail = false;
         recovered = form.PlayForProbeAsync("best-989"); player.Emit(AudioState.Playing); await recovered;
 
@@ -1202,9 +1204,9 @@ internal static class UiChecks
         var failedPlayer = new FixturePlayer(); var failedResolver = new FixtureResolver { Fail = true };
         using var failed = new MainForm(failedPlayer, false, true, failedResolver, new FixtureMetadata(), failedSettings, postReconnect: _ => { });
         failed.Show(); await Task.Delay(30); await failed.StartupPlaybackTask;
-        Check(failed.ReconnectPending && failedResolver.Calls == 1 && failedPlayer.Plays == 0 &&
+        Check(!failed.ReconnectPending && failed.LatestStatus.State == AudioState.Failed && failedResolver.Calls == 1 && failedPlayer.Plays == 0 &&
             failedSettings.PlayCounts["kiss-999"] == 9 && failedSettings.LastStationId == "kiss-999",
-            $"Failed startup queues retry without counting or rewriting the last station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
+            $"Unavailable startup sources stop without counting or rewriting the last station (state={failed.LatestStatus.State}, calls={failedResolver.Calls}, plays={failedPlayer.Plays}, count={failedSettings.PlayCounts["kiss-999"]})");
         failed.ExitPlayer();
         var staleSettings = new ThemeSettings
         {
@@ -1259,8 +1261,8 @@ internal static class UiChecks
             Check(resolver.BackupCalls == 0, "Healthy primary never requests Twitch");
             task = form.PlayForProbeAsync("kiss-999"); player.Emit(AudioState.Failed); await Task.Delay(30);
             player.Emit(AudioState.Failed); await task;
-            Check(form.ReconnectPending && resolver.BackupCalls == 1,
-                "Failed backup queues the next round without recursive opening");
+            Check(!form.ReconnectPending && form.LatestStatus.State == AudioState.Failed && resolver.BackupCalls == 1,
+                "Explicit failure of primary and backup stops without another round");
             form.ExitPlayer();
         }
         {
@@ -1296,10 +1298,10 @@ internal static class UiChecks
             var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, Backup = true, BackupFailures = 10 };
             using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false, postReconnect: _ => { });
             form.Show(); await form.PlayForProbeAsync("esradio");
-            Check(resolver.BackupIndices.SequenceEqual([0, 1]) && form.ReconnectPending && player.Plays == 0,
-                "All esRadio backups failing queues the next round after exactly two");
+            Check(resolver.BackupIndices.SequenceEqual([0, 1]) && !form.ReconnectPending && form.LatestStatus.State == AudioState.Failed && player.Plays == 0,
+                "All esRadio sources unavailable stops after exactly one round");
             await form.PlayForProbeAsync("ufo-921");
-            Check(resolver.BackupCalls == 2 && form.ReconnectPending,
+            Check(resolver.BackupCalls == 2 && !form.ReconnectPending && form.LatestStatus.State == AudioState.Failed,
                 "Station with no verified backup never borrows another station's source");
             form.ExitPlayer();
         }
@@ -1327,34 +1329,62 @@ internal static class UiChecks
 
     private static async Task CheckReconnectAsync()
     {
-        foreach (var action in new[] { "stop", "switch", "exit" })
+        foreach (var failure in new[] { PlaybackFailureKind.Unavailable, PlaybackFailureKind.Transient })
         {
-            var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true };
+            var player = new FixturePlayer { FailImmediatelyAfterPlaying = true, Failure = failure };
+            var reconnects = new Queue<Action>();
+            using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings(),
+                autoPlayOnStartup: false, postReconnect: reconnects.Enqueue);
+            form.Show(); await form.PlayForProbeAsync("ufo-921");
+            Check(form.ReconnectPending == (failure == PlaybackFailureKind.Transient) && reconnects.Count == 0,
+                "Playing then Failed in one callback preserves the failure kind, not successful-opening credit: " + failure);
+            form.ExitPlayer();
+        }
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Backup = true };
+            var reconnects = new Queue<Action>(); var settings = CatalogSettings();
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings,
+                autoPlayOnStartup: false, postReconnect: reconnects.Enqueue);
+            form.Show(); var opening = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing); await opening;
+            resolver.Fail = true; resolver.BackupFailures = 10;
+            player.Emit(AudioState.Failed); await Task.Delay(30);
+            Check(reconnects.Count == 1 && resolver.Calls == 1 && resolver.BackupCalls == 2,
+                "Playback interrupted: exhaust remaining backups then immediately queue recovery without waiting");
+            reconnects.Dequeue()(); await Task.Delay(30);
+            Check(resolver.Calls == 2 && resolver.BackupCalls == 4 && reconnects.Count == 0 && !form.ReconnectPending &&
+                form.LatestStatus.State == AudioState.Failed && settings.PlayCounts["esradio"] == 1,
+                "Recovery round explicitly rejected by every source stops, even if a previous round played successfully");
+            form.ExitPlayer();
+        }
+        {
+            var now = TimeSpan.Zero; var player = new FixturePlayer();
+            var resolver = new FixtureResolver { Fail = true, BackupFailures = 10, TransientBackupIndex = 0 };
+            var reconnects = new Queue<Action>();
+            using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(),
+                autoPlayOnStartup: false, playbackNow: () => now, postReconnect: reconnects.Enqueue);
+            form.Show(); await form.PlayForProbeAsync("esradio");
+            Check(form.ReconnectPending && reconnects.Count == 0 && resolver.BackupCalls == 2,
+                "Mixed round retains earlier temporary failure even when last backup is explicitly unavailable");
+            now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
+            Check(reconnects.Count == 1, "Mixed round retries only after temporary-network deadline");
+            form.ExitPlayer(); reconnects.Dequeue()(); await Task.Delay(20);
+            Check(resolver.Calls == 1 && !form.ReconnectPending, "Exit cancels a mixed-failure round retry");
+        }
+        foreach (var id in new[] { "ufo-921", "rfi-monde", "esradio" })
+        {
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, BackupFailures = 10 };
             using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(), autoPlayOnStartup: false);
             form.Show();
-            var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            const int controlMessage = 0x8000 + 117;
-            using var filter = new NativeActionFilter(form.Handle, controlMessage, () =>
-            {
-                if (action == "stop") Find<Button>(form, "PlayButton").PerformClick();
-                else if (action == "switch")
-                {
-                    resolver.Fail = false;
-                    _ = form.PlayForProbeAsync("esradio"); player.Emit(AudioState.Playing);
-                }
-                else form.ExitPlayer();
-                finished.TrySetResult();
-            });
-            resolver.OnResolve = calls =>
-            {
-                if (calls == 100) Check(PostMessage(form.Handle, controlMessage, IntPtr.Zero, IntPtr.Zero), "Native cancellation message posted");
-            };
-            await form.PlayForProbeAsync("ufo-921");
-            Check(resolver.Calls == 1, "Synchronous failures yield before the next round");
-            await finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await Task.Delay(30);
-            Check(resolver.Calls == (action == "switch" ? 101 : 100) && !form.ReconnectPending,
-                "Real native dispatcher handles " + action + " amid 100 immediately failing rounds without backoff");
+            await form.PlayForProbeAsync(id); form.Hide();
+            for (var tick = 0; tick < 5; tick++) { form.CheckPlaybackProgress(); await Task.Delay(20); }
+            var backups = StationCatalog.Load().Single(station => station.Id == id).BackupCount;
+            Check(resolver.Calls == 1 && resolver.BackupCalls == backups && !form.ReconnectPending &&
+                !form.PlaybackWatchRunning && form.LatestStatus.State == AudioState.Failed && player.Plays == 0,
+                id + ": every source explicitly unavailable stops after one round even with real native dispatch");
+            Check(form.LatestStatus.Message.Contains("Fixture", StringComparison.Ordinal), "Unavailable status retains failure reason");
+            await form.PlayForProbeAsync(id);
+            Check(resolver.Calls == 2 && resolver.BackupCalls == backups * 2,
+                "Manual retry explicitly permits exactly one new unavailable round");
             form.ExitPlayer();
         }
         foreach (var seconds in new[] { 120, 121, 599, 600 })
@@ -1380,10 +1410,10 @@ internal static class UiChecks
                 seconds + "s boundary: budget renews only over two minutes and rapid failures remain bounded");
             form.ExitPlayer();
         }
-        // Dispatch each round explicitly: no clock advance, deadline or increasing delay.
+        // Temporary transport failures wait; this must not depend on how fast failure occurs.
         {
             var now = TimeSpan.Zero;
-            var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, BackupFailures = 10 };
+            var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, TransientFailure = true, BackupFailures = 10 };
             var settings = CatalogSettings();
             var reconnects = new Queue<Action>();
             using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), settings,
@@ -1392,15 +1422,19 @@ internal static class UiChecks
             for (var round = 0; round < 20; round++)
             {
                 var calls = resolver.Calls;
-                Check(reconnects.Count == 1 && form.ReconnectPending, "Exactly one asynchronous reconnect is queued");
+                Check(reconnects.Count == 0 && form.ReconnectPending, "Temporary failure waits before posting another round");
+                now += TimeSpan.FromSeconds(4); form.CheckPlaybackProgress(); await Task.Delay(20);
+                Check(resolver.Calls == calls && reconnects.Count == 0, "Immediate temporary failure cannot create a hot retry loop");
+                now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress();
                 player.Emit(AudioState.Playing); player.Emit(AudioState.Failed);
                 Check(form.ReconnectPending && form.PlayingStationId is null && reconnects.Count == 1,
                     "Late native callbacks cannot duplicate a queued reconnect");
                 reconnects.Dequeue()(); await Task.Delay(30);
                 Check(resolver.Calls == calls + 1 && resolver.BackupCalls == resolver.Calls * 2 && form.ReconnectPending,
-                    "Every failed round retries without advancing the clock: " + round);
+                    "Temporary failures retry one ordered round per five-second deadline: " + round);
             }
             resolver.Fail = false;
+            now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
             reconnects.Dequeue()(); await Task.Delay(30);
             player.Emit(AudioState.Playing); await Task.Delay(20);
             Check(form.PlayingStationId == "esradio" && settings.PlayCounts["esradio"] == 1 && !form.ReconnectPending,
@@ -1419,10 +1453,11 @@ internal static class UiChecks
             resolver.Fail = true;
             player.Emit(AudioState.Failed); await Task.Delay(30);
             callsBefore = resolver.Calls;
-            Check(form.ReconnectPending && reconnects.Count == 1, "Stable playback needs no retry deadline either");
+            Check(form.ReconnectPending && reconnects.Count == 0, "Renewed recovery round that never opens uses temporary-network protection");
+            now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
             reconnects.Dequeue()(); await Task.Delay(30);
             Check(resolver.Calls == callsBefore + 1 && settings.PlayCounts["esradio"] == 1,
-                "Recovery after stable playback remains immediate without recounting");
+                "Temporary network failure after source-round renewal retries without recounting");
             form.ExitPlayer();
         }
         // Reproduce the overnight path: final backup is healthy, then ENDED arrives.
@@ -1507,13 +1542,17 @@ internal static class UiChecks
         foreach (var queued in new[] { false, true })
         foreach (var action in new[] { "stop", "switch", "exit" })
         {
-            var now = TimeSpan.Zero; var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true };
+            var now = TimeSpan.Zero; var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, TransientFailure = true };
             var reconnects = new Queue<Action>();
             using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(),
                 autoPlayOnStartup: false, playbackNow: () => now, postReconnect: reconnects.Enqueue);
             form.Show(); await form.PlayForProbeAsync("ufo-921");
             Check(form.ReconnectPending, "Single-source station schedules reconnect");
-            if (queued) reconnects.Dequeue()();
+            if (queued)
+            {
+                now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
+                reconnects.Dequeue()();
+            }
             if (action == "stop") Find<Button>(form, "PlayButton").PerformClick();
             else if (action == "switch")
             {
@@ -1729,7 +1768,8 @@ internal static class UiChecks
 
     private sealed class FixtureResolver : IStreamResolver
     {
-        public Action<int>? OnResolve { get; set; }
+        public bool TransientFailure { get; set; }
+        public int? TransientBackupIndex { get; set; }
         public TaskCompletionSource<ResolvedStream>? Pending { get; set; }
         public bool Fail { get; set; }
         public bool Backup { get; set; }
@@ -1742,7 +1782,8 @@ internal static class UiChecks
         {
             BackupCalls++;
             BackupIndices.Add(index);
-            if (index < BackupFailures) throw new SourceResolutionException("Fixture backup unavailable");
+            if (index < BackupFailures) throw new SourceResolutionException("Fixture backup unavailable",
+                TransientFailure || TransientBackupIndex == index ? PlaybackFailureKind.Transient : PlaybackFailureKind.Unavailable);
             if (BackupPending is not null) return await BackupPending.Task;
             return Backup ? new ResolvedStream(new Uri(DuplicateBackup ? "https://example.invalid/audio" : $"https://example.invalid/backup/{index}"), new Uri("https://www.twitch.tv/livekiss"), "audio/aac") : null;
         }
@@ -1750,27 +1791,10 @@ internal static class UiChecks
         public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token)
         {
             Calls++;
-            OnResolve?.Invoke(Calls);
-            return Fail ? throw new SourceResolutionException("Fixture source unavailable") : Pending?.Task ??
+            return Fail ? throw new SourceResolutionException("Fixture source unavailable",
+                TransientFailure ? PlaybackFailureKind.Transient : PlaybackFailureKind.Unavailable) : Pending?.Task ??
                 Task.FromResult(new ResolvedStream(new Uri("https://example.invalid/audio"), station.PageUrl, "audio/aac"));
         }
-    }
-    private sealed class NativeActionFilter : IMessageFilter, IDisposable
-    {
-        private readonly IntPtr _handle;
-        private readonly int _message;
-        private readonly Action _action;
-        public NativeActionFilter(IntPtr handle, int message, Action action)
-        {
-            _handle = handle; _message = message; _action = action;
-            Application.AddMessageFilter(this);
-        }
-        public bool PreFilterMessage(ref Message message)
-        {
-            if (message.HWnd != _handle || message.Msg != _message) return false;
-            _action(); return true;
-        }
-        public void Dispose() => Application.RemoveMessageFilter(this);
     }
     private sealed class FixturePlayer : IAudioPlayer
     {
@@ -1782,6 +1806,7 @@ internal static class UiChecks
         public TimeSpan Position => FixedPositionSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : _clock.Elapsed;
         public int Plays { get; private set; }
         public bool FailImmediatelyAfterPlaying { get; set; }
+        public PlaybackFailureKind Failure { get; set; } = PlaybackFailureKind.Unavailable;
         public int Stops { get; private set; }
         public bool Disposed { get; private set; }
         public Task PlayAsync(ResolvedStream stream, CancellationToken token)
@@ -1800,7 +1825,7 @@ internal static class UiChecks
             if (state == AudioState.Playing) _clock.Start();
             else if (state is AudioState.Stopped or AudioState.Opening) _clock.Reset();
             else _clock.Stop();
-            StatusChanged?.Invoke(new(state, "Fixture status"));
+            StatusChanged?.Invoke(new(state, "Fixture status", Failure));
         }
         public void Dispose() { Disposed = true; Stop(); }
     }

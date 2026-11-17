@@ -36,7 +36,9 @@ internal static class HlsRecoveryChecks
         CancelOpening(form); await opening;
         Check(form.ReconnectPending && media[0].Disposed && native.Count == 0 && !player.PreferCompatibility,
             "Opening timeout snapshots and queues reconnect without automatically changing engines");
-        Check(reconnects.Count == 1 && media.Count == 1, "Automatic reconnect yields instead of recursively opening");
+        Check(reconnects.Count == 0 && media.Count == 1, "Opening timeout waits rather than rapidly looping");
+        now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
+        Check(reconnects.Count == 1, "Temporary opening timeout queues one retry at its deadline");
         reconnects.Dequeue()(); await Task.Delay(40);
         Check(media.Count == 2 && native.Count == 0, "Automatic reconnect still uses the default engine");
         await ClickRetryAsync(form); // Replaces an in-flight opening, without waiting another 40 seconds.
@@ -107,7 +109,8 @@ internal static class HlsRecoveryChecks
         unavailableForm.Show(); var pending = unavailableForm.PlayForProbeAsync("best-989");
         CancelOpening(unavailableForm); await pending;
         await ClickRetryAsync(unavailableForm);
-        Check(failedNativeCalls == 1 && unavailableForm.ReconnectPending, "Failed manual retry queues reconnect without recursion");
+        Check(failedNativeCalls == 1 && !unavailableForm.ReconnectPending && unavailableForm.LatestStatus.State == AudioState.Failed,
+            "Explicitly unavailable compatibility source stops rather than looping");
         unavailableForm.ExitPlayer();
         while (reconnects.TryDequeue(out var reconnect)) reconnect();
         await Task.Delay(20);

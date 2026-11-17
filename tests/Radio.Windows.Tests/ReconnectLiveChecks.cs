@@ -22,8 +22,8 @@ internal static class ReconnectLiveChecks
         var watch = Stopwatch.StartNew();
         while (resolver.PrimaryCalls == 1 && watch.Elapsed.TotalSeconds < 20) await Task.Delay(100);
         Console.WriteLine($"LIVE reconnect: primary retry at {watch.Elapsed.TotalSeconds:F1}s");
-        if (watch.Elapsed.TotalSeconds >= 2 || resolver.PrimaryCalls != 2)
-            throw new Exception("Immediate reconnect was not dispatched promptly");
+        if (watch.Elapsed.TotalSeconds < 4.5 || watch.Elapsed.TotalSeconds >= 8 || resolver.PrimaryCalls != 2)
+            throw new Exception("Temporary outage did not honor its five-second retry deadline");
         var recovered = false;
         while (watch.Elapsed.TotalSeconds < 80)
         {
@@ -38,7 +38,7 @@ internal static class ReconnectLiveChecks
         if (!recovered || !player.IsMuted || settings.PlayCounts.GetValueOrDefault("esradio") != 1)
             throw new Exception("Real esRadio recovery did not reach advancing playback within observation budget");
         form.ExitPlayer();
-        Console.WriteLine("PASS: Hidden UI reconnects without backoff using real dispatch and live esRadio audio (muted; short observation only).");
+        Console.WriteLine("PASS: Hidden UI retries a temporary startup outage after 5s and recovers live esRadio audio (muted; short observation only).");
     }
 
     private sealed class Resolver : IStreamResolver
@@ -49,13 +49,13 @@ internal static class ReconnectLiveChecks
         public Task<ResolvedStream> ResolveAsync(Station station, CancellationToken token)
         {
             PrimaryCalls++;
-            if (PrimaryCalls == 1) throw new SourceResolutionException("Simulated outage");
+            if (PrimaryCalls == 1) throw new SourceResolutionException("Simulated temporary outage", PlaybackFailureKind.Transient);
             return _inner.ResolveAsync(station, token);
         }
         public Task<ResolvedStream?> ResolveFallbackAsync(Station station, CancellationToken token, int index = 0)
         {
             BackupCalls++;
-            if (PrimaryCalls == 1) throw new SourceResolutionException("Simulated outage");
+            if (PrimaryCalls == 1) throw new SourceResolutionException("Simulated temporary outage", PlaybackFailureKind.Transient);
             return _inner.ResolveFallbackAsync(station, token, index);
         }
     }

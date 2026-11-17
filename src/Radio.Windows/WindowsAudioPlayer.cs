@@ -131,11 +131,12 @@ public sealed class WindowsAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
     {
         var message = $"播放失敗：{args.Error}（0x{args.ExtendedErrorCode.HResult:X8}）";
+        var failure = SourceResolutionException.ClassifyHResult(args.ExtendedErrorCode.HResult);
         _context.Post(_ =>
         {
             if (sender != _player) return;
             Stop();
-            Publish(AudioState.Failed, message);
+            Publish(AudioState.Failed, message, failure);
         }, null);
     }
 
@@ -160,7 +161,8 @@ public sealed class WindowsAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         }, null);
     }
 
-    private void Publish(AudioState state, string message) => StatusChanged?.Invoke(new(state, message));
+    private void Publish(AudioState state, string message, PlaybackFailureKind failure = PlaybackFailureKind.Unavailable) =>
+        StatusChanged?.Invoke(new(state, message, failure));
 
     public void Dispose()
     {
