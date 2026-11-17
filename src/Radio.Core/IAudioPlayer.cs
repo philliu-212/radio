@@ -1,7 +1,8 @@
 namespace Radio.Core;
 
 public enum AudioState { Stopped, Opening, Buffering, Playing, Failed }
-public sealed record PlaybackStatus(AudioState State, string Message);
+public enum PlaybackFailureKind { Unavailable, Transient }
+public sealed record PlaybackStatus(AudioState State, string Message, PlaybackFailureKind Failure = PlaybackFailureKind.Unavailable);
 
 public interface IAudioPlayer : IDisposable
 {

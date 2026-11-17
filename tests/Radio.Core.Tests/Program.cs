@@ -44,6 +44,42 @@ Check(stations.Single(x => x.Frequency == "96.3").Id == "bcc-ilike", "96.3 is BC
 Check(stations.Single(x => x.Id == "hit-north").Frequency == "107.7", "Hit FM is northern feed");
 
 var best = stations.Single(x => x.Id == "best-989");
+foreach (var status in new[] { 401, 403, 404, 410, 408, 429, 500, 503 })
+foreach (var twitch in new[] { false, true })
+{
+    var resolver = Resolver(_ => new HttpResponseMessage((HttpStatusCode)status));
+    try
+    {
+        if (twitch) await resolver.ResolveFallbackAsync(stations.Single(x => x.Id == "kiss-999"), default);
+        else await resolver.ResolveAsync(best, default);
+        throw new Exception("Expected HTTP failure");
+    }
+    catch (SourceResolutionException error)
+    {
+        var expected = status is 408 or 429 or >= 500 ? PlaybackFailureKind.Transient : PlaybackFailureKind.Unavailable;
+        Check(error.Failure == expected && error.Message.Contains(status.ToString()),
+            $"{(twitch ? "Twitch" : "Official")} HTTP {status} preserves typed failure classification");
+    }
+}
+foreach (var transport in new[] { "refused", "network", "timeout" })
+{
+    var resolver = Resolver(_ => throw transport switch
+    {
+        "refused" => new HttpRequestException("token=secret", new System.Net.Sockets.SocketException(10061)),
+        "network" => new HttpRequestException("token=secret"),
+        _ => new TaskCanceledException("token=secret")
+    });
+    try { await resolver.ResolveAsync(best, default); throw new Exception("Expected transport failure"); }
+    catch (SourceResolutionException error)
+    {
+        Check(error.Failure == (transport == "refused" ? PlaybackFailureKind.Unavailable : PlaybackFailureKind.Transient) &&
+            !error.Message.Contains("secret"), transport + ": preserves failure kind without exposing signed exception text");
+    }
+}
+Check(SourceResolutionException.ClassifyHResult(unchecked((int)0x80072EE2)) == PlaybackFailureKind.Transient &&
+    SourceResolutionException.ClassifyHResult(unchecked((int)0x80070005)) == PlaybackFailureKind.Unavailable &&
+    SourceResolutionException.ClassifyHResult(unchecked((int)0x80004005)) == PlaybackFailureKind.Unavailable,
+    "Native timeout retries, access denial and unknown errors fail closed");
 var bestResolver = Resolver(_ => Response("<video src=\"https://bestradiow-hichannel.cdn.hinet.net/live/RA000013/playlist.m3u8?token=test&amp;expires=9999999999\"></video>"));
 var resolved = await bestResolver.ResolveAsync(best, default);
 Check(resolved.Uri.Query == "?token=test&expires=9999999999", "Decode HTML entities without dropping signatures");

@@ -58,7 +58,7 @@ internal sealed class ProbeForm(string[] args) : Form
                 var childrenStopped = true;
                 try
                 {
-                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+                    using var timeout = new CancellationTokenSource(MainForm.SourceOpeningTimeout);
                     var stream = args.Contains("--fallback")
                         ? await resolver.ResolveFallbackAsync(station, timeout.Token, int.Parse(Option(args, "--fallback-index", "0")))
                             ?? throw new SourceResolutionException("此電台沒有備援來源。")
@@ -81,7 +81,7 @@ internal sealed class ProbeForm(string[] args) : Form
                     error = exception switch
                     {
                         SourceResolutionException => exception.Message,
-                        OperationCanceledException => "Source/playback opening timed out (40s).",
+                        OperationCanceledException => $"Source/playback opening timed out ({MainForm.SourceOpeningTimeout.TotalSeconds:0}s).",
                         _ => $"Playback error: {exception.GetType().Name} (0x{exception.HResult:X8})."
                     };
                 }

@@ -90,14 +90,14 @@ internal static class PlaybackDiagnosticsChecks
             var player = new FailingPlayer();
             using (var log = new PlaybackDiagnostics(integration, false))
             using (var form = new MainForm(player, persistPreferences: false,
-                autoPlayOnStartup: false, checkUpdates: false, diagnostics: log,
+                autoPlayOnStartup: false, checkUpdates: false, diagnostics: log, postReconnect: _ => { },
                 resolver: new FixtureResolver(new(new Uri(url), new Uri(referrer), "application/vnd.apple.mpegurl")),
                 settings: new ThemeSettings { MyStationIds = ["best-989"] }))
             {
                 Check(form.PlayForProbeAsync("best-989").IsCompletedSuccessfully,
                     "fixture resolves and fails synchronously without network");
-                Check(form.LatestStatus.State == AudioState.Buffering && form.ReconnectPending && form.PlaybackWatchRunning,
-                    "diagnostics preserve automatic reconnect backoff after playback failure");
+                Check(form.LatestStatus.State == AudioState.Failed && !form.ReconnectPending && !form.PlaybackWatchRunning,
+                    "explicit opening failure stops retries without losing diagnostics");
                 Check(form.LatestStatus.Message.Contains("0x80004005", StringComparison.Ordinal),
                     "reconnect status retains the underlying native error for diagnosis");
             }

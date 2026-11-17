@@ -70,13 +70,18 @@ internal sealed class MainForm : Form
     private int _nextSourceAttempt;
     private int _playbackGeneration;
     private bool _sourceSwitchQueued;
-    private bool _openingSourceFailed;
-    private TimeSpan? _reconnectAt;
-    private int _reconnectStep;
+    private PlaybackStatus? _openingSourceFailure;
+    private bool _reconnectPending;
+    private bool _roundHadPlayback;
+    private bool _roundHadTransientFailure;
+    private readonly Action<Action> _postReconnect;
+    private readonly Queue<Action> _reconnectCallbacks = new();
+    private const int ReconnectMessage = 0x8000 + 116;
     private bool _renewSourceRound;
     private bool _retryCurrentSource;
     private int[] _sourceOrder = [];
-    internal bool ReconnectPending => _reconnectAt is not null;
+    internal bool ReconnectPending => _reconnectPending;
+    internal static TimeSpan SourceOpeningTimeout => TimeSpan.FromSeconds(30);
     private readonly HashSet<string> _attemptedStreams = new(StringComparer.Ordinal);
     internal bool PlaybackWatchRunning => _sourceWatch.Enabled;
     private Station? _targetStation;
@@ -113,11 +118,12 @@ internal sealed class MainForm : Form
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
         bool autoPlayOnStartup = true, bool checkUpdates = true, PlaybackDiagnostics? diagnostics = null,
-        Func<TimeSpan>? playbackNow = null)
+        Func<TimeSpan>? playbackNow = null, Action<Action>? postReconnect = null)
     {
         _player = player;
         _diagnostics = diagnostics;
         _playbackNow = playbackNow ?? (() => Stopwatch.GetElapsedTime(0));
+        _postReconnect = postReconnect ?? PostReconnect;
         _sourceWatch.Tick += (_, _) => CheckPlaybackProgress();
         _resolver = resolver ?? new OfficialStreamResolver();
         _metadataProvider = metadataProvider ?? new OfficialMetadataProvider();
@@ -525,13 +531,14 @@ internal sealed class MainForm : Form
         var count = _targetStation!.BackupCount + 1;
         _sourceOrder = Enumerable.Range(0, count).Select(offset => (firstSource + offset) % count).ToArray();
         _nextSourceAttempt = 0; _attemptedStreams.Clear();
+        _roundHadPlayback = false; _roundHadTransientFailure = false;
     }
 
     private async Task OpenNextSourceAsync(Station station, bool stopCurrentSource = false)
     {
         _sourceWatch.Stop();
         _renewSourceRound = false; _retryCurrentSource = false;
-        var request = new CancellationTokenSource(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 * (station.BackupCount + 1 - _nextSourceAttempt) + 10 : 40));
+        var request = new CancellationTokenSource(SourceOpeningTimeout * (station.BackupCount + 1 - _nextSourceAttempt));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _started = started; _playRequest = request;
         if (stopCurrentSource) _player.Stop();
@@ -544,9 +551,9 @@ internal sealed class MainForm : Form
             {
                 _nextSourceAttempt = attempt + 1;
                 var sourceIndex = _sourceOrder[attempt];
-                _openingSourceFailed = false;
+                _openingSourceFailure = null;
                 using var opening = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
-                opening.CancelAfter(TimeSpan.FromSeconds(station.BackupCount > 0 ? 30 : 40));
+                opening.CancelAfter(SourceOpeningTimeout);
                 try
                 {
                     var stream = sourceIndex == 0
@@ -562,9 +569,11 @@ internal sealed class MainForm : Form
                         systemPlayer.PreferCompatibility = _compatibilityStations.Contains(station.Id);
                     await _player.PlayAsync(stream, opening.Token);
                     await started.Task.WaitAsync(opening.Token);
-                    if (_openingSourceFailed) throw new SourceResolutionException("直播來源開播後立即失敗。");
+                    if (_openingSourceFailure is { } openingFailure)
+                        throw new SourceResolutionException(openingFailure.Message, openingFailure.Failure);
                     if (_playRequest == request && _active && !_closing)
                     {
+                        _roundHadPlayback = true;
                         _stability.Reset(_playbackNow(), _player.Position.TotalSeconds);
                         _sourceWatch.Start();
                     }
@@ -574,6 +583,7 @@ internal sealed class MainForm : Form
                     !request.IsCancellationRequested && _playRequest == request && !_closing)
                 {
                     lastError = error;
+                    _roundHadTransientFailure |= SourceResolutionException.Classify(error) == PlaybackFailureKind.Transient;
                     if (error is OperationCanceledException or TimeoutException)
                         PreparePlayerRecovery("source-opening-timeout");
                     _player.Stop();
@@ -589,20 +599,39 @@ internal sealed class MainForm : Form
             {
                 PreparePlayerRecovery("opening-timeout");
                 _diagnostics?.Error(new TimeoutException());
-                ScheduleReconnect("連線逾時。");
+                _roundHadTransientFailure = true;
+                FinishSourceRound("連線逾時。");
             }
         }
         catch (Exception error)
         {
             if (_playRequest != request || _closing) return;
             _diagnostics?.Error(error);
-            ScheduleReconnect(error is SourceResolutionException ? error.Message : "無法播放此直播。");
+            _roundHadTransientFailure |= SourceResolutionException.Classify(error) == PlaybackFailureKind.Transient;
+            FinishSourceRound(error is SourceResolutionException ? error.Message : "無法播放此直播。");
         }
         finally
         {
-            if (_playRequest == request) { _playRequest = null; _started = null; }
+            if (_playRequest == request)
+            {
+                _playRequest = null; _started = null;
+                if (_reconnectPending) QueueReconnect();
+            }
             request.Dispose();
         }
+    }
+
+    private void FinishSourceRound(string message)
+    {
+        if (_roundHadPlayback || _roundHadTransientFailure)
+        {
+            ScheduleReconnect(message);
+            return;
+        }
+        // No source opened and no retryable transport failure: another identical round
+        // cannot fix access denial, missing streams, invalid formats or unsupported media.
+        StopPlayback();
+        UpdateStatus(new PlaybackStatus(AudioState.Failed, $"{message} 本輪來源皆無法開播；請手動重試或使用官方播放器。"));
     }
 
     private void ScheduleReconnect(string message)
@@ -611,12 +640,43 @@ internal sealed class MainForm : Form
         _sourceWatch.Stop();
         _playingStation = null; CancelMetadata();
         _player.Stop();
-        var delay = TimeSpan.FromSeconds(_reconnectStep switch { 0 => 15, 1 => 30, 2 => 60, 3 => 120, _ => 300 });
-        _reconnectStep = Math.Min(_reconnectStep + 1, 4);
-        _reconnectAt = _playbackNow() + delay;
-        // Keep the user's playback intent (and first-success count) while waiting.
-        UpdateStatus(new PlaybackStatus(AudioState.Buffering, $"{message} 將於 {delay.TotalSeconds:0} 秒後自動重連。"));
+        _reconnectPending = true;
+        // Preserve playback intent/count and yield without any retry countdown.
+        UpdateStatus(new PlaybackStatus(AudioState.Buffering, $"{message} 正在重新連線…"));
         _sourceWatch.Start();
+        if (_playRequest is null) QueueReconnect();
+    }
+
+    private void QueueReconnect()
+    {
+        var generation = _playbackGeneration;
+        _postReconnect(() =>
+        {
+            if (_closing || generation != _playbackGeneration || !_active || !_reconnectPending || _playRequest is not null) return;
+            _reconnectPending = false;
+            BeginSourceRound();
+            QueueSourceSwitch();
+        });
+    }
+
+    private void PostReconnect(Action callback)
+    {
+        // BeginInvoke drains its managed queue in one native callback. If every source fails
+        // synchronously, posting the next round there could keep that drain alive forever.
+        // Use one native message per round so input/Stop/Close can be dispatched between rounds.
+        _reconnectCallbacks.Enqueue(callback);
+        if (!PostMessage(Handle, ReconnectMessage, IntPtr.Zero, IntPtr.Zero))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == ReconnectMessage)
+        {
+            if (_reconnectCallbacks.TryDequeue(out var callback)) callback();
+            return;
+        }
+        base.WndProc(ref message);
     }
 
     private void PreparePlayerRecovery(string reason)
@@ -656,7 +716,7 @@ internal sealed class MainForm : Form
         FinishManualRetry("canceled");
         _resolvedStream = null;
         _sourceWatch.Stop(); _sourceSwitchQueued = false; _playbackGeneration++;
-        _reconnectAt = null; _reconnectStep = 0;
+        _reconnectPending = false;
         var request = _playRequest; _playRequest = null; _started = null;
         request?.Cancel();
         _active = false; _countPending = false; _playingStation = null; _targetStation = null;
@@ -675,14 +735,7 @@ internal sealed class MainForm : Form
         }
         if (_closing || !_active || _playRequest is not null || _sourceSwitchQueued || _targetStation is null) return;
         var now = _playbackNow();
-        if (_reconnectAt is { } reconnectAt)
-        {
-            if (now < reconnectAt) return;
-            _reconnectAt = null;
-            BeginSourceRound();
-            QueueSourceSwitch();
-            return;
-        }
+        if (_reconnectPending) return;
         if (_stability.Observe(now, _player.Position.TotalSeconds))
         {
             PreparePlayerRecovery("playback-stalled");
@@ -690,7 +743,6 @@ internal sealed class MainForm : Form
         }
         else if (_stability.StableFor > TimeSpan.FromMinutes(2))
         {
-            _reconnectStep = 0;
             _renewSourceRound = true;
             // A long-running source gets one fresh attempt before moving on. Opening it
             // clears this privilege; a short-lived retry must advance to the next source.
@@ -715,7 +767,7 @@ internal sealed class MainForm : Form
             }
             if (_nextSourceAttempt > station.BackupCount)
             {
-                ScheduleReconnect(station.BackupCount == 0
+                FinishSourceRound(station.BackupCount == 0
                     ? "直播持續不穩，且無其他可用來源。"
                     : "本輪直播來源皆無法穩定播放。");
                 return;
@@ -736,15 +788,15 @@ internal sealed class MainForm : Form
         }
         // Adapters emit Stopped while replacing their internal source; that is not user Stop.
         if (status.State == AudioState.Stopped && _active) return;
-        // Late native statuses must not bypass the reconnect backoff.
-        if (_reconnectAt is not null && status.State is AudioState.Playing or AudioState.Failed) return;
+        // Late native statuses must not bypass the queued reconnect.
+        if (_reconnectPending && status.State is AudioState.Playing or AudioState.Failed) return;
         // Opening failures are handled by the bounded source-attempt loop. Keep the pending
         // success count intact until the backup plays or the entire request fails.
         if (status.State == AudioState.Failed && _playRequest is not null && _active)
         {
-            _openingSourceFailed = true;
+            _openingSourceFailure = status;
             _diagnostics?.Status(status, _targetStation?.Id);
-            _started?.TrySetException(new SourceResolutionException(status.Message));
+            _started?.TrySetException(new SourceResolutionException(status.Message, status.Failure));
             return;
         }
         if (status.State == AudioState.Failed && _active)
@@ -798,7 +850,7 @@ internal sealed class MainForm : Form
         _status.Text = _latestStatus.State switch
         {
             AudioState.Playing => "● 播放中", AudioState.Opening => "● 連線中",
-            AudioState.Buffering => ReconnectPending ? "● 等待自動重連" : "● 緩衝中",
+            AudioState.Buffering => ReconnectPending ? "● 正在重新連線" : "● 緩衝中",
             AudioState.Failed => "● 播放失敗，請重試", _ => _hasStarted ? "● 已停止" : "● 待機"
         };
         _status.ForeColor = _latestStatus.State == AudioState.Playing ? _theme.Accent
@@ -1001,6 +1053,9 @@ internal sealed class MainForm : Form
     }
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
 
     internal void ExitPlayer()
     {
@@ -1024,7 +1079,8 @@ internal sealed class MainForm : Form
     {
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
-        _reconnectAt = null;
+        _reconnectPending = false;
+        _reconnectCallbacks.Clear();
         _sourceWatch.Stop(); _sourceWatch.Dispose(); _playbackGeneration++;
         _updateTimer.Stop(); _updateTimer.Dispose(); _updater.Dispose();
         _volumeWheel.Dispose();

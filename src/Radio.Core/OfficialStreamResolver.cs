@@ -4,7 +4,31 @@ using System.Text.RegularExpressions;
 
 namespace Radio.Core;
 
-public sealed class SourceResolutionException(string message) : Exception(message);
+public sealed class SourceResolutionException(string message, PlaybackFailureKind failure = PlaybackFailureKind.Unavailable) : Exception(message)
+{
+    public PlaybackFailureKind Failure { get; } = failure;
+
+    public static PlaybackFailureKind Classify(Exception error) => error switch
+    {
+        SourceResolutionException source => source.Failure,
+        OperationCanceledException or TimeoutException => PlaybackFailureKind.Transient,
+        HttpRequestException http when http.StatusCode is { } status =>
+            (int)status is 408 or 429 or >= 500 ? PlaybackFailureKind.Transient : PlaybackFailureKind.Unavailable,
+        HttpRequestException http when http.InnerException is System.Net.Sockets.SocketException
+            { SocketErrorCode: System.Net.Sockets.SocketError.ConnectionRefused } => PlaybackFailureKind.Unavailable,
+        HttpRequestException => PlaybackFailureKind.Transient,
+        _ => ClassifyHResult(error.HResult)
+    };
+
+    // Only documented timeout/unreachable errors are retryable without an HTTP status.
+    // Unknown native errors stay unavailable instead of creating an endless retry loop.
+    public static PlaybackFailureKind ClassifyHResult(int hresult) => unchecked((uint)hresult) switch
+    {
+        0x80072EE2 or 0x8007274C => PlaybackFailureKind.Transient, // WinINet timeout / WSAETIMEDOUT
+        0x800704CF or 0x800704D0 => PlaybackFailureKind.Transient, // Win32 network / host unreachable
+        _ => PlaybackFailureKind.Unavailable
+    };
+}
 
 public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFactory = null) : IStreamResolver
 {
@@ -100,11 +124,11 @@ public sealed class OfficialStreamResolver(Func<HttpMessageHandler>? handlerFact
             // Do not expose signed URLs from exception messages.
             throw new SourceResolutionException(error.StatusCode is { } status
                 ? $"官方來源回應 HTTP {(int)status}，請稍後再試或使用官方播放器。"
-                : "無法連接官方來源，請檢查網路或使用官方播放器。");
+                : "無法連接官方來源，請檢查網路或使用官方播放器。", SourceResolutionException.Classify(error));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new SourceResolutionException("取得官方來源逾時，請稍後再試。");
+            throw new SourceResolutionException("取得官方來源逾時，請稍後再試。", PlaybackFailureKind.Transient);
         }
         catch (JsonException)
         {

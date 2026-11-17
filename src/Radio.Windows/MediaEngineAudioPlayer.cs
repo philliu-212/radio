@@ -117,14 +117,20 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
             else
             {
                 var message = "直播已結束，請重新播放。";
+                var failure = PlaybackFailureKind.Unavailable;
                 if (eventId == 5)
                 {
                     _engine.GetError(out var error);
-                    try { message = $"播放失敗（代碼 {error.GetErrorCode()}／0x{error.GetExtendedErrorCode():X8}）。"; }
+                    try
+                    {
+                        var hresult = error.GetExtendedErrorCode();
+                        message = $"播放失敗（代碼 {error.GetErrorCode()}／0x{hresult:X8}）。";
+                        failure = SourceResolutionException.ClassifyHResult(hresult);
+                    }
                     finally { Marshal.ReleaseComObject(error); }
                 }
                 Stop();
-                Publish(AudioState.Failed, message);
+                Publish(AudioState.Failed, message, failure);
             }
         }, null);
     }
@@ -153,7 +159,8 @@ internal sealed class MediaEngineAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         Publish(AudioState.Stopped, "已停止；重新播放會回到直播。");
     }
 
-    private void Publish(AudioState state, string message) => StatusChanged?.Invoke(new PlaybackStatus(state, message));
+    private void Publish(AudioState state, string message, PlaybackFailureKind failure = PlaybackFailureKind.Unavailable) =>
+        StatusChanged?.Invoke(new PlaybackStatus(state, message, failure));
 
     public void Dispose()
     {
