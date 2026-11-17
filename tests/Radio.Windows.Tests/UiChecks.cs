@@ -1336,7 +1336,8 @@ internal static class UiChecks
             using var form = new MainForm(player, false, true, new FixtureResolver(), new FixtureMetadata(), CatalogSettings(),
                 autoPlayOnStartup: false, postReconnect: reconnects.Enqueue);
             form.Show(); await form.PlayForProbeAsync("ufo-921");
-            Check(form.ReconnectPending == (failure == PlaybackFailureKind.Transient) && reconnects.Count == 0,
+            Check(form.ReconnectPending == (failure == PlaybackFailureKind.Transient) &&
+                reconnects.Count == (failure == PlaybackFailureKind.Transient ? 1 : 0),
                 "Playing then Failed in one callback preserves the failure kind, not successful-opening credit: " + failure);
             form.ExitPlayer();
         }
@@ -1363,10 +1364,9 @@ internal static class UiChecks
             using var form = new MainForm(player, false, true, resolver, new FixtureMetadata(), CatalogSettings(),
                 autoPlayOnStartup: false, playbackNow: () => now, postReconnect: reconnects.Enqueue);
             form.Show(); await form.PlayForProbeAsync("esradio");
-            Check(form.ReconnectPending && reconnects.Count == 0 && resolver.BackupCalls == 2,
+            Check(form.ReconnectPending && reconnects.Count == 1 && resolver.BackupCalls == 2,
                 "Mixed round retains earlier temporary failure even when last backup is explicitly unavailable");
-            now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
-            Check(reconnects.Count == 1, "Mixed round retries only after temporary-network deadline");
+            Check(now == TimeSpan.Zero, "Mixed round recovery needs no retry countdown");
             form.ExitPlayer(); reconnects.Dequeue()(); await Task.Delay(20);
             Check(resolver.Calls == 1 && !form.ReconnectPending, "Exit cancels a mixed-failure round retry");
         }
@@ -1410,7 +1410,7 @@ internal static class UiChecks
                 seconds + "s boundary: budget renews only over two minutes and rapid failures remain bounded");
             form.ExitPlayer();
         }
-        // Temporary transport failures wait; this must not depend on how fast failure occurs.
+        // Retryable transport failures immediately post a round, without advancing time.
         {
             var now = TimeSpan.Zero;
             var player = new FixturePlayer(); var resolver = new FixtureResolver { Fail = true, TransientFailure = true, BackupFailures = 10 };
@@ -1422,19 +1422,15 @@ internal static class UiChecks
             for (var round = 0; round < 20; round++)
             {
                 var calls = resolver.Calls;
-                Check(reconnects.Count == 0 && form.ReconnectPending, "Temporary failure waits before posting another round");
-                now += TimeSpan.FromSeconds(4); form.CheckPlaybackProgress(); await Task.Delay(20);
-                Check(resolver.Calls == calls && reconnects.Count == 0, "Immediate temporary failure cannot create a hot retry loop");
-                now += TimeSpan.FromSeconds(1); form.CheckPlaybackProgress();
+                Check(reconnects.Count == 1 && form.ReconnectPending, "Temporary failure queues recovery without a countdown");
                 player.Emit(AudioState.Playing); player.Emit(AudioState.Failed);
                 Check(form.ReconnectPending && form.PlayingStationId is null && reconnects.Count == 1,
                     "Late native callbacks cannot duplicate a queued reconnect");
                 reconnects.Dequeue()(); await Task.Delay(30);
                 Check(resolver.Calls == calls + 1 && resolver.BackupCalls == resolver.Calls * 2 && form.ReconnectPending,
-                    "Temporary failures retry one ordered round per five-second deadline: " + round);
+                    "Temporary failures retry one ordered round without advancing the clock: " + round);
             }
             resolver.Fail = false;
-            now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
             reconnects.Dequeue()(); await Task.Delay(30);
             player.Emit(AudioState.Playing); await Task.Delay(20);
             Check(form.PlayingStationId == "esradio" && settings.PlayCounts["esradio"] == 1 && !form.ReconnectPending,
@@ -1453,8 +1449,7 @@ internal static class UiChecks
             resolver.Fail = true;
             player.Emit(AudioState.Failed); await Task.Delay(30);
             callsBefore = resolver.Calls;
-            Check(form.ReconnectPending && reconnects.Count == 0, "Renewed recovery round that never opens uses temporary-network protection");
-            now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
+            Check(form.ReconnectPending && reconnects.Count == 1, "Retryable failure in a renewed round queues recovery without a countdown");
             reconnects.Dequeue()(); await Task.Delay(30);
             Check(resolver.Calls == callsBefore + 1 && settings.PlayCounts["esradio"] == 1,
                 "Temporary network failure after source-round renewal retries without recounting");
@@ -1550,7 +1545,6 @@ internal static class UiChecks
             Check(form.ReconnectPending, "Single-source station schedules reconnect");
             if (queued)
             {
-                now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
                 reconnects.Dequeue()();
             }
             if (action == "stop") Find<Button>(form, "PlayButton").PerformClick();

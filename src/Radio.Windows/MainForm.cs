@@ -72,7 +72,6 @@ internal sealed class MainForm : Form
     private bool _sourceSwitchQueued;
     private PlaybackStatus? _openingSourceFailure;
     private bool _reconnectPending;
-    private TimeSpan? _reconnectAt;
     private bool _roundHadPlayback;
     private bool _roundHadTransientFailure;
     private readonly Action<Action> _postReconnect;
@@ -615,7 +614,7 @@ internal sealed class MainForm : Form
             if (_playRequest == request)
             {
                 _playRequest = null; _started = null;
-                if (_reconnectPending && _reconnectAt is null) QueueReconnect();
+                if (_reconnectPending) QueueReconnect();
             }
             request.Dispose();
         }
@@ -625,7 +624,7 @@ internal sealed class MainForm : Form
     {
         if (_roundHadPlayback || _roundHadTransientFailure)
         {
-            ScheduleReconnect(message, waitForNetwork: !_roundHadPlayback);
+            ScheduleReconnect(message);
             return;
         }
         // No source opened and no retryable transport failure: another identical round
@@ -634,20 +633,17 @@ internal sealed class MainForm : Form
         UpdateStatus(new PlaybackStatus(AudioState.Failed, $"{message} 本輪來源皆無法開播；請手動重試或使用官方播放器。"));
     }
 
-    private void ScheduleReconnect(string message, bool waitForNetwork = false)
+    private void ScheduleReconnect(string message)
     {
         FinishManualRetry("attempt-failed");
         _sourceWatch.Stop();
         _playingStation = null; CancelMetadata();
         _player.Stop();
         _reconnectPending = true;
-        _reconnectAt = waitForNetwork ? _playbackNow() + TimeSpan.FromSeconds(5) : null;
-        // Preserve playback intent/count. Only temporary opening failures use a retry timer;
-        // interrupted playback yields to the message loop without an artificial wait.
-        UpdateStatus(new PlaybackStatus(AudioState.Buffering, waitForNetwork
-            ? $"{message} 暫時無法連線，將於 5 秒後重試。" : $"{message} 正在重新連線…"));
+        // Preserve playback intent/count and yield without any retry countdown.
+        UpdateStatus(new PlaybackStatus(AudioState.Buffering, $"{message} 正在重新連線…"));
         _sourceWatch.Start();
-        if (_playRequest is null && _reconnectAt is null) QueueReconnect();
+        if (_playRequest is null) QueueReconnect();
     }
 
     private void QueueReconnect()
@@ -720,7 +716,6 @@ internal sealed class MainForm : Form
         _resolvedStream = null;
         _sourceWatch.Stop(); _sourceSwitchQueued = false; _playbackGeneration++;
         _reconnectPending = false;
-        _reconnectAt = null;
         var request = _playRequest; _playRequest = null; _started = null;
         request?.Cancel();
         _active = false; _countPending = false; _playingStation = null; _targetStation = null;
@@ -739,15 +734,7 @@ internal sealed class MainForm : Form
         }
         if (_closing || !_active || _playRequest is not null || _sourceSwitchQueued || _targetStation is null) return;
         var now = _playbackNow();
-        if (_reconnectPending)
-        {
-            if (_reconnectAt is { } reconnectAt && now >= reconnectAt)
-            {
-                _reconnectAt = null;
-                QueueReconnect();
-            }
-            return;
-        }
+        if (_reconnectPending) return;
         if (_stability.Observe(now, _player.Position.TotalSeconds))
         {
             PreparePlayerRecovery("playback-stalled");
@@ -1092,7 +1079,6 @@ internal sealed class MainForm : Form
         if (_resourcesDisposed) return;
         _resourcesDisposed = true; _closing = true;
         _reconnectPending = false;
-        _reconnectAt = null;
         _reconnectCallbacks.Clear();
         _sourceWatch.Stop(); _sourceWatch.Dispose(); _playbackGeneration++;
         _updateTimer.Stop(); _updateTimer.Dispose(); _updater.Dispose();

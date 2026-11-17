@@ -36,9 +36,7 @@ internal static class HlsRecoveryChecks
         CancelOpening(form); await opening;
         Check(form.ReconnectPending && media[0].Disposed && native.Count == 0 && !player.PreferCompatibility,
             "Opening timeout snapshots and queues reconnect without automatically changing engines");
-        Check(reconnects.Count == 0 && media.Count == 1, "Opening timeout waits rather than rapidly looping");
-        now += TimeSpan.FromSeconds(5); form.CheckPlaybackProgress();
-        Check(reconnects.Count == 1, "Temporary opening timeout queues one retry at its deadline");
+        Check(reconnects.Count == 1 && media.Count == 1, "Opening timeout immediately queues one retry without advancing time");
         reconnects.Dequeue()(); await Task.Delay(40);
         Check(media.Count == 2 && native.Count == 0, "Automatic reconnect still uses the default engine");
         await ClickRetryAsync(form); // Replaces an in-flight opening, without waiting another 40 seconds.
