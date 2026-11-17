@@ -4,7 +4,7 @@ using Radio.Windows.UI;
 
 namespace Radio.Windows.Tests;
 
-// Explicit integration: simulated first-round outage, real timer/resolver/system engine recovery.
+// Explicit integration: simulated first-round outage, real dispatcher/resolver/system engine recovery.
 // Not a physical network interruption, audibility check or overnight acceptance test.
 internal static class ReconnectLiveChecks
 {
@@ -22,8 +22,8 @@ internal static class ReconnectLiveChecks
         var watch = Stopwatch.StartNew();
         while (resolver.PrimaryCalls == 1 && watch.Elapsed.TotalSeconds < 20) await Task.Delay(100);
         Console.WriteLine($"LIVE reconnect: primary retry at {watch.Elapsed.TotalSeconds:F1}s");
-        if (watch.Elapsed.TotalSeconds < 14.5 || resolver.PrimaryCalls != 2)
-            throw new Exception("Real timer did not honor initial reconnect backoff");
+        if (watch.Elapsed.TotalSeconds >= 2 || resolver.PrimaryCalls != 2)
+            throw new Exception("Immediate reconnect was not dispatched promptly");
         var recovered = false;
         while (watch.Elapsed.TotalSeconds < 80)
         {
@@ -38,7 +38,7 @@ internal static class ReconnectLiveChecks
         if (!recovered || !player.IsMuted || settings.PlayCounts.GetValueOrDefault("esradio") != 1)
             throw new Exception("Real esRadio recovery did not reach advancing playback within observation budget");
         form.ExitPlayer();
-        Console.WriteLine("PASS: Hidden UI reconnects after simulated outage using real 15s timer and live esRadio audio (muted; short observation only).");
+        Console.WriteLine("PASS: Hidden UI reconnects without backoff using real dispatch and live esRadio audio (muted; short observation only).");
     }
 
     private sealed class Resolver : IStreamResolver

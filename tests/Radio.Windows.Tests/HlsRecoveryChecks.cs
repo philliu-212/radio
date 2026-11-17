@@ -15,6 +15,7 @@ internal static class HlsRecoveryChecks
     internal static async Task RunAsync()
     {
         var now = TimeSpan.Zero;
+        var reconnects = new Queue<Action>();
         var media = new List<FixturePlayer>(); var native = new List<FixturePlayer>();
         using var player = new SystemAudioPlayer(() =>
         {
@@ -25,7 +26,7 @@ internal static class HlsRecoveryChecks
         using var diagnostics = new PlaybackDiagnostics(directory, false, clock: () => DateTimeOffset.UnixEpoch + now);
         var settings = new ThemeSettings { MyStationIds = ["best-989", "pop-917", "ufo-921"] };
         using var form = new MainForm(player, false, true, new Resolver(), new NoMetadata(), settings,
-            autoPlayOnStartup: false, checkUpdates: false, playbackNow: () => now, diagnostics: diagnostics);
+            autoPlayOnStartup: false, checkUpdates: false, playbackNow: () => now, diagnostics: diagnostics, postReconnect: reconnects.Enqueue);
         form.Show();
         var menu = RetryMenu(form);
         Check(menu.Text == "使用相容模式重試" && !menu.CheckOnClick && !menu.Enabled,
@@ -34,10 +35,9 @@ internal static class HlsRecoveryChecks
         var late = media[0].CaptureCallback();
         CancelOpening(form); await opening;
         Check(form.ReconnectPending && media[0].Disposed && native.Count == 0 && !player.PreferCompatibility,
-            "Opening timeout snapshots and backs off without automatically changing engines");
-        now = TimeSpan.FromSeconds(14); form.CheckPlaybackProgress(); await Task.Delay(20);
-        Check(media.Count == 1, "Automatic reconnect retains its existing backoff");
-        now = TimeSpan.FromSeconds(15); form.CheckPlaybackProgress(); await Task.Delay(40);
+            "Opening timeout snapshots and queues reconnect without automatically changing engines");
+        Check(reconnects.Count == 1 && media.Count == 1, "Automatic reconnect yields instead of recursively opening");
+        reconnects.Dequeue()(); await Task.Delay(40);
         Check(media.Count == 2 && native.Count == 0, "Automatic reconnect still uses the default engine");
         await ClickRetryAsync(form); // Replaces an in-flight opening, without waiting another 40 seconds.
         Check(native.Count == 1 && media[1].Disposed && form.LatestStatus.State == AudioState.Playing && !form.ReconnectPending,
@@ -91,7 +91,7 @@ internal static class HlsRecoveryChecks
         var frozen = new FixturePlayer { StartPlaying = true }; var replacements = 0;
         using var stalled = new SystemAudioPlayer(() => frozen, () => { replacements++; return new FixturePlayer(); });
         using var stalledForm = new MainForm(stalled, false, true, new Resolver(), new NoMetadata(),
-            new ThemeSettings { MyStationIds = ["best-989"] }, autoPlayOnStartup: false, checkUpdates: false, playbackNow: () => now);
+            new ThemeSettings { MyStationIds = ["best-989"] }, autoPlayOnStartup: false, checkUpdates: false, playbackNow: () => now, postReconnect: _ => { });
         stalledForm.Show(); await stalledForm.PlayForProbeAsync("best-989");
         for (var second = 1; second <= 10; second++) { now = TimeSpan.FromSeconds(second); stalledForm.CheckPlaybackProgress(); }
         await Task.Delay(40);
@@ -103,14 +103,14 @@ internal static class HlsRecoveryChecks
         using var unavailable = new SystemAudioPlayer(() => new FixturePlayer(),
             () => { failedNativeCalls++; return new FixturePlayer { Fail = true }; });
         using var unavailableForm = new MainForm(unavailable, false, true, new Resolver(), new NoMetadata(),
-            new ThemeSettings { MyStationIds = ["best-989"] }, autoPlayOnStartup: false, checkUpdates: false, playbackNow: () => now);
+            new ThemeSettings { MyStationIds = ["best-989"] }, autoPlayOnStartup: false, checkUpdates: false, playbackNow: () => now, postReconnect: reconnects.Enqueue);
         unavailableForm.Show(); var pending = unavailableForm.PlayForProbeAsync("best-989");
         CancelOpening(unavailableForm); await pending;
         await ClickRetryAsync(unavailableForm);
-        Check(failedNativeCalls == 1 && unavailableForm.ReconnectPending, "Failed manual retry returns to bounded backoff");
-        now = TimeSpan.FromSeconds(14); unavailableForm.CheckPlaybackProgress(); await Task.Delay(20);
-        Check(failedNativeCalls == 1, "Failed retry does not spin");
-        unavailableForm.ExitPlayer(); now += TimeSpan.FromMinutes(10); unavailableForm.CheckPlaybackProgress(); await Task.Delay(20);
+        Check(failedNativeCalls == 1 && unavailableForm.ReconnectPending, "Failed manual retry queues reconnect without recursion");
+        unavailableForm.ExitPlayer();
+        while (reconnects.TryDequeue(out var reconnect)) reconnect();
+        await Task.Delay(20);
         Check(failedNativeCalls == 1 && !unavailableForm.ReconnectPending, "Exit cancels all reconnects");
 
         var canceledNative = new FixturePlayer();
@@ -136,7 +136,7 @@ internal static class HlsRecoveryChecks
         var watch = Stopwatch.StartNew();
         await form.PlayForProbeAsync("best-989");
         Check(watch.Elapsed.TotalSeconds >= 39 && form.ReconnectPending && mediaCalls == 1 && nativeCalls == 0 && !player.PreferCompatibility,
-            "LIVE: actual opening deadline backs off without switching engines");
+            "LIVE: actual opening deadline queues immediate recovery without switching engines");
         await ClickRetryAsync(form);
         await CheckLiveProgressAsync(form, player);
         Check(nativeCalls == 1 && mediaCalls == 1 && settings.PlayCounts.GetValueOrDefault("best-989") == 1,
