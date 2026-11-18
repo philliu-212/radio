@@ -7,7 +7,6 @@ internal static class SystemPlayerChecks
 {
     public static async Task RunAsync(ResolvedStream stream)
     {
-        PlaybackRecoveryChecks.Run();
         await PlaybackRecoveryChecks.RunNativeAsync(stream);
         foreach (var backend in new[] { "mediaengine", "system" })
         {

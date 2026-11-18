@@ -31,7 +31,7 @@ internal static class TrayToolTipChecks
             using var capture = new Bitmap(tray.TipWindow.Width, tray.TipWindow.Height);
             tray.TipWindow.DrawToBitmap(capture, new Rectangle(Point.Empty, capture.Size));
             Directory.CreateDirectory("artifacts");
-            capture.Save($"artifacts/tray-tooltip-{name}.png");
+            UiChecks.SaveScreenshot(capture, $"artifacts/tray-tooltip-{name}.png");
             tray.Text = "Radio Mini · POP Radio";
             Check(tray.TipWindow.Text == tray.Text, "Visible tray tooltip follows station text changes");
             tray.HandleNotification(0x407);
@@ -41,7 +41,7 @@ internal static class TrayToolTipChecks
             menu.Items[0].Select();
             using var menuCapture = new Bitmap(menu.Width, menu.Height);
             menu.DrawToBitmap(menuCapture, menu.ClientRectangle);
-            menuCapture.Save($"artifacts/tray-menu-{name}.png");
+            UiChecks.SaveScreenshot(menuCapture, $"artifacts/tray-menu-{name}.png");
             var colors = Enumerable.Range(0, menuCapture.Width)
                 .SelectMany(x => Enumerable.Range(0, menuCapture.Height).Select(y => menuCapture.GetPixel(x, y).ToArgb())).ToHashSet();
             // Antialiased check strokes need not contain an exact solid accent pixel.

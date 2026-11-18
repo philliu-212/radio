@@ -29,17 +29,19 @@
 
 ## 驗證
 
-離線 console 測試使用 dotnet run，不是 dotnet test：
+測試分層與完整矩陣見 [docs/testing.md](docs/testing.md)。保留 console／WinForms STA runner，不使用 `dotnet test`。統一入口建置一次、群組去重、計時並產生摘要：
 
 ```powershell
-dotnet build src/Radio.Windows -c Release
-dotnet run --project tests/Radio.Core.Tests -c Release
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --ui
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
+./scripts/Test.ps1 -Profile Fast          # 日常快速檢查
+./scripts/Test.ps1 -Profile Fast,UI       # UI 修改
+./scripts/Test.ps1 -Profile Fast,Audio    # 播放／緩衝修改
+./scripts/Test.ps1 -Profile Fast,Updates  # OTA／發行工具修改
+./scripts/Test.ps1 -Profile Offline      # runner／共用基礎等完整離線回歸
 git diff --check
 ```
 
 - 按變更範圍選擇測試；純文件／GitHub 範本變更可不重跑音訊測試，但要說明原因並檢查設定與連結。
+- 不把各文件的歷史驗證指令累加為每次必跑清單。legacy `--ui` 已涵蓋 HLS／備援／穩定度，不再重複跑。`-NoBuild` 僅限同一份原始碼已建置；未測、逾時及失敗須明列。
 - 不擅自修改 PowerShell 全機執行政策。線上串流與實體多螢幕驗收不得以離線 fixture 測試替代。
 - Release 另需明確授權；依 Release.cmd 與 docs/portable.md 打包，不為一般開發自動產生發行包。
 

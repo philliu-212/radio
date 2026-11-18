@@ -1,0 +1,49 @@
+name: Offline test profiles
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Offline profile (UI/audio require a suitable Windows desktop)
+        type: choice
+        options: [Fast, UI, Audio, Updates, Tooling, Offline]
+        default: Fast
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Run selected profile
+        shell: powershell
+        env:
+          TEST_PROFILE: ${{ inputs.profile || 'Fast' }}
+        run: ./scripts/Test.ps1 -Profile $env:TEST_PROFILE -ReportDirectory artifacts/ci-tests
+      - name: Runner regression
+        if: ${{ !cancelled() && (inputs.profile == '' || inputs.profile == 'Fast') }}
+        shell: powershell
+        run: ./scripts/Test-Runner.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            artifacts/ci-tests
+            artifacts/runner-tests-*
+          retention-days: 7
