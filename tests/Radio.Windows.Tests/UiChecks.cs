@@ -355,6 +355,63 @@ internal static class UiChecks
         Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
+    internal static bool CheckStartupFocus()
+    {
+        // Run the actual main-form startup before TestForm creates another message
+        // loop. Show() inside an existing loop misses Application.Run's selection.
+        using var form = new MainForm(new FixturePlayer(), false, true, new FixtureResolver(), new FixtureMetadata(),
+            CatalogSettings(), autoPlayOnStartup: true, checkUpdates: false);
+        using var timer = new System.Windows.Forms.Timer { Interval = 100 };
+        var passed = false;
+        var stage = 0;
+        timer.Tick += (_, _) =>
+        {
+            try
+            {
+                var theme = Find<Button>(form, "ThemeToggle");
+                if (stage == 0)
+                {
+                    Check(form.ActiveControl is null && !theme.Focused,
+                        "Application.Run startup does not auto-focus the theme toggle or another control");
+                    // Windows can deliver focus after Shown (for example when
+                    // the launching process did not initially own foreground).
+                    SendMessage(form.Handle, 0x0007, IntPtr.Zero, IntPtr.Zero); // WM_SETFOCUS
+                    Check(form.ActiveControl is null && !theme.Focused,
+                        "Late native window focus does not auto-select the theme toggle");
+                    // Drive native activation messages explicitly: foreground
+                    // permission and the user's desktop must not decide the test.
+                    SendMessage(form.Handle, 0x0006, IntPtr.Zero, IntPtr.Zero); // WM_ACTIVATE / WA_INACTIVE
+                    stage++;
+                    return;
+                }
+                if (stage == 1)
+                {
+                    SendMessage(form.Handle, 0x0006, new IntPtr(1), IntPtr.Zero); // WM_ACTIVATE / WA_ACTIVE
+                    stage++;
+                    return;
+                }
+                if (stage == 2)
+                {
+                    Check(form.ActiveControl is null && !theme.Focused,
+                        "Returning from another window does not auto-focus the theme toggle");
+                    PostMessage(form.Handle, 0x0100, new IntPtr(0x09), IntPtr.Zero);
+                    PostMessage(form.Handle, 0x0101, new IntPtr(0x09), IntPtr.Zero);
+                    stage++;
+                    return;
+                }
+                Check(form.ActiveControl is { ContainsFocus: true },
+                    "Tab still focuses a control after Application.Run startup");
+                passed = true;
+            }
+            catch (Exception error) { Console.Error.WriteLine("FAIL: " + error.Message); }
+            timer.Stop();
+            form.ExitPlayer();
+        };
+        form.Shown += (_, _) => timer.Start();
+        Application.Run(form);
+        return passed;
+    }
+
     internal static async Task CheckPointerFocusAsync()
     {
         using var form = new MainForm(new FixturePlayer(), false, true, new FixtureResolver(), new FixtureMetadata(),
@@ -412,6 +469,13 @@ internal static class UiChecks
         PostMessage(theme.Handle, 0x0101, new IntPtr(0x20), IntPtr.Zero);
         await Task.Delay(60);
         Check(theme.Focused && form.IsDarkMode == wasDark, "Keyboard button activation retains focus and performs its action");
+        foreach (var control in new Control[] { theme, input })
+        {
+            control.Focus();
+            SendMessage(form.Handle, 0x0006, IntPtr.Zero, IntPtr.Zero);
+            SendMessage(form.Handle, 0x0006, new IntPtr(1), IntPtr.Zero);
+            Check(control.Focused, "Window reactivation preserves existing keyboard focus on " + control.Name);
+        }
         form.ExitPlayer();
     }
 

@@ -32,6 +32,11 @@ internal static class Program
             SingleInstanceChecks.RunHost(args[1], !args.Contains("--no-listen"));
             return;
         }
+        if ((args.Contains("--ui") || args.Contains("--focus")) && !UiChecks.CheckStartupFocus())
+        {
+            Environment.ExitCode = 1;
+            return;
+        }
         var tests = new TestForm(args);
         Application.Run(tests);
         Environment.ExitCode = tests.ResultExitCode;

@@ -676,7 +676,15 @@ internal sealed class MainForm : Form
             if (_reconnectCallbacks.TryDequeue(out var callback)) callback();
             return;
         }
+        // WinForms selects the first tab stop when an unfocused form is
+        // reactivated, even if Shown previously cleared it. Preserve the
+        // intentional no-control-focus state without losing keyboard focus
+        // that the user had already placed in a control.
+        var preserveNoFocus = message.Msg == 0x0006 // WM_ACTIVATE
+            && (message.WParam.ToInt64() & 0xffff) != 0 // not WA_INACTIVE
+            && ActiveControl is null;
         base.WndProc(ref message);
+        if (preserveNoFocus && !IsDisposed) ClearPointerFocus();
     }
 
     private void PreparePlayerRecovery(string reason)
