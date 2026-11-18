@@ -7,8 +7,19 @@ if ($Tag -ne "v$version") { throw 'Tag does not match the app version.' }
 $head = (& git -C $ProjectRoot rev-parse HEAD).Trim()
 $tagCommit = (& git -C $ProjectRoot rev-parse "$Tag^{commit}").Trim()
 if ($LASTEXITCODE -ne 0 -or $head -ne $tagCommit) { throw 'Tag must already point to this exact commit. This script never creates/moves tags.' }
-& gh release view $Tag *> $null
-if ($LASTEXITCODE -eq 0) { throw 'Release already exists. Review/remove the obsolete draft explicitly; do not mix protocols/assets.' }
+# Windows PowerShell 5 turns native stderr into terminating errors under Stop.
+# Capture it under Continue, then distinguish only gh's explicit missing release.
+$savedErrorAction = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $lookup = @(& gh release view $Tag 2>&1)
+    $lookupExit = $LASTEXITCODE
+} finally { $ErrorActionPreference = $savedErrorAction }
+if ($lookupExit -eq 0) { throw 'Release already exists. Review/remove the obsolete draft explicitly; do not mix protocols/assets.' }
+$lookupMessage = ($lookup | ForEach-Object { $_.ToString() }) -join "`n"
+if ($lookupExit -ne 1 -or $lookupMessage.Trim() -ne 'release not found') {
+    throw "Cannot verify whether the release exists (exit $lookupExit): $lookupMessage"
+}
 $files = @()
 foreach ($mode in @('Lite','Full')) {
     $candidates = @(Get-ChildItem (Join-Path $ProjectRoot 'dist') -File -Filter "Radio-Portable-$Tag-$mode-win-x64-*.zip")
