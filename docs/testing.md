@@ -17,6 +17,7 @@ powershell -NoProfile -File scripts/Test.ps1 -List                   # 列出 pr
 ./scripts/Test.ps1 -Profile Fast,Audio
 ./scripts/Test.ps1 -Group core,hls-recovery,system
 ./scripts/Test.ps1 -Profile UI -NoBuild
+./scripts/Test.ps1 -Profile UI -Screenshots  # 明確需要人工預覽時才保存 PNG
 ```
 
 `-Group` 與 `-Profile` 不可同時指定。預設 Release；`-Configuration Debug` 可切換。只有確定同一份原始碼已建置過，才能用 `-NoBuild`；不能拿舊產物證明新修改通過。
@@ -61,6 +62,7 @@ powershell -NoProfile -File scripts/Test.ps1 -List                   # 列出 pr
 - 結果寫入新的 `artifacts/test-results/<時間>-<識別碼>/summary.json`，含建置與測試分項。可用 `-ReportDirectory` 指定尚不存在的目錄；不覆寫舊結果。預設只顯示進度、摘要與失敗組 logs；`-Verbose` 於各組結束後顯示所有 logs，完整輸出始終保存。
 - 摘要可比較相同機器、Configuration、群組與冷／暖建置的耗時；不可直接比較本機與 hosted runner，或把單次測量當效能保證。
 - 設定檔、測試報告、截圖及其他 artifacts 不提交。
+- UI 預設不額外產生預覽 bitmap／不保存 PNG；需要像素斷言的 bitmap／原生 PrintWindow 仍在記憶體產生並驗證，不省略斷言。`-Screenshots`（直接 runner 為 `--screenshots`）才額外寫 PNG，摘要記錄是否啟用。截圖契約自測會使用唯一 fixture 路徑驗證開關，這不是 UI 預覽產出。
 
 ## 為何目前不改 xUnit／NUnit
 
@@ -88,7 +90,14 @@ dotnet run --project tests/Radio.Windows.Tests -c Release -- --suite playback-po
 
 legacy 命令一次只能一個，`--ui --system` 現在會失敗，不再默默漏測。未知命令、缺少值、衝突／重複選項均失敗。Core 同樣拒絕未知參數，無參數執行全部 Core 離線檢查。
 
-Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profile。見 [備援](backup-sources.md)、[音訊緩衝](audio-buffering.md)、[診斷](diagnostics.md) 與 [OTA 驗收](ota-validation.md)。`Smoke-Test.ps1` 仍是舊六台收藏假設，不納入本架構，也不當成現行收藏管理驗收。
+Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profile。見 [備援](backup-sources.md)、[音訊緩衝](audio-buffering.md)、[診斷](diagnostics.md) 與 [OTA 驗收](ota-validation.md)。舊 `Smoke-Test.ps1` 的固定六台收藏假設已失效且沒有現行呼叫端，本次移除；其舊版啟動／靜音／tray／退出範圍已有 UI／system 群組，真實 portable 啟動／runtime 檢查由專用 OTA 套件整合負責，不能把 console 測試當成發布包驗收。
+
+### 測項收斂原則
+
+- 移除獨立四箭頭預覽流程，將「只有 hover 的清單顯示對應箭頭」斷言合併至既有左右清單的 hover 端點檢查；不再額外建立預覽視窗、等待兩輪動畫或保存三張預覽。
+- Native hover 像素改用同一份記憶體 bitmap；不再先存 PNG、再讀回檢查。tooltip／tray／menu 的像素檢查保留，但預設不存 PNG。
+- 保留 queue／parser 的功能與 allocation 測試：測的是正確性與配置成本，不是重複。保留 policy／MainForm／native WAV／live：分別驗證決策、整合、Windows 生命週期與真實來源，不能互相替代。
+- Alias 只是相容入口，不新增計畫或測項；完整回歸只跑註冊群組一次。不為了讓計數變小刪掉必要邊界案例或把多組塞成無法定位的大測試。
 
 ## CI
 
@@ -103,3 +112,5 @@ Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profi
 - 在乾淨 `origin/main`（90c5d32）對照原始 `--ui`，一次箭頭初始隱藏斷言失敗、另一次通過；新 runner 的 legacy `--ui` 亦曾通過。這支持互動 UI 原有不穩定問題，但**不代表所有點擊失敗都已證實與 #64 同因，也不宣稱拆組後 UI 已完整驗收**。
 - #64 保持 open；未增加自動重試、跳過檢查、放寬斷言或要求使用者停止操作滑鼠。UI 仍需進一步隔離真實輸入，不能拿 Fast 綠燈當成 UI 通過。
 - 本次未執行線上串流、實體多螢幕、真實 Lite/Full 套件 OTA、正式封裝或 Release。
+- 後續收斂完成後，Fast＋Tooling 11/11、`ui-appearance` 不存圖／存圖兩模式通過；最後一輪 Offline（已建置相同來源，`-NoBuild`）21/22 通過。新增的兩側箭頭可見性及記憶體 native pixel 斷言均通過；`ui-stations` 仍在原生列點擊轉移失敗，獨立追蹤 [#128](https://github.com/philliu-212/radio/issues/128)，不混稱為 #64 已知同因。這是已揭露的測試驗收缺口，不以合併代表完整離線全綠。
+- 最後保留預覽呼叫原有的 `Refresh` 繪製同步，再跑 UI profile：外觀、焦點、單例 3 組通過；shell 的 esRadio 加入與 stations 的 hover（pointer 已離開列）仍失敗，整體回傳 1。截圖開關不應改變 fixture 的繪製同步需求；上述缺口持續追蹤，不追加反覆重跑來沖淡失敗。

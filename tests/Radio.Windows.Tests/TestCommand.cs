@@ -1,6 +1,6 @@
 namespace Radio.Windows.Tests;
 
-internal sealed record TestCommand(string Name, Func<Task> Run, bool StartupFocus = false, bool MessageLoop = true)
+internal sealed record TestCommand(string Name, Func<Task> Run, bool StartupFocus = false, bool MessageLoop = true, bool Screenshots = false)
 {
     private sealed record Legacy(Func<string[], Task> Run, string Values = "", string Flags = "", string Required = "");
 
@@ -65,13 +65,13 @@ internal sealed record TestCommand(string Name, Func<Task> Run, bool StartupFocu
         }
         if (name == "--suite")
         {
-            Require(args.Length == 2, "Use --suite name[,name].");
-            return Suites(name, args[1]);
+            Require(args.Length == 2 || (args.Length == 3 && args[2] == "--screenshots"), "Use --suite name[,name] [--screenshots].");
+            return Suites(name, args[1]) with { Screenshots = args.Length == 3 };
         }
         if (Aliases.TryGetValue(name, out var suites))
         {
-            Require(args.Length == 1, "Choose one legacy command, or use --suite name[,name].");
-            return Suites(name, suites);
+            Require(args.Length == 1 || (args.Length == 2 && args[1] == "--screenshots"), "Choose one legacy command, or use --suite name[,name].");
+            return Suites(name, suites) with { Screenshots = args.Length == 2 };
         }
         Require(LegacyCommands.ContainsKey(name), $"Unknown command '{name}'. Use --list.");
         var legacy = LegacyCommands[name];

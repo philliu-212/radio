@@ -35,7 +35,7 @@ internal static class ThemedToolTipChecks
             using (var graphics = Graphics.FromImage(capture))
                 graphics.CopyFromScreen(form.PointToScreen(Point.Empty), Point.Empty, capture.Size);
             Directory.CreateDirectory("artifacts");
-            capture.Save($"artifacts/tooltip-{name}.png");
+            UiChecks.SaveScreenshot(capture, $"artifacts/tooltip-{name}.png");
             Console.WriteLine("PASS: Native " + name + " tooltip uses themed owner drawing and retains 更新 text");
         }
         tips.Hide(button);

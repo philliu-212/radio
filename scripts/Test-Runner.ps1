@@ -83,6 +83,14 @@ try {
         -WorkingDirectory $root -LogBase (Join-Path $scratch 'buildfail') -TimeoutSeconds 60
     $summary = Get-Content -Raw (Join-Path $report 'summary.json') | ConvertFrom-Json
     Assert ($result.ExitCode -ne 0 -and $summary.NotRun.Count -eq $summary.Selected.Count) 'Build failure prevents stale test execution'
+    $env:RADIO_RUNNER_FIXTURE_FAIL = $null
+    $report = Join-Path $scratch 'screenshots report'
+    $result = Invoke-RadioTestProcess -FilePath 'powershell.exe' -Arguments @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',
+        (Join-Path $PSScriptRoot 'Test.ps1'),'-Group','runner-contract','-NoBuild','-Screenshots','-ReportDirectory',$report) `
+        -WorkingDirectory $root -LogBase (Join-Path $scratch 'screenshots') -TimeoutSeconds 60
+    $summary = Get-Content -Raw (Join-Path $report 'summary.json') | ConvertFrom-Json
+    $lastCommand = Get-Content -LiteralPath $env:RADIO_RUNNER_FIXTURE_LOG | Select-Object -Last 1
+    Assert ($result.ExitCode -eq 0 -and $summary.Screenshots -and $lastCommand.EndsWith('|--suite|runner-contract|--screenshots')) 'Screenshots option reaches only the Windows runner and is recorded in the summary'
 }
 finally {
     $env:PATH = $oldPath

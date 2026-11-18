@@ -6,6 +6,7 @@ param(
     [switch]$List,
     [switch]$NoBuild,
     [switch]$FailFast,
+    [switch]$Screenshots,
     [string]$ReportDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -49,7 +50,10 @@ try {
             if ($item.Project) {
                 $file = 'dotnet'
                 $arguments = @('run','--no-build','--no-restore','--project',(Join-Path $root $item.Project),'-c',$Configuration)
-                if ($item.Name -ne 'core') { $arguments += @('--','--suite',$item.Name) }
+                if ($item.Name -ne 'core') {
+                    $arguments += @('--','--suite',$item.Name)
+                    if ($Screenshots) { $arguments += '--screenshots' }
+                }
             }
             else {
                 $file = 'powershell.exe'
@@ -73,7 +77,7 @@ catch {
 finally {
     $notRun = @($plan.Name | Where-Object { $_ -notin @($results | Where-Object Phase -eq 'Test' | Select-Object -ExpandProperty Name) })
     $report = [ordered]@{
-        SchemaVersion = 1; Configuration = $Configuration; NoBuild = [bool]$NoBuild
+        SchemaVersion = 1; Configuration = $Configuration; NoBuild = [bool]$NoBuild; Screenshots = [bool]$Screenshots
         Seconds = [Math]::Round($clock.Elapsed.TotalSeconds, 3)
         Passed = !$failed; Selected = @($plan.Name); NotRun = $notRun; Results = @($results.ToArray())
     }

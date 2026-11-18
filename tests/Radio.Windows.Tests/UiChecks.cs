@@ -6,6 +6,8 @@ namespace Radio.Windows.Tests;
 
 internal static class UiChecks
 {
+    internal static bool SaveScreenshots { get; set; }
+
     internal static async Task RunFocusAsync()
     {
         await CheckPointerFocusAsync();
@@ -19,7 +21,6 @@ internal static class UiChecks
         MarqueeChecks.Run();
         IconChecks.Run();
         await CheckStationManagerDpiAsync();
-        await CaptureFourArrowPreviewAsync();
     }
 
     internal static async Task RunShellAsync()
@@ -542,30 +543,6 @@ internal static class UiChecks
         restored = ThemeSettings.Load(path);
         Check(restored.Theme == "light" && restored.Volume == 45 && restored.MyStationIds.Count == 0, "Legacy settings migrate without inventing membership or losing preferences");
     }
-    private static async Task CaptureFourArrowPreviewAsync()
-    {
-        // Capture the real controls with isolated fixture membership, never user settings.
-        var settings = new ThemeSettings { MyStationIds = ["best-989", "pop-917", "ufo-921"] };
-        using var font = new Font("Microsoft JhengHei UI", 10);
-        using var dialog = new StationManagerDialog(new StationLibrary(settings), PlayerTheme.Dark, font);
-        dialog.Show(); await Task.Delay(30);
-        var available = Find<ListBox>(dialog, "AvailableStations");
-        var mine = Find<ListBox>(dialog, "MyStations");
-        available.SetSelected(0, true); available.SetSelected(2, true); mine.SetSelected(1, true);
-        Capture(dialog, "artifacts/station-manager-four-arrows.png");
-        HoverTransfer(Find<Button>(dialog, "AddStation"));
-        await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
-        Capture(dialog, "artifacts/station-manager-inline-right.png");
-        HoverTransfer(Find<Button>(dialog, "RemoveStation"));
-        await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
-        Check(Find<Button>(dialog, "RemoveStation").Visible && !Find<Button>(dialog, "AddStation").Visible,
-            "Moving between lists reveals only the hovered row's matching inline arrow");
-        Capture(dialog, "artifacts/station-manager-inline-left.png");
-        Cursor.Position = new Point(0, 0);
-        await Task.Delay(30);
-        dialog.Close();
-    }
-
     private static ThemeSettings CatalogSettings() => new() { MyStationIds = StationCatalog.Load().Select(s => s.Id).ToList() };
 
     private static void HoverTransfer(Button button)
@@ -627,7 +604,7 @@ internal static class UiChecks
             await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             using var hovered = new Bitmap(list.Width, list.Height);
             list.DrawToBitmap(hovered, list.ClientRectangle);
-            hovered.Save($"artifacts/station-manager-hover-{list.Name}.png");
+            SaveScreenshot(hovered, $"artifacts/station-manager-hover-{list.Name}.png");
             var color = isLeft ? PlayerTheme.Dark.Muted : PlayerTheme.Dark.Text;
             int InkLeft(Bitmap bitmap)
             {
@@ -640,12 +617,14 @@ internal static class UiChecks
                 $"{list.Name}: frequency/name smoothly makes 18 DIP of room for its arrow (rest={InkLeft(resting)}, hover={InkLeft(hovered)}, visible={button.Visible}, selected={list.SelectedIndex}, pointer={list.PointToClient(Cursor.Position)})");
             Check(hovered.GetPixel(2, list.ItemHeight / 2).ToArgb() == PlayerTheme.Dark.Hover.ToArgb() && button.Visible,
                 $"{list.Name}: row background and arrow reach the hover endpoint");
+            Check(!Find<Button>(dialog, isLeft ? "RemoveStation" : "AddStation").Visible,
+                $"{list.Name}: only the hovered list reveals its matching inline arrow");
             var arrow = button.Bounds;
             var strayMint = 0; var arrowMint = 0;
             var strayLocations = new List<Point>();
             var nativePath = $"artifacts/station-manager-native-hover-{list.Name}.png";
-            Capture(dialog, nativePath);
-            using var native = new Bitmap(nativePath);
+            using var native = CapturePixels(dialog);
+            SaveScreenshot(native, nativePath);
             var origin = dialog.PointToClient(list.PointToScreen(Point.Empty));
             var nativeStrayMint = 0;
             for (var y = 0; y < list.ItemHeight; y++)
@@ -1170,7 +1149,7 @@ internal static class UiChecks
         using (var menuPixels = new Bitmap(dialog.LanguageMenu.Width, dialog.LanguageMenu.Height))
         {
             dialog.LanguageMenu.DrawToBitmap(menuPixels, new Rectangle(Point.Empty, menuPixels.Size));
-            menuPixels.Save("artifacts/station-language-menu.png");
+            SaveScreenshot(menuPixels, "artifacts/station-language-menu.png");
         }
         dialog.LanguageMenu.Close();
         left.Query = "FRANCE ecoute";
@@ -1807,14 +1786,33 @@ internal static class UiChecks
     }
     private static void Capture(Form form, string path)
     {
+        // Keep the existing paint synchronization even when PNG output is off.
         form.Refresh();
-        Directory.CreateDirectory("artifacts");
-        using var bitmap = new Bitmap(form.Width, form.Height);
-        using var graphics = Graphics.FromImage(bitmap);
-        var dc = graphics.GetHdc();
-        try { if (!PrintWindow(form.Handle, dc, 2)) throw new Exception("PrintWindow failed."); }
-        finally { graphics.ReleaseHdc(dc); }
+        if (!SaveScreenshots) return;
+        using var bitmap = CapturePixels(form);
+        SaveScreenshot(bitmap, path);
+    }
+
+    internal static void SaveScreenshot(Bitmap bitmap, string path)
+    {
+        if (!SaveScreenshots) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    }
+
+    private static Bitmap CapturePixels(Form form)
+    {
+        form.Refresh();
+        var bitmap = new Bitmap(form.Width, form.Height);
+        try
+        {
+            using var graphics = Graphics.FromImage(bitmap);
+            var dc = graphics.GetHdc();
+            try { if (!PrintWindow(form.Handle, dc, 2)) throw new Exception("PrintWindow failed."); }
+            finally { graphics.ReleaseHdc(dc); }
+            return bitmap;
+        }
+        catch { bitmap.Dispose(); throw; }
     }
     private static void SimulateDpi(Form form, int dpi, int height = 271)
     {

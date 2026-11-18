@@ -64,7 +64,7 @@ dotnet run --project src/Radio.Windows
 ./scripts/Test.ps1 -List                 # 只列計畫，不執行
 ```
 
-結果位於 `artifacts/test-results/`，包含 JSON 摘要及逐組 logs。完整離線需可互動 Windows 桌面及音訊環境；不等於線上串流或實體多螢幕驗收。舊 `Smoke-Test.ps1` 仍假設固定六台收藏，不適用任意收藏或 0 台，不列為必跑項。`--probe` 的 UI 量測停用啟動播放，再依指定測試電台靜音連線。
+結果位於 `artifacts/test-results/`，包含 JSON 摘要及逐組 logs。截圖預設不落盤，需要人工預覽時加 `-Screenshots`；像素斷言仍照常在記憶體驗證。完整離線需可互動 Windows 桌面及音訊環境；不等於線上串流或實體多螢幕驗收。舊六台收藏冒煙腳本已移除，避免沿用失效假設。`--probe` 的 UI 量測停用啟動播放，再依指定測試電台靜音連線。
 若系統政策不允許執行 `.ps1`，可改用手動操作驗證；不需要更改全機 PowerShell 執行政策。
 
 靜音線上實驗（會產生少量正常收聽流量）需以已編譯的程式執行，避免把 SDK／建置程序算入播放器：
