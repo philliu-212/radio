@@ -25,6 +25,9 @@ internal static class TestCommandChecks
             new[] { "--rfi", "--seconds" }, new[] { "--rfi", "--seconds", "oops" },
             new[] { "--rfi", "--seconds", "0" }, new[] { "--rfi", "--frames" },
             new[] { "--rfi", "--output", "" },
+            new[] { "--rfi-memory", "--mode" },
+            new[] { "--rfi-memory", "--seconds", "-1" },
+            new[] { "--rfi-memory", "--same-data" },
             new[] { "--rfi-transport", "--frames", "--buffered" },
             new[] { "--rfi", "--output", "a", "--output", "b" },
             new[] { "--ota-stage", "--root", "x" }, new[] { "--instance-host" },
@@ -42,6 +45,7 @@ internal static class TestCommandChecks
             new[] { "--suite", "ui-appearance", "--screenshots" },
             new[] { "--ui", "--screenshots" },
             new[] { "--rfi", "--seconds", "60", "--output", "a path/report.json" },
+            new[] { "--rfi-memory", "--mode", "synthetic", "--seconds", "30", "--output", "memory.jsonl" },
             new[] { "--ota-stage", "--root", "r", "--zip", "z", "--report", "p" },
             new[] { "--instance-client", "pipe" }, new[] { "--instance-host", "pipe", "--no-listen" }
         }) TestCommand.Parse(args);

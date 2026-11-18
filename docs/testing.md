@@ -92,6 +92,8 @@ legacy 命令一次只能一個，`--ui --system` 現在會失敗，不再默默
 
 Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profile。見 [備援](backup-sources.md)、[音訊緩衝](audio-buffering.md)、[診斷](diagnostics.md) 與 [OTA 驗收](ota-validation.md)。舊 `Smoke-Test.ps1` 的固定六台收藏假設已失效且沒有現行呼叫端，本次移除；其舊版啟動／靜音／tray／退出範圍已有 UI／system 群組，真實 portable 啟動／runtime 檢查由專用 OTA 套件整合負責，不能把 console 測試當成發布包驗收。
 
+`--rfi-memory --mode synthetic|queue|live|direct|managed-samples|native-samples --seconds 300 --output artifacts/memory.jsonl` 是額外 opt-in 的記憶體診斷；各模式與量測限制見 [RFI 長播調查](rfi-memory.md)。不同條件用獨立程序依序比較，不把結尾診斷用 GC 當正式改善或正常播放數字。
+
 ### 測項收斂原則
 
 - 移除獨立四箭頭預覽流程，將「只有 hover 的清單顯示對應箭頭」斷言合併至既有左右清單的 hover 端點檢查；不再額外建立預覽視窗、等待兩輪動畫或保存三張預覽。

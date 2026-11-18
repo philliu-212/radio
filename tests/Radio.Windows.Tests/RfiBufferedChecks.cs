@@ -3,6 +3,9 @@ using System.Threading.Channels;
 using System.Diagnostics;
 using Radio.Core;
 using Radio.Windows.UI;
+using Windows.Security.Cryptography;
+using Windows.Media.Core;
+using System.Runtime.CompilerServices;
 
 namespace Radio.Windows.Tests;
 
@@ -67,6 +70,21 @@ internal static class RfiBufferedChecks
 
     internal static async Task RunAsync()
     {
+        var original = Enumerable.Range(0, 523).Select(i => (byte)i).ToArray();
+        var supplied = original.ToArray();
+        var sample = RfiMediaStreamSource.CreateSample(supplied, TimeSpan.FromSeconds(3));
+        Array.Fill(supplied, (byte)0);
+        CryptographicBuffer.CopyToByteArray(sample.Buffer, out var delivered);
+        Check(delivered.SequenceEqual(original) && sample.Timestamp == TimeSpan.FromSeconds(3),
+            "Native sample owns an unchanged payload independently of the parser array and preserves timestamps");
+        var (retainedSample, inputReference) = DetachedSample();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Check(!inputReference.IsAlive, "Retaining a native sample does not retain/pin the parser payload array");
+        CryptographicBuffer.CopyToByteArray(retainedSample.Buffer, out var retainedBytes);
+        Check(retainedBytes.SequenceEqual(original), "Native sample payload survives collection of the parser array");
+        GC.KeepAlive(retainedSample);
         var official = new Uri("https://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3");
         Check(RfiBufferedStream.Supports(official) && RfiBufferedStream.Supports(new("https://rfiafrique64k.ice.infomaniak.ch/rfimonde-64.mp3")), "Only verified RFI Monde entries are eligible");
         foreach (var uri in new[] { "http://rfimonde64k.ice.infomaniak.ch/rfimonde-64.mp3", "https://example.invalid/rfimonde-64.mp3",
@@ -149,6 +167,13 @@ internal static class RfiBufferedChecks
 
         await CheckRoutingAsync(official);
         await CheckNativeAsync(official);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (MediaStreamSample Sample, WeakReference Input) DetachedSample()
+    {
+        var data = Enumerable.Range(0, 523).Select(i => (byte)i).ToArray();
+        return (RfiMediaStreamSource.CreateSample(data, TimeSpan.Zero), new WeakReference(data));
     }
 
     private static async Task CheckRoutingAsync(Uri uri)

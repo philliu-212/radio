@@ -67,3 +67,7 @@ dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-buffered-offl
 | MP3 parser，9,999 幀、每幀 209 bytes | 約 655.34 B／幀 | 約 247.34 B／幀 |
 
 parser 配置量減少約 62%；剩餘包含必要的 payload 及接收逾時計時。這是受控熱路徑的配置量／GC 負擔比較，**不是整個程式常駐記憶體減少 62%**，也不是網路等待時完全零配置。容量上限、音訊資料及開播策略不變。
+
+### 長播總記憶體
+
+bounded reserve 不代表整個播放器的記憶體一定有界；parser allocation 測試也未涵蓋 Windows sample 的 COM／GC 生命週期。[RFI 長播記憶體調查](rfi-memory.md) 記錄 #129 的使用者 log、分離診斷命令與改善實驗。sample 改用原生自有 payload copy，避免把 parser 的小陣列透過 `AsBuffer()` 固定到 sample／projection 釋放為止；不縮減 reserve、不強制 GC。
