@@ -7,6 +7,7 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
 {
     private readonly Func<IAudioPlayer> _mediaFactory;
     private readonly Func<IAudioPlayer> _nativeFactory;
+    private readonly Func<IAudioPlayer> _rfiFactory;
     private IAudioPlayer? _current;
     private Action<PlaybackStatus>? _forwardStatus;
     internal bool PreferCompatibility { get; set; }
@@ -16,10 +17,11 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
     private bool _disposed;
 
     public SystemAudioPlayer() : this(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer()) { }
-    internal SystemAudioPlayer(Func<IAudioPlayer> mediaFactory, Func<IAudioPlayer> nativeFactory)
+    internal SystemAudioPlayer(Func<IAudioPlayer> mediaFactory, Func<IAudioPlayer> nativeFactory, Func<IAudioPlayer>? rfiFactory = null)
     {
         _mediaFactory = mediaFactory;
         _nativeFactory = nativeFactory;
+        _rfiFactory = rfiFactory ?? (() => new WindowsAudioPlayer { UseBufferedRfiSource = true });
     }
 
     public event Action<PlaybackStatus>? StatusChanged;
@@ -47,7 +49,8 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         Stop();
         _usingCompatibility = stream.Uri.Host.Equals("hitoradio-ott2b2.cdn.hinet.net", StringComparison.OrdinalIgnoreCase)
             || (stream.IsHls && PreferCompatibility);
-        IAudioPlayer player = _usingCompatibility ? _nativeFactory() : _mediaFactory();
+        IAudioPlayer player = !stream.IsHls && RfiBufferedStream.Supports(stream.Uri)
+            ? _rfiFactory() : _usingCompatibility ? _nativeFactory() : _mediaFactory();
         _current = player;
         player.Volume = _volume;
         player.IsMuted = _muted;

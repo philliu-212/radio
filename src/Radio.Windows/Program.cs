@@ -52,7 +52,9 @@ internal static class Program
             {
                 using var diagnostics = new PlaybackDiagnostics(Path.Combine(
                     Path.GetDirectoryName(OtaRuntime.SettingsPath)!, "logs"));
-                using var form = new MainForm(PlayerBackend.Create(args), autoPlayOnStartup: !args.Contains("--no-autoplay"), checkUpdates: !args.Contains("--no-update-check"), diagnostics: diagnostics);
+                using var player = PlayerBackend.Create(args);
+                using var form = new MainForm(player, autoPlayOnStartup: !args.Contains("--no-autoplay"),
+                    checkUpdates: !args.Contains("--no-update-check"), diagnostics: diagnostics);
                 instance!.Listen(form, form.ShowPlayer);
                 form.Shown += (_, _) => form.BeginInvoke(OtaRuntime.Healthy);
                 Application.Run(form);

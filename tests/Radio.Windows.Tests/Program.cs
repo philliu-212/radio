@@ -11,6 +11,11 @@ internal static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (args.Contains("--audio-buffer-allocations"))
+        {
+            AudioBufferAllocationChecks.Run();
+            return;
+        }
         if (args.Contains("--diagnostics"))
         {
             PlaybackDiagnosticsChecks.Run();
@@ -109,6 +114,42 @@ internal sealed class TestForm(string[] args) : Form
             if (args.Contains("--esradio"))
             {
                 await EsRadioPlaybackChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-buffered-ui-live"))
+            {
+                await RfiBufferedChecks.RunLiveUiAsync(args);
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--audio-buffer-offline"))
+            {
+                await AudioBufferChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-buffered-offline"))
+            {
+                await RfiBufferedChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-edge"))
+            {
+                await RfiEdgeChecks.RunAsync(args);
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-transport-offline"))
+            {
+                await RfiTransportChecks.RunOfflineAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-transport"))
+            {
+                await RfiTransportChecks.RunAsync(args);
                 ResultExitCode = 0;
                 return;
             }
