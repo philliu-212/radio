@@ -92,3 +92,9 @@ powershell -NoProfile -File scripts/Test-PortableUpdate.ps1 -BaselineZip <1.0.0.
 ```
 
 整合腳本使用真實根 WinForms apphost／updater 及 loopback HTTP 的完整 ZIP，保持舊程序運行直到重啟，驗證 Latest Wins、沒有重複下載、程序鎖、兩入口與設定回復、成功刪舊版、根 EXE 名稱／版本及 Full runtime；結果與量測在 `artifacts/ota-integration-*/result.json`。這不是 GitHub WAN 實測，也不代替人工聽音、長時間、睡眠／斷網或實體多螢幕驗收。
+
+長路徑回歸：`powershell -NoProfile -File scripts/Test-UpdaterLongPaths.ps1`，使用與 updater 相同的 Framework compiler，重現 legacy 限制、驗證超過 260 字元的舊資源清理及 junction 拒絕。Updater 啟動時啟用現代路徑處理；資源清理使用明確 extended path，不修改全機長路徑設定，也不略過 reparse-point 檢查。這不是宣稱任意長的 portable 根目錄都能啟動（Windows 程序啟動及其他工具仍有各自限制）。
+
+由舊 updater 執行的首次升級仍可能留下舊資源；新版於下一次一般啟動、確認 state 已無 Trial／Pending 後安全重試清理。新版 updater 自己執行後續升級時會在健康握手後直接清理。
+
+`Test-PortableUpdate.ps1 -LongPathCleanup` 會在舊資源內加入超過 260 字元的隔離測試檔，仍需通過原本四種失敗回復驗收。搭配 `-VerifyCleanupOnRelaunch` 可驗證正式舊版 updater 首次升級後，由新版一般啟動清理殘留；不改動預設「握手後立即清理」的驗收條件。

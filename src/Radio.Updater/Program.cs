@@ -11,6 +11,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        ConfigurePaths();
         SetErrorMode(0x8003); // Do not let OS loader error dialogs block recovery.
         if (args.Length != 2 || (args[0] != "--switch" && args[0] != "--worker")) return 2;
         var requestPath = Path.GetFullPath(args[1]);
@@ -86,6 +87,13 @@ internal static class Program
             MessageBox.Show(error.Message, "Radio Mini", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return 1;
         }
+    }
+    internal static void ConfigurePaths()
+    {
+        // The Framework compiler targets legacy defaults. Opt in before any
+        // System.IO call; no registry change or sidecar config is required.
+        AppContext.SetSwitch("Switch.System.IO.UseLegacyPathHandling", false);
+        AppContext.SetSwitch("Switch.System.IO.BlockLongPaths", false);
     }
     private static FileStream Acquire(Store store, string name, int milliseconds)
     {
