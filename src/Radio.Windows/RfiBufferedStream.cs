@@ -1,20 +1,17 @@
-using System.Threading.Channels;
 using System.Collections.Concurrent;
 
 namespace Radio.Windows;
 
-// Opt-in trial. Continuously receives compressed audio independently of decoder
-// demand; no fixed startup preload, local HTTP gateway, recording or disk cache.
+// Verified RFI HTTP/format adapter over the shared compressed-frame reserve.
+// No fixed startup preload, local HTTP gateway, recording or disk cache.
 internal sealed class RfiBufferedStream : IDisposable
 {
     internal const int MaxFrames = 1148; // <30s of the verified 576/22050 format.
     internal const int MaxPayloadBytes = MaxFrames * RfiMp3FrameReader.MaxFrameBytes;
-    private readonly Channel<RfiMp3Frame> _queue = Channel.CreateBounded<RfiMp3Frame>(new BoundedChannelOptions(MaxFrames)
-    {
-        // Stop drains the queue concurrently with cancellation of a native read.
-        FullMode = BoundedChannelFullMode.Wait, SingleWriter = true, SingleReader = false,
-        AllowSynchronousContinuations = false
-    });
+    internal static AudioBufferOptions DefaultOptions { get; } =
+        new(TimeSpan.FromSeconds(30), MaxPayloadBytes, MaxFrames);
+    private readonly AudioBufferOptions _options;
+    private readonly AudioFrameBuffer<RfiMp3Frame> _queue;
     private readonly CancellationTokenSource _stop;
     private readonly HttpClient? _http;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -25,8 +22,11 @@ internal sealed class RfiBufferedStream : IDisposable
     private readonly ConcurrentDictionary<int, long> _bitrates = new();
     private string? _error;
 
-    private RfiBufferedStream(Uri? uri, Stream? fixture, CancellationToken token)
+    private RfiBufferedStream(Uri? uri, Stream? fixture, AudioBufferOptions options, CancellationToken token)
     {
+        _options = options;
+        _queue = new(options, frame => frame.Data.Length,
+            frame => TimeSpan.FromSeconds((double)frame.Samples / frame.SampleRate));
         _stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         if (fixture is null)
             _http = new HttpClient(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(15) })
@@ -40,17 +40,23 @@ internal sealed class RfiBufferedStream : IDisposable
         && uri.AbsolutePath == "/rfimonde-64.mp3" && string.IsNullOrEmpty(uri.Query);
 
     internal static Task<RfiBufferedStream> OpenAsync(Uri uri, CancellationToken token)
+        => OpenAsync(uri, DefaultOptions, token);
+
+    internal static Task<RfiBufferedStream> OpenAsync(Uri uri, AudioBufferOptions options, CancellationToken token)
     {
         if (!Supports(uri)) throw new ArgumentException("Only verified RFI Monde MP3 sources support this trial.", nameof(uri));
-        return OpenCoreAsync(uri, null, token);
+        return OpenCoreAsync(uri, null, options, token);
     }
 
     internal static Task<RfiBufferedStream> OpenFixtureAsync(Stream input, CancellationToken token = default) =>
-        OpenCoreAsync(null, input, token);
+        OpenCoreAsync(null, input, DefaultOptions, token);
 
-    private static async Task<RfiBufferedStream> OpenCoreAsync(Uri? uri, Stream? fixture, CancellationToken token)
+    internal static Task<RfiBufferedStream> OpenFixtureAsync(Stream input, AudioBufferOptions options, CancellationToken token = default) =>
+        OpenCoreAsync(null, input, options, token);
+
+    private static async Task<RfiBufferedStream> OpenCoreAsync(Uri? uri, Stream? fixture, AudioBufferOptions options, CancellationToken token)
     {
-        var stream = new RfiBufferedStream(uri, fixture, token);
+        var stream = new RfiBufferedStream(uri, fixture, options, token);
         try
         {
             using var opening = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -68,12 +74,13 @@ internal sealed class RfiBufferedStream : IDisposable
     }
 
     internal Task Completion => _receiving;
-    internal int QueuedFrames => _queue.Reader.Count;
-    internal double QueuedSeconds => QueuedFrames * (576.0 / 22050);
+    internal int QueuedFrames => _queue.Count;
+    internal double QueuedSeconds => _queue.Seconds;
     internal object Describe() => new
     {
         mode = "rfi-buffered-trial", queuedFrames = QueuedFrames, queuedSeconds = QueuedSeconds,
-        maximumFrames = MaxFrames, maximumPayloadBytes = MaxPayloadBytes,
+        maximumFrames = _options.MaxFrames, maximumPayloadBytes = _options.MaxPayloadBytes,
+        reserve = _queue.Describe(),
         receivedFrames = Interlocked.Read(ref _receivedFrames), receivedBytes = _reader?.ReceivedBytes ?? 0,
         skippedBytes = _reader?.SkippedBytes ?? 0, frameBitrates = _bitrates.ToArray(),
         receivingCompleted = _receiving.IsCompleted, error = _error
@@ -82,7 +89,7 @@ internal sealed class RfiBufferedStream : IDisposable
     internal ValueTask<RfiMp3Frame> ReadAsync(CancellationToken token)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        return _queue.Reader.ReadAsync(token);
+        return _queue.ReadAsync(token);
     }
 
     private async Task ReceiveAsync(Uri? uri, Stream? fixture, CancellationToken token)
@@ -103,14 +110,12 @@ internal sealed class RfiBufferedStream : IDisposable
                 input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
             }
             _reader = new RfiMp3FrameReader(input);
-            while (true)
+            await _queue.ReceiveAsync(_reader.ReadAsync, frame =>
             {
-                var frame = await _reader.ReadAsync(token).ConfigureAwait(false);
-                await _queue.Writer.WriteAsync(frame, token).ConfigureAwait(false);
                 Interlocked.Increment(ref _receivedFrames);
                 _bitrates.AddOrUpdate(frame.Bitrate, 1, (_, count) => count + 1);
                 _ready.TrySetResult(); // Start after an initial synchronized frame, not after filling the reserve.
-            }
+            }, token).ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -124,10 +129,9 @@ internal sealed class RfiBufferedStream : IDisposable
         }
         finally
         {
-            _queue.Writer.TryComplete(failure);
+            _queue.Complete(failure, discard: Volatile.Read(ref _disposed) != 0);
             input?.Dispose();
             response?.Dispose();
-            if (Volatile.Read(ref _disposed) != 0) Drain();
         }
     }
 
@@ -136,10 +140,8 @@ internal sealed class RfiBufferedStream : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _stop.Cancel();
         _http?.Dispose();
-        Drain();
+        _queue.Complete(new OperationCanceledException(), discard: true);
         _ = _receiving.ContinueWith(_ => _stop.Dispose(), CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
-
-    private void Drain() { while (_queue.Reader.TryRead(out _)) { } }
 }

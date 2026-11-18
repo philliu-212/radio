@@ -118,6 +118,12 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
+            if (args.Contains("--audio-buffer-offline"))
+            {
+                await AudioBufferChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--rfi-buffered-offline"))
             {
                 await RfiBufferedChecks.RunAsync();
