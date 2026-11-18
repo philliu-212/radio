@@ -7,209 +7,71 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        if (args.Contains("--audio-buffer-allocations"))
+        try
         {
-            AudioBufferAllocationChecks.Run();
-            return;
+            // Parse before creating a window, touching audio or contacting the network.
+            var command = TestCommand.Parse(args);
+            if (command.Name is "--list" or "--help")
+            {
+                Console.WriteLine("Usage: --suite name[,name] | one legacy command. No arguments: --system.");
+                foreach (var group in TestCatalog.Groups)
+                    Console.WriteLine($"{group.Name,-20} {group.Description}");
+                Console.WriteLine("Legacy: " + string.Join(" ", TestCommand.Names));
+                return;
+            }
+            if (command.Name == "--instance-client")
+            {
+                using var instance = new SingleInstance(args[1]);
+                Environment.ExitCode = !instance.IsPrimary && instance.ActivateExistingAsync().GetAwaiter().GetResult() ? 0 : 1;
+                return;
+            }
+            if (command.Name == "--instance-host")
+            {
+                SingleInstanceChecks.RunHost(args[1], !args.Contains("--no-listen"));
+                return;
+            }
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            if (!command.MessageLoop)
+            {
+                StaTestContext.Run(command.Run);
+                return;
+            }
+            if (command.StartupFocus && !UiChecks.CheckStartupFocus())
+            {
+                Environment.ExitCode = 1;
+                return;
+            }
+            using var tests = new TestForm(command);
+            Application.Run(tests);
+            Environment.ExitCode = tests.ResultExitCode;
         }
-        if (args.Contains("--diagnostics"))
+        catch (Exception error)
         {
-            PlaybackDiagnosticsChecks.Run();
-            return;
-        }
-        if (args.Length == 2 && args[0] == "--instance-client")
-        {
-            using var instance = new SingleInstance(args[1]);
-            Environment.ExitCode = !instance.IsPrimary && instance.ActivateExistingAsync().GetAwaiter().GetResult() ? 0 : 1;
-            return;
-        }
-        if (args.Length >= 2 && args[0] == "--instance-host")
-        {
-            SingleInstanceChecks.RunHost(args[1], !args.Contains("--no-listen"));
-            return;
-        }
-        if ((args.Contains("--ui") || args.Contains("--focus")) && !UiChecks.CheckStartupFocus())
-        {
+            Console.Error.WriteLine($"FAIL: {error}");
             Environment.ExitCode = 1;
-            return;
         }
-        var tests = new TestForm(args);
-        Application.Run(tests);
-        Environment.ExitCode = tests.ResultExitCode;
     }
 }
 
-internal sealed class TestForm(string[] args) : Form
+internal sealed class TestForm(TestCommand command) : Form
 {
     public int ResultExitCode { get; private set; } = 1;
+
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
         Hide();
         try
         {
-            if (args.Contains("--hls-recovery") || args.Contains("--hls-recovery-live"))
-            {
-                await HlsRecoveryChecks.RunAsync();
-                if (args.Contains("--hls-recovery-live")) await HlsRecoveryChecks.RunLiveAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--single-instance"))
-            {
-                await SingleInstanceChecks.RunAsync();
-                await UiChecks.CheckWindowActivationAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--ota-stage"))
-            {
-                await OtaPackageChecks.StageAsync(args);
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--updates"))
-            {
-                await UpdateChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--kiss-backup") || args.Contains("--backups"))
-            {
-                await UiChecks.CheckKissBackupAsync();
-                await UiChecks.CheckGeneralBackupsAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--stability"))
-            {
-                PlaybackStabilityChecks.Run();
-                await UiChecks.CheckPlaybackStabilityAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--kiss-live"))
-            {
-                await KissPlaybackChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--backups-live"))
-            {
-                await BackupPlaybackChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--stability-live"))
-            {
-                await StabilityLiveChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--reconnect-live"))
-            {
-                await ReconnectLiveChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--esradio"))
-            {
-                await EsRadioPlaybackChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--rfi-buffered-ui-live"))
-            {
-                await RfiBufferedChecks.RunLiveUiAsync(args);
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--audio-buffer-offline"))
-            {
-                await AudioBufferChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--rfi-buffered-offline"))
-            {
-                await RfiBufferedChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--rfi-edge"))
-            {
-                await RfiEdgeChecks.RunAsync(args);
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--rfi-transport-offline"))
-            {
-                await RfiTransportChecks.RunOfflineAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--rfi-transport"))
-            {
-                await RfiTransportChecks.RunAsync(args);
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--rfi"))
-            {
-                await RfiPlaybackChecks.RunAsync(args);
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--icons"))
-            {
-                var index = Array.IndexOf(args, "--exe");
-                IconChecks.Run(index >= 0 && index + 1 < args.Length ? Path.GetFullPath(args[index + 1]) : null);
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--ui"))
-            {
-                await UiChecks.RunAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--focus"))
-            {
-                await UiChecks.CheckPointerFocusAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            if (args.Contains("--dpi-ui"))
-            {
-                await UiChecks.CheckStationManagerDpiAsync();
-                ResultExitCode = 0;
-                return;
-            }
-            // Generate silence locally. These lifecycle tests never contact a radio station.
-            var path = Path.GetFullPath("artifacts/playback-test.wav");
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            using (var writer = new BinaryWriter(File.Create(path)))
-            {
-                const int bytes = 16000 * 2 * 30;
-                writer.Write("RIFF"u8); writer.Write(36 + bytes); writer.Write("WAVEfmt "u8);
-                writer.Write(16); writer.Write((short)1); writer.Write((short)1);
-                writer.Write(16000); writer.Write(32000); writer.Write((short)2); writer.Write((short)16);
-                writer.Write("data"u8); writer.Write(bytes); writer.Write(new byte[bytes]);
-            }
-            var stream = new ResolvedStream(new Uri(path), new Uri("https://example.invalid/"), "audio/wav");
-            await SystemPlayerChecks.RunAsync(stream);
-            Console.WriteLine("All offline Windows system audio checks passed.");
+            await command.Run();
             ResultExitCode = 0;
         }
         catch (Exception error)
         {
-            Console.Error.WriteLine($"FAIL: {error.GetType().Name}: {error.Message}");
-            Console.Error.WriteLine(error.StackTrace);
-            ResultExitCode = 1;
+            Console.Error.WriteLine($"FAIL: {error}");
         }
         finally { Close(); }
     }

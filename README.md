@@ -53,21 +53,18 @@ dotnet run --project src/Radio.Windows
 
 ## 測試與量測
 
-離線測試使用固定假資料，不會連線電台；此專案是無第三方測試框架的簡單 console 測試程式，請用 `dotnet run`，不是 `dotnet test`。
+離線測試使用固定假資料，不會連線電台；保留 console／WinForms STA runner，使用統一入口分層執行、建置一次、群組去重與耗時摘要，不使用 `dotnet test`。完整矩陣與架構見 [測試說明](docs/testing.md)。
 
 ```powershell
-dotnet run --project tests/Radio.Core.Tests -c Release
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --system
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --ui
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --backups
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --stability
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --updates
-dotnet run --project tests/Radio.Windows.Tests -c Release -- --diagnostics
-dotnet build src/Radio.Windows
-powershell -NoProfile -File scripts/Smoke-Test.ps1
+./scripts/Test.ps1 -Profile Fast
+./scripts/Test.ps1 -Profile Fast,UI       # UI 修改
+./scripts/Test.ps1 -Profile Fast,Audio    # 播放／緩衝修改
+./scripts/Test.ps1 -Profile Fast,Updates  # 更新／發行工具修改
+./scripts/Test.ps1 -Profile Offline      # 完整離線
+./scripts/Test.ps1 -List                 # 只列計畫，不執行
 ```
 
-UI 冒煙腳本以 `--no-autoplay` 啟動，不因啟動自動收聽；既有腳本仍假設固定六台收藏，不適用任意收藏或 0 台，請優先執行上述 console 回歸。`--probe` 的 UI 量測也停用啟動播放，再依指定測試電台靜音連線。
+結果位於 `artifacts/test-results/`，包含 JSON 摘要及逐組 logs。完整離線需可互動 Windows 桌面及音訊環境；不等於線上串流或實體多螢幕驗收。舊 `Smoke-Test.ps1` 仍假設固定六台收藏，不適用任意收藏或 0 台，不列為必跑項。`--probe` 的 UI 量測停用啟動播放，再依指定測試電台靜音連線。
 若系統政策不允許執行 `.ps1`，可改用手動操作驗證；不需要更改全機 PowerShell 執行政策。
 
 靜音線上實驗（會產生少量正常收聽流量）需以已編譯的程式執行，避免把 SDK／建置程序算入播放器：

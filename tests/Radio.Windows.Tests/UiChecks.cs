@@ -6,19 +6,26 @@ namespace Radio.Windows.Tests;
 
 internal static class UiChecks
 {
-    public static async Task RunAsync()
+    internal static async Task RunFocusAsync()
     {
         await CheckPointerFocusAsync();
-        await HlsRecoveryChecks.RunAsync();
-        await CheckStationCardLocationAsync();
-        await CheckEsRadioAsync();
+        await CheckWindowActivationAsync();
+    }
+
+    internal static async Task RunAppearanceAsync()
+    {
         await ThemedToolTipChecks.RunAsync();
         await TrayToolTipChecks.RunAsync();
         MarqueeChecks.Run();
-        PlaybackRecoveryChecks.Run();
         IconChecks.Run();
         await CheckStationManagerDpiAsync();
         await CaptureFourArrowPreviewAsync();
+    }
+
+    internal static async Task RunShellAsync()
+    {
+        await CheckStationCardLocationAsync();
+        await CheckEsRadioAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
             MediaEngineAudioPlayer.PlaybackStateForEvent(12) == AudioState.Buffering && MediaEngineAudioPlayer.PlaybackStateForEvent(13) == AudioState.Playing,
             "Source prefetch events cannot falsely replace actual playback state");
@@ -340,19 +347,17 @@ internal static class UiChecks
         Check(player.Disposed && metadata.Disposed && form.IsDisposed && !tray.Visible,
             "Tray exit releases playback, metadata and tray ownership even while hidden");
         CheckPreferences();
+    }
+
+    internal static async Task RunStationsAsync()
+    {
         await CheckStationInputAsync();
         await CheckStationHoverAnimationAsync();
         await CheckStationManagementAsync();
         await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
         await CheckStartupAutoplayAsync();
-        await CheckKissBackupAsync();
-        await CheckGeneralBackupsAsync();
-        PlaybackStabilityChecks.Run();
-        await CheckPlaybackStabilityAsync();
         await CheckCardVolumeAndTipsAsync();
-        await CheckWindowActivationAsync();
-        Console.WriteLine("All offline Direction C UI checks passed.");
     }
 
     internal static bool CheckStartupFocus()
@@ -973,7 +978,7 @@ internal static class UiChecks
             available.TopIndex = 0;
             ClickRow(available, 0);
             Check(library.Mine.Count == 1 && library.Mine[0].Id == "pop-917" && notifications == 1,
-                "One click on a station name immediately transfers exactly that row once");
+                $"One click on a station name immediately transfers exactly that row once (mine={string.Join(',', library.Mine.Select(station => station.Id))}, notifications={notifications}, selected={available.SelectedIndex}, top={available.TopIndex}, pointer={available.PointToClient(Cursor.Position)}, capture={available.Capture})");
             ClickRow(available, 0, available.ItemContentWidth - 35);
             Check(library.Mine.Count == 2 && library.Mine.Any(station => station.Id == "ufo-921") && notifications == 2,
                 "One click on the frequency immediately transfers that row once");

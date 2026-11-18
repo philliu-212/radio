@@ -1,6 +1,19 @@
 using System.Net;
 using Radio.Core;
 
+if (args.Length > 0 && (args.Length != 1 || !new[]
+    { "--esradio-live", "--metadata-live", "--metadata-rfi-live", "--metadata-best-live", "--list", "--help" }.Contains(args[0])))
+{
+    Console.Error.WriteLine("Unknown/conflicting arguments. Use --list.");
+    Environment.ExitCode = 1;
+    return;
+}
+if (args.Contains("--list") || args.Contains("--help"))
+{
+    Console.WriteLine("No arguments: all offline Core checks. Explicit live commands: --esradio-live --metadata-live --metadata-rfi-live --metadata-best-live");
+    return;
+}
+
 if (args.Contains("--esradio-live"))
 {
     await EsRadioChecks.RunLiveAsync();
