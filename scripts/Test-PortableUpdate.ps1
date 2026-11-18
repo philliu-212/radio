@@ -1,6 +1,8 @@
 param([Parameter(Mandatory=$true)][string]$BaselineZip,
       [Parameter(Mandatory=$true)][string]$CandidateZip,
       [string]$SupersedingZip,
+      [switch]$LongPathCleanup,
+      [switch]$VerifyCleanupOnRelaunch,
       [string]$ProjectRoot)
 $ErrorActionPreference = 'Stop'
 if (!$ProjectRoot) { $ProjectRoot = Split-Path $PSScriptRoot -Parent }
@@ -34,6 +36,18 @@ try {
     $directory = (Get-ChildItem -LiteralPath (Join-Path $root 'extracted') -Directory | Select-Object -First 1).FullName
     $statePath = Join-Path $directory 'data/ota/state.json'
     $old = Read-State
+    if ($LongPathCleanup) {
+        # Add obsolete resources without deepening executable/worker paths.
+        # cmd's native extended paths avoid PowerShell 5's own legacy IO limit.
+        $obsolete = Join-Path $directory ($old.Current.Commit.Substring(0,12) + '/' + ('x' * 100) + '/' + ('y' * 100))
+        $extended = '\\?\' + $obsolete
+        & $env:ComSpec /d /c "mkdir `"$extended`""
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot create long resource fixture.' }
+        & $env:ComSpec /d /c "echo obsolete>`"$extended\runtime-fixture.dll`""
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot write long resource fixture.' }
+        $report.LongResourcePathLength = ($obsolete + '\runtime-fixture.dll').Length
+        if ($report.LongResourcePathLength -le 260) { throw 'Long resource fixture is not long enough.' }
+    }
     $settingsPath = Join-Path $directory 'data/radio.settings.json'
     $settings = '{"SchemaVersion":2,"Theme":"light","Volume":37,"MyStationIds":[],"PlayCounts":{"retained":9},"LastStationId":"retained","StationSetupCompleted":true}'
     [IO.File]::WriteAllText($settingsPath, $settings)
@@ -80,6 +94,14 @@ try {
     } 40 'Prepared version failed to open.'
     $report.RestartToWindowMs = $watch.Elapsed.TotalMilliseconds
     Wait-Until { $snapshot = Read-State; $snapshot -and $snapshot.Trial -eq '' } 10 'New version did not acknowledge healthy startup.' | Out-Null
+    if ($VerifyCleanupOnRelaunch) {
+        $report.ResourcesLeftByLegacyUpdater = Test-Path (Join-Path $directory $old.Current.Commit.Substring(0,12))
+        if (!$next.CloseMainWindow() -or !$next.WaitForExit(15000)) { throw 'Cannot close upgraded player for cleanup relaunch.' }
+        $next.Dispose()
+        $next = Start-Process -FilePath $mainExe -ArgumentList '--no-autoplay --no-update-check' -WorkingDirectory $directory -PassThru
+        Wait-Until { $next.Refresh(); $next.MainWindowHandle -ne [IntPtr]::Zero } 40 'Cleanup relaunch did not show the player.' | Out-Null
+        $report.CleanupRelaunch = $true
+    }
     Wait-Until { !(Test-Path (Join-Path $directory $old.Current.Commit.Substring(0,12))) } 20 'Successful update did not remove the old resources.' | Out-Null
     $new = Read-State
     $actual = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $targetResources 'RadioMini.dll')).Version.ToString(3)

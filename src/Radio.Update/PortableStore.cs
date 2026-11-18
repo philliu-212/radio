@@ -361,8 +361,13 @@ namespace Radio.Update
             var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { state.Current.DirectoryName };
             if (state.Pending != null) keep.Add(state.Pending.DirectoryName);
             if (state.Previous != null) keep.Add(state.Previous.DirectoryName);
-            foreach (var folder in Directory.GetDirectories(Root))
+            foreach (var candidate in Directory.GetDirectories(Root))
             {
+                // Explicit extended paths keep Framework cleanup independent of
+                // the machine-wide Win32 long-path policy. Never skip link checks.
+                var folder = candidate;
+                if (Path.DirectorySeparatorChar == '\\' && !folder.StartsWith(@"\\?\", StringComparison.Ordinal))
+                    folder = folder.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + folder.Substring(2) : @"\\?\" + folder;
                 var name = Path.GetFileName(folder);
                 if (!Regex.IsMatch(name, "^[a-f0-9]{12}$") || keep.Contains(name)) continue;
                 try

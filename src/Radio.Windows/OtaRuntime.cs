@@ -43,6 +43,10 @@ internal static class OtaRuntime
                 { RequestSwitch(args); lease.Dispose(); lease = null; return false; }
                 if (state.Current.Commit != package.Commit) throw new InvalidDataException("Active package and apphost differ.");
                 store.CleanupWorkers();
+                // The first upgrade can still be confirmed by an older updater.
+                // Reclaim its leftover resources on the next ordinary launch,
+                // only after durable state no longer references rollback files.
+                store.Cleanup(state);
             }
             Directory.SetCurrentDirectory(AppContext.BaseDirectory);
             return true;
