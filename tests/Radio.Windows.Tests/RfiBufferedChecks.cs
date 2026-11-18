@@ -12,7 +12,7 @@ internal static class RfiBufferedChecks
     {
         var seconds = Math.Clamp(int.Parse(PlayerBackend.Option(args, "--seconds", "90")), 60, 600);
         var output = Path.GetFullPath(PlayerBackend.Option(args, "--output", "artifacts/rfi-trial-ui.json"));
-        using var player = new SystemAudioPlayer { EnableRfiBufferTrial = true, IsMuted = true };
+        using var player = new SystemAudioPlayer { IsMuted = true };
         var clock = Stopwatch.StartNew();
         var events = new List<object>();
         player.StatusChanged += s => events.Add(new { time = clock.Elapsed.TotalSeconds, state = s.State.ToString(), s.Message });
@@ -158,12 +158,11 @@ internal static class RfiBufferedChecks
             () => new RoutePlayer("native", routed), () => new RoutePlayer("rfi", routed));
         var rfi = new ResolvedStream(uri, new("https://www.rfi.fr/fr/direct-monde"), "audio/mpeg");
         await system.PlayAsync(rfi, default);
-        system.EnableRfiBufferTrial = true;
-        await system.PlayAsync(rfi, default);
+        await system.PlayAsync(new(new("https://rfiafrique64k.ice.infomaniak.ch/rfimonde-64.mp3"), rfi.Referrer, "audio/mpeg"), default);
         await system.PlayAsync(new(new("https://example.invalid/other.mp3"), rfi.Referrer, "audio/mpeg"), default);
-        Check(routed.SequenceEqual(new[] { "media", "rfi", "media" }), "Default unchanged; opt-in only routes verified RFI; switching away restores normal engine");
-        using var configured = PlayerBackend.Create(["--rfi-buffered"]);
-        Check(JsonSerializer.SerializeToElement(((IPlayerDiagnostics)configured).Describe()).GetProperty("rfiBufferTrial").GetBoolean(), "Explicit trial switch reaches the system adapter");
+        Check(routed.SequenceEqual(new[] { "rfi", "rfi", "media" }), "Normal startup routes RFI primary/backup to buffering; other stations retain their original engine");
+        using var configured = PlayerBackend.Create([]);
+        Check(configured is SystemAudioPlayer, "Normal development startup needs no RFI command-line switch");
     }
 
     private static async Task CheckNativeAsync(Uri uri)

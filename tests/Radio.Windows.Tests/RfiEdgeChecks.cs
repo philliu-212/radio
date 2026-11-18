@@ -41,7 +41,9 @@ internal static class RfiEdgeChecks
             })
             """));
         Console.WriteLine($"EDGE {edge.Version}; page ready: {ready.GetProperty("title")}");
-        using var player = new SystemAudioPlayer { IsMuted = true };
+        // Keep the pre-fix URL-source baseline explicit in this comparison tool.
+        using var player = new SystemAudioPlayer(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer(),
+            () => new MediaEngineAudioPlayer()) { IsMuted = true };
         var state = AudioState.Stopped;
         clock.Restart();
         var events = new List<object>();

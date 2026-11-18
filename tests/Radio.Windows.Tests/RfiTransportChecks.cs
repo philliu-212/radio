@@ -132,8 +132,10 @@ internal static class RfiTransportChecks
         var clock = Stopwatch.StartNew();
         var sameData = args.Contains("--same-data");
         await using var relay = new ImmediateRelay(stream.Uri, clock, sameData);
-        using var direct = new SystemAudioPlayer { IsMuted = true };
-        using var forwarded = new SystemAudioPlayer { IsMuted = true };
+        using var direct = new SystemAudioPlayer(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer(),
+            () => new MediaEngineAudioPlayer()) { IsMuted = true };
+        using var forwarded = new SystemAudioPlayer(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer(),
+            () => new MediaEngineAudioPlayer()) { IsMuted = true };
         using var frames = new RfiFrameSourcePlayer { IsMuted = true };
         using var trialHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
         using var buffered = new SystemAudioPlayer(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer(),
@@ -143,7 +145,7 @@ internal static class RfiTransportChecks
                 BufferedRfiFactory = async (uri, token) => sameData
                     ? await RfiBufferedStream.OpenFixtureAsync(await trialHttp.GetStreamAsync(relay.Uri, token), token)
                     : await RfiBufferedStream.OpenAsync(uri, token)
-            }) { EnableRfiBufferTrial = true, IsMuted = true };
+            }) { IsMuted = true };
         var players = new Dictionary<string, IAudioPlayer> { ["direct"] = direct, ["dotnetHttp"] = forwarded };
         if (sameData)
         {

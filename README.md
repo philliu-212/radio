@@ -29,7 +29,7 @@
 
 ## 開發執行
 
-雙擊根目錄 **`Run.cmd`**：建置並執行目前原始碼，不會產生發行包。只保留 `src/Radio.Windows` 一個程式專案，版號以實際組件為準，亦可由系統匣選單查看。修改後需先關閉舊開發視窗再重開。
+雙擊根目錄 **`Run.cmd`**：建置並執行目前原始碼，不會產生發行包。這次 RFI 修正在程式內預設生效，不需額外參數或 ZIP；`Run.cmd` 本身不變。只保留 `src/Radio.Windows` 一個程式專案，版號以實際組件為準，亦可由系統匣選單查看。修改後需先從通知區退出舊開發版再重開。
 
 要交付時才雙擊 **`Release.cmd`**：從同一專案產生 Lite／Full 資料夾與 ZIP 到 `dist/`，不啟動程式、不更新開發用 `bin`。`src/Radio.Portable` 已移除，`Build-Portable.cmd` 已改名。
 
@@ -102,9 +102,9 @@ dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --s
 
 `--same-data` 改成只有兩路，等兩個本機讀取端接上後才建立**一條上游連線**，將相同 4 KiB 以下片段即時轉交給系統來源路徑與逐幀候選。不保留回放佇列，任何一端中斷即結束分流；本機 HTTP client 與來源讀取層仍不同，不能定位成單一解碼器 bug。離線測試確認單一上游與兩端資料一致。
 
-### RFI 本機試聽候選（未正式啟用）
+### RFI 開發版修正
 
-`RadioMini.exe --rfi-buffered --no-update-check` 只對已確認的 RFI Monde MP3 主／備援入口啟用背景持續接收與有界壓縮幀隊列，再透過既有 Windows `MediaPlayer` 解碼／輸出。預設啟動與其他電台路徑不變；沒有本機 HTTP gateway、瀏覽器、外部 codec 或固定 20 秒預載，也不調整 MainForm 換源門檻。
+直接正常啟動原專案即可：已確認的 RFI Monde MP3 主／備援入口預設使用背景持續接收與有界壓縮幀隊列，再透過既有 Windows `MediaPlayer` 解碼／輸出。不需 `--rfi-buffered` 開關，其他電台路徑不變；沒有本機 HTTP gateway、瀏覽器、外部 codec 或固定 20 秒預載，也不調整 MainForm 換源門檻。
 
 隊列最多 1,148 幀，依 576 samples／22050Hz 小於 30 秒；這是容量上限，不是開播等待。碼率逐幀變動仍保留完整資料，最壞隊列 payload 約 600 KB（典型 64 kbps 約 240 KB），另有少量物件／接收與 Windows 內部緩衝。停止／切台取消網路、喚醒待處理的 native request、清空舊音訊；不錄音、不提供暫停回放。初始同步需核對相鄰 header，避免把不完整首幀的 payload 誤認為 header。來源格式不符／同步超限／逾時／EOF 走既有有界錯誤處理，未宣稱任何直播下零中斷。
 
@@ -112,12 +112,13 @@ dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --s
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-buffered-offline
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --same-data --buffered --seconds 180 --output artifacts/rfi-buffered-comparison.json
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-buffered-ui-live --seconds 90 --output artifacts/rfi-buffered-ui.json
-powershell -NoProfile -File scripts/Build-RfiTrial.ps1
 ```
 
 第一項離線驗證逐幀變動碼率不丟資料、同步上限、背景預讀／容量／取消、RFI-only 路由與本機合成靜音 MP3 的 Windows 解碼生命週期；不能取代實際聽感。第二項以同一上游資料比較預設路徑與新有界背景接收候選（不是先前按需求讀取的 `--frames` 原型）；第三項用真正 MainForm 與原換源政策量測顯示／最小化／恢復，不存個人設定或截圖。
 
-最後一項只建立**平面、本機試聽資料夾及 ZIP**，不是正式 Portable／OTA／GitHub Release，也不建立 tag。需已安裝 .NET 8 Desktop x64。輸出使用全新目錄，附 `Start-RFI-Trial.cmd` 與 `Start-Original.cmd`、獨立且零播放統計的 RFI 初始設定、來源 commit／dirty 標記與 ZIP SHA256。使用者須從通知區退出後再切換啟動方式；不能直接覆蓋正式版或誤以為直接雙擊 `RadioMini.exe` 會啟用試聽路徑。兩種模式均停用 OTA。原介面／metadata 與正式設定保留不動，試聽仍待使用者確認。
+開發測試直接使用原有 `Run.cmd`，沿用開發版設定，不需要獨立 ZIP 或替代啟動檔。先前的 opt-in ZIP 與封裝腳本屬早期試聽流程，不是目前版本的驗收入口。使用者已回報試聽 OK；仍不以短測保證任何網路下零中斷，也尚未合併或正式發行。
+
+背景接收與幀隊列已抽為可重用機制，提供時間／payload bytes／幀數上限；其他格式需先接入已驗證的 adapter，不會對所有電台自動啟用。記憶體容量、配置量前後比較與可重跑測試見 [共用音訊緩衝](docs/audio-buffering.md)。
 
 驗收優先看 `continuity` 的**中斷次數與連續播放區間**，累積停滯秒數只作輔助。開播等待另列；`MedianCompletedUninterruptedSeconds` 只計已被中斷的區間，目前仍連播的尾段另列 `CurrentUninterruptedSeconds`，不是已證明的長期穩定時間。`ObservedInterruptionsPerHour` 只是本輪觀測頻率換算，短測不能當成一小時驗收。時計分析只辨識 ≥0.5 秒停滯，更短中斷要另外查狀態事件／實際聽感；沒有辨識到停滯不等於零斷音。
 
