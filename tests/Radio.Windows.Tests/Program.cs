@@ -112,6 +112,36 @@ internal sealed class TestForm(string[] args) : Form
                 ResultExitCode = 0;
                 return;
             }
+            if (args.Contains("--rfi-buffered-ui-live"))
+            {
+                await RfiBufferedChecks.RunLiveUiAsync(args);
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-buffered-offline"))
+            {
+                await RfiBufferedChecks.RunAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-edge"))
+            {
+                await RfiEdgeChecks.RunAsync(args);
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-transport-offline"))
+            {
+                await RfiTransportChecks.RunOfflineAsync();
+                ResultExitCode = 0;
+                return;
+            }
+            if (args.Contains("--rfi-transport"))
+            {
+                await RfiTransportChecks.RunAsync(args);
+                ResultExitCode = 0;
+                return;
+            }
             if (args.Contains("--rfi"))
             {
                 await RfiPlaybackChecks.RunAsync(args);

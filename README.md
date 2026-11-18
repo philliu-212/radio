@@ -87,6 +87,51 @@ dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi --seconds 600
 
 此量測從連線開始每 250 毫秒取樣正式 `system` 路徑，分開計算開始播放後第一分鐘及後續的時鐘停頓。報告的 `passed` 只檢查開播／狀態恢復，**不代表停頓已解決**；不能把時鐘停頓當成已錄音確認的靜音。播放器沒有增加啟動等待、額外音訊緩衝或自動重連。
 
+RFI HTTP 接收路徑的隔離實驗（[#43](https://github.com/philliu-212/radio/issues/43)，不是正式播放器方案）：
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport-offline
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --seconds 180 --output artifacts/rfi-transport.json
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --frames --seconds 180 --output artifacts/rfi-frames.json
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --same-data --seconds 180 --output artifacts/rfi-same-data.json
+```
+
+第一項只用本機合成位元組，檢查立即轉交、資料完整性、EOF 及取消。第二項同時以未修改的 `SystemAudioPlayer` 比較 Windows 直接開啟官方 MP3 與 .NET HTTP 接收後立即轉交；測試專用 loopback 入口只綁 `127.0.0.1`，每次最多 4 KiB 轉交，不刻意預存、不錄音、不改設定，結束即關閉。報告包含每 250ms 的播放進度／原生狀態，以及接收／轉交耗時；沒有穩定度 PASS 門檻。兩路是**不同上游連線**，且 HTTP framing／headers 不同，結果只能用於定位方向，不能單輪宣稱因果改善或取代 Edge／實際聽感對照。此實驗不套用 MainForm 換源策略，也不修改重連門檻。既有摘要的 `ClockAdvanceSeconds` 遇停止歸零不代表播放總量，應查看逐段停滯與失敗事件。
+
+`--frames` 額外測試以 .NET 接收、逐幀拆出 MP3，經 `MediaStreamSource` 交給 Windows 系統解碼／輸出，隔離系統 HTTP／MP3 source reader。只在測試專案，**沒有接入正式播放器**；不啟動外部播放器／瀏覽器、不建立額外錄音或固定開播倒數，要求的系統 `BufferTime` 為 1 秒。離線測試另驗證 MPEG header／幀長／同步上限／截斷資料，但不代表直播解碼與音訊連續性已通過。三路依然是獨立連線，實驗性 parser 不是通用格式解析器；尚需相同資料對照、取消／切台與長播驗收，不能直接當成正式修正。
+
+`--same-data` 改成只有兩路，等兩個本機讀取端接上後才建立**一條上游連線**，將相同 4 KiB 以下片段即時轉交給系統來源路徑與逐幀候選。不保留回放佇列，任何一端中斷即結束分流；本機 HTTP client 與來源讀取層仍不同，不能定位成單一解碼器 bug。離線測試確認單一上游與兩端資料一致。
+
+### RFI 本機試聽候選（未正式啟用）
+
+`RadioMini.exe --rfi-buffered --no-update-check` 只對已確認的 RFI Monde MP3 主／備援入口啟用背景持續接收與有界壓縮幀隊列，再透過既有 Windows `MediaPlayer` 解碼／輸出。預設啟動與其他電台路徑不變；沒有本機 HTTP gateway、瀏覽器、外部 codec 或固定 20 秒預載，也不調整 MainForm 換源門檻。
+
+隊列最多 1,148 幀，依 576 samples／22050Hz 小於 30 秒；這是容量上限，不是開播等待。碼率逐幀變動仍保留完整資料，最壞隊列 payload 約 600 KB（典型 64 kbps 約 240 KB），另有少量物件／接收與 Windows 內部緩衝。停止／切台取消網路、喚醒待處理的 native request、清空舊音訊；不錄音、不提供暫停回放。初始同步需核對相鄰 header，避免把不完整首幀的 payload 誤認為 header。來源格式不符／同步超限／逾時／EOF 走既有有界錯誤處理，未宣稱任何直播下零中斷。
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-buffered-offline
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-transport --same-data --buffered --seconds 180 --output artifacts/rfi-buffered-comparison.json
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-buffered-ui-live --seconds 90 --output artifacts/rfi-buffered-ui.json
+powershell -NoProfile -File scripts/Build-RfiTrial.ps1
+```
+
+第一項離線驗證逐幀變動碼率不丟資料、同步上限、背景預讀／容量／取消、RFI-only 路由與本機合成靜音 MP3 的 Windows 解碼生命週期；不能取代實際聽感。第二項以同一上游資料比較預設路徑與新有界背景接收候選（不是先前按需求讀取的 `--frames` 原型）；第三項用真正 MainForm 與原換源政策量測顯示／最小化／恢復，不存個人設定或截圖。
+
+最後一項只建立**平面、本機試聽資料夾及 ZIP**，不是正式 Portable／OTA／GitHub Release，也不建立 tag。需已安裝 .NET 8 Desktop x64。輸出使用全新目錄，附 `Start-RFI-Trial.cmd` 與 `Start-Original.cmd`、獨立且零播放統計的 RFI 初始設定、來源 commit／dirty 標記與 ZIP SHA256。使用者須從通知區退出後再切換啟動方式；不能直接覆蓋正式版或誤以為直接雙擊 `RadioMini.exe` 會啟用試聽路徑。兩種模式均停用 OTA。原介面／metadata 與正式設定保留不動，試聽仍待使用者確認。
+
+驗收優先看 `continuity` 的**中斷次數與連續播放區間**，累積停滯秒數只作輔助。開播等待另列；`MedianCompletedUninterruptedSeconds` 只計已被中斷的區間，目前仍連播的尾段另列 `CurrentUninterruptedSeconds`，不是已證明的長期穩定時間。`ObservedInterruptionsPerHour` 只是本輪觀測頻率換算，短測不能當成一小時驗收。時計分析只辨識 ≥0.5 秒停滯，更短中斷要另外查狀態事件／實際聽感；沒有辨識到停滯不等於零斷音。
+
+Edge 證據量測（明確執行才啟動獨立 Edge，不接觸使用者瀏覽器設定）：
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-edge --edge-headless --seconds 600 --output artifacts/rfi-edge-official.json
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-edge --edge-headless --edge-same-data --seconds 300 --output artifacts/rfi-edge-same-data.json
+```
+
+使用本機安裝的 Microsoft Edge、專用暫存 profile、CDP `Media` 日誌與每 250ms 的 HTML media 時鐘／`buffered`／`waiting` 事件，和 Radio `SystemAudioPlayer` 同時量測。第一項從真正官網的「Écouter le direct」按鈕啟動，確認實際 `currentSrc` 與官方 MP3 一致；第二項是**受控 HTML audio 頁面，不是官網播放器**，以單上游即時同位元組分流，隔離不同直播連線的影響。解碼器／demuxer 名稱取自執行時媒體日誌，不靠 User-Agent 猜測。
+
+所有音訊靜音；結束只關閉這次啟動的 Edge 程序，不附加到現有瀏覽器。`--edge-headless` 必須在證據中標示，不能當成使用者平常有視窗、可聽播放的驗收；無視窗、靜音可能影響輸出／排程路徑。診斷停用瀏覽器背景 timer／renderer／occlusion／media 暫停，並記錄頁面 visibility。曾出現有視窗自動化頁面一直 hidden、未真正播放的情形，工具遇未開播、來源不符或播放中 pause 時回傳失敗，不將零中斷當成穩定，也不把 pause 當作緩衝中斷。狀態事件另外統計短於 0.5 秒的 buffering、暫停與錯誤。`--plain-audio` 亦只測受控 audio，不能冒稱官網。Windows 的 `GetBuffered()` 若回傳空範圍，只代表沒有可用範圍資訊，**不能推論內部緩衝為零**。本量測不修改正式程式、恢復門檻或 portable 設定；原始報告可能含官網媒體日誌與公開內容，留在本機且不提交 Git。已完成的對照與原始碼連結見 [RFI Web 證據紀錄](docs/rfi-web-evidence.md)。
+
 新量測包含播放器程序與它擁有的播放子程序，不含共享 Windows 音訊服務或 GPU 記憶體；短測不代表長期穩定，也不代表已確認實際音訊可聽。沒有相同來源的瀏覽器基準前，不宣稱相對瀏覽器的節省比例。
 
 舊版效能數據、已移除的 mpv 比較與早期 UI 草稿已移出現行文件，可從 Git 歷史查閱；不把舊短測當成現行版本的驗收結果。長時間播放、實體多螢幕、斷網與睡眠恢復仍須另外驗證。

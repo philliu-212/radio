@@ -7,25 +7,28 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
 {
     private readonly Func<IAudioPlayer> _mediaFactory;
     private readonly Func<IAudioPlayer> _nativeFactory;
+    private readonly Func<IAudioPlayer> _rfiFactory;
     private IAudioPlayer? _current;
     private Action<PlaybackStatus>? _forwardStatus;
     internal bool PreferCompatibility { get; set; }
+    internal bool EnableRfiBufferTrial { get; set; }
     private bool _usingCompatibility;
     private double _volume = 0.4;
     private bool _muted;
     private bool _disposed;
 
     public SystemAudioPlayer() : this(() => new MediaEngineAudioPlayer(), () => new WindowsAudioPlayer()) { }
-    internal SystemAudioPlayer(Func<IAudioPlayer> mediaFactory, Func<IAudioPlayer> nativeFactory)
+    internal SystemAudioPlayer(Func<IAudioPlayer> mediaFactory, Func<IAudioPlayer> nativeFactory, Func<IAudioPlayer>? rfiFactory = null)
     {
         _mediaFactory = mediaFactory;
         _nativeFactory = nativeFactory;
+        _rfiFactory = rfiFactory ?? (() => new WindowsAudioPlayer { UseBufferedRfiSource = true });
     }
 
     public event Action<PlaybackStatus>? StatusChanged;
     public string DisplayName => "Windows 系統音訊";
     public IReadOnlyList<int> ChildProcessIds => (_current as IPlayerDiagnostics)?.ChildProcessIds ?? [];
-    public object Describe() => new { backend = "system", preferCompatibility = PreferCompatibility,
+    public object Describe() => new { backend = "system", preferCompatibility = PreferCompatibility, rfiBufferTrial = EnableRfiBufferTrial,
         active = (_current as IPlayerDiagnostics)?.Describe() };
 
     public TimeSpan Position => _current?.Position ?? TimeSpan.Zero;
@@ -47,7 +50,8 @@ internal sealed class SystemAudioPlayer : IAudioPlayer, IPlayerDiagnostics
         Stop();
         _usingCompatibility = stream.Uri.Host.Equals("hitoradio-ott2b2.cdn.hinet.net", StringComparison.OrdinalIgnoreCase)
             || (stream.IsHls && PreferCompatibility);
-        IAudioPlayer player = _usingCompatibility ? _nativeFactory() : _mediaFactory();
+        IAudioPlayer player = EnableRfiBufferTrial && !stream.IsHls && RfiBufferedStream.Supports(stream.Uri)
+            ? _rfiFactory() : _usingCompatibility ? _nativeFactory() : _mediaFactory();
         _current = player;
         player.Volume = _volume;
         player.IsMuted = _muted;

@@ -12,7 +12,7 @@ internal static class PlayerBackend
 
     public static IAudioPlayer Create(string[] args) => Option(args, "--backend", "system") switch
     {
-        "system" => new SystemAudioPlayer(),
+        "system" => new SystemAudioPlayer { EnableRfiBufferTrial = args.Contains("--rfi-buffered") },
         "native" => new WindowsAudioPlayer(),
         "mediaengine" => new MediaEngineAudioPlayer(),
         _ => throw new ArgumentException("播放引擎必須是 system、native 或 mediaengine。")
