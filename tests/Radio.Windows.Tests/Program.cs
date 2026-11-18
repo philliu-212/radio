@@ -11,6 +11,11 @@ internal static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (args.Contains("--audio-buffer-allocations"))
+        {
+            AudioBufferAllocationChecks.Run();
+            return;
+        }
         if (args.Contains("--diagnostics"))
         {
             PlaybackDiagnosticsChecks.Run();

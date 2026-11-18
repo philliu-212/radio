@@ -46,7 +46,24 @@ var reserve = new AudioFrameBuffer<MyFrame>(options,
 
 ```powershell
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --audio-buffer-offline
+dotnet run --project tests/Radio.Windows.Tests -c Release -- --audio-buffer-allocations
 dotnet run --project tests/Radio.Windows.Tests -c Release -- --rfi-buffered-offline
 ```
 
 共用測試涵蓋不同幀大小／時長、三種獨立容量限制、順序與背壓、背景接收、取消／停止、EOF／錯誤、容量驗證、2,000 幀收取後的 payload 上限，以及 RFI 自訂容量整合。合成幀僅為離線測試，並不表示支援另一種真實編碼；queue payload 驗證也不能冒稱整體程序額外記憶體量測。
+
+### 逐幀記憶體最佳化
+
+- queue entry 與 MP3 幀描述使用值型別，通知物件只在真的需要等待時建立；無等待者的進出列不再逐幀建立通知物件。
+- MP3 parser 使用固定 527 bytes scratch，直接檢查 header，不再建立 header 小陣列、暫存 List 或重複複製 payload。
+- 每幀交給 Windows 的 payload 仍獨立配置，避免後續解析覆寫 Windows 尚在使用的資料；不冒險提早歸還 pooled array。
+- 停止清空時同時釋放 queue backing storage 的參考。這會減少保留物件，不保證作業系統立即降低 working set。
+
+`--audio-buffer-allocations` 使用 Release 組態、預熱後的同步合成資料，量測目前執行緒的 managed allocation，不含 queue 測試資料／輸入陣列的建立。2026-11-18 相同 fixture 前後結果：
+
+| 測項 | 最佳化前 | 最佳化後 |
+| --- | ---: | ---: |
+| queue 無等待進出列，10,000 幀 | 216 B／幀 | 0 B／幀 |
+| MP3 parser，9,999 幀、每幀 209 bytes | 約 655.34 B／幀 | 約 247.34 B／幀 |
+
+parser 配置量減少約 62%；剩餘包含必要的 payload 及接收逾時計時。這是受控熱路徑的配置量／GC 負擔比較，**不是整個程式常駐記憶體減少 62%**，也不是網路等待時完全零配置。容量上限、音訊資料及開播策略不變。

@@ -111,6 +111,8 @@ internal static class AudioBufferChecks
         await ClosedAsync(overTime);
 
         await CheckReceiverAsync();
+        await CheckWaitersAsync();
+        await RfiMp3FrameReaderChecks.RunAsync();
         await CheckRfiAdapterAsync();
         Console.WriteLine("PASS: shared audio buffer capacity, cancellation, payload accounting and RFI adapter.");
     }
@@ -162,6 +164,29 @@ internal static class AudioBufferChecks
         buffer.Dispose();
         await buffer.Completion.WaitAsync(TimeSpan.FromSeconds(2));
         Check(buffer.QueuedFrames == 0, "RFI stop clears shared reserve");
+    }
+
+    private static async Task CheckWaitersAsync()
+    {
+        var buffer = Create(new(TimeSpan.FromSeconds(1), 200, 2));
+        using var stop = new CancellationTokenSource();
+        var cancelled = buffer.ReadAsync(stop.Token).AsTask();
+        var first = buffer.ReadAsync(default).AsTask();
+        var second = buffer.ReadAsync(default).AsTask();
+        stop.Cancel();
+        try { await cancelled; throw new Exception("Expected read cancellation."); }
+        catch (OperationCanceledException) { }
+        await buffer.WriteAsync(Make(1), default);
+        await buffer.WriteAsync(Make(2), default);
+        var result = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(2));
+        Check(result.Select(frame => frame.Id).Order().SequenceEqual(new[] { 1, 2 }),
+            "Lazy notifications wake all readers without losing frames after another reader cancels");
+        await buffer.WriteAsync(Make(3), default);
+        await buffer.WriteAsync(Make(4), default);
+        var writers = new[] { buffer.WriteAsync(Make(5), default).AsTask(), buffer.WriteAsync(Make(6), default).AsTask() };
+        buffer.Complete(discard: true);
+        foreach (var writer in writers) await ClosedAsync(writer);
+        Check(buffer.PayloadBytes == 0, "Discard wakes all blocked writers and releases queue storage");
     }
 
     private static async Task ClosedAsync(Task pending)

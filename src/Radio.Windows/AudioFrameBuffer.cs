@@ -8,10 +8,10 @@ namespace Radio.Windows;
 internal sealed class AudioFrameBuffer<T>(
     AudioBufferOptions options, Func<T, int> payloadBytes, Func<T, TimeSpan> duration)
 {
-    private sealed record Entry(T Frame, int Bytes, long Ticks);
+    private readonly record struct Entry(T Frame, int Bytes, long Ticks);
     private readonly object _gate = new();
     private readonly Queue<Entry> _frames = new();
-    private TaskCompletionSource _changed = NewSignal();
+    private TaskCompletionSource? _changed;
     private int _bytes, _peakBytes, _peakFrames;
     private long _ticks;
     private bool _completed;
@@ -80,7 +80,7 @@ internal sealed class AudioFrameBuffer<T>(
                     Pulse();
                     return;
                 }
-                changed = _changed.Task;
+                changed = (_changed ??= NewSignal()).Task;
             }
             await changed.WaitAsync(token).ConfigureAwait(false);
         }
@@ -102,7 +102,7 @@ internal sealed class AudioFrameBuffer<T>(
                     return entry.Frame;
                 }
                 if (_completed) throw new ChannelClosedException(_error);
-                changed = _changed.Task;
+                changed = (_changed ??= NewSignal()).Task;
             }
             await changed.WaitAsync(token).ConfigureAwait(false);
         }
@@ -113,7 +113,13 @@ internal sealed class AudioFrameBuffer<T>(
         lock (_gate)
         {
             if (!_completed) { _completed = true; _error = error; }
-            if (discard) { _frames.Clear(); _bytes = 0; _ticks = 0; }
+            if (discard)
+            {
+                _frames.Clear();
+                _frames.TrimExcess();
+                _bytes = 0;
+                _ticks = 0;
+            }
             Pulse();
         }
     }
@@ -121,7 +127,7 @@ internal sealed class AudioFrameBuffer<T>(
     private void Pulse()
     {
         var signal = _changed;
-        _changed = NewSignal();
-        signal.TrySetResult();
+        _changed = null;
+        signal?.TrySetResult();
     }
 }

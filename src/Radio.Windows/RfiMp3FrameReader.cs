@@ -1,6 +1,6 @@
 namespace Radio.Windows;
 
-internal sealed record RfiMp3Frame(byte[] Data, int SampleRate, int Channels, int Bitrate, int Samples);
+internal readonly record struct RfiMp3Frame(byte[] Data, int SampleRate, int Channels, int Bitrate, int Samples);
 
 // Limited to the verified RFI MP3 format, not a general-purpose media parser.
 internal sealed class RfiMp3FrameReader(Stream input)
@@ -8,8 +8,8 @@ internal sealed class RfiMp3FrameReader(Stream input)
     private static readonly int[] Bitrates = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
     internal const int MaxFrameBytes = 523;
     private readonly byte[] _buffer = new byte[4096];
-    private readonly List<byte> _pending = new(MaxFrameBytes + 4);
-    private int _offset, _length;
+    private readonly byte[] _pending = new byte[MaxFrameBytes + 4];
+    private int _offset, _length, _pendingCount;
     private bool _ended, _synchronized;
     internal long ReceivedBytes { get; private set; }
     internal long SkippedBytes { get; private set; }
@@ -20,30 +20,38 @@ internal sealed class RfiMp3FrameReader(Stream input)
         while (true)
         {
             if (!await EnsureAsync(4, token).ConfigureAwait(false)) throw new EndOfStreamException("RFI 直播資料已結束。");
-            var header = _pending.GetRange(0, 4).ToArray();
-            if (TryHeader(header, out var length, out var bitrate))
+            if (TryHeader(_pending.AsSpan(0, 4), out var length, out var bitrate))
             {
                 if (!await EnsureAsync(length, token).ConfigureAwait(false)) throw new EndOfStreamException("RFI MP3 幀不完整。");
                 // A partial first MP3 frame can contain sync-like payload bytes.
                 // Confirm the next header before accepting initial/resynchronized data.
                 var hasNext = _synchronized || !await EnsureAsync(length + 4, token).ConfigureAwait(false)
-                    || ValidHeader(_pending.GetRange(length, 4).ToArray(), out _);
+                    || ValidHeader(_pending.AsSpan(length, 4), out _);
                 if (hasNext)
                 {
-                    var data = _pending.GetRange(0, length).ToArray();
-                    _pending.RemoveRange(0, length);
+                    // Keep the delivered payload independently owned: native
+                    // samples may still use it after the next frame is parsed.
+                    var data = _pending.AsSpan(0, length).ToArray();
+                    Consume(length);
                     _synchronized = true;
                     return new(data, 22050, 2, bitrate, 576);
                 }
             }
             _synchronized = false;
-            _pending.RemoveAt(0);
+            Consume(1);
             SkippedBytes++;
             if (++skipped > 8192) throw new InvalidDataException("RFI MP3 同步資料超過上限。");
         }
     }
 
     internal static bool ValidHeader(ReadOnlySpan<byte> h, out int length) => TryHeader(h, out length, out _);
+
+    private void Consume(int count)
+    {
+        _pendingCount -= count;
+        if (_pendingCount != 0)
+            Buffer.BlockCopy(_pending, count, _pending, 0, _pendingCount);
+    }
 
     private static bool TryHeader(ReadOnlySpan<byte> h, out int length, out int bitrate)
     {
@@ -59,7 +67,7 @@ internal sealed class RfiMp3FrameReader(Stream input)
 
     private async ValueTask<bool> EnsureAsync(int count, CancellationToken token)
     {
-        while (_pending.Count < count)
+        while (_pendingCount < count)
         {
             token.ThrowIfCancellationRequested();
             if (_ended) return false;
@@ -72,8 +80,10 @@ internal sealed class RfiMp3FrameReader(Stream input)
                 if (_length == 0) { _ended = true; return false; }
                 ReceivedBytes += _length;
             }
-            var copy = Math.Min(count - _pending.Count, _length - _offset);
-            for (var i = 0; i < copy; i++) _pending.Add(_buffer[_offset++]);
+            var copy = Math.Min(count - _pendingCount, _length - _offset);
+            Buffer.BlockCopy(_buffer, _offset, _pending, _pendingCount, copy);
+            _offset += copy;
+            _pendingCount += copy;
         }
         return true;
     }
