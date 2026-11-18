@@ -102,6 +102,19 @@ Heap snapshot 看見 `WindowsRuntimeBuffer` 包住每幀 managed byte array，�
 - queue 最後 237 幀／49,508 bytes，並未填滿 30 秒 reserve。這是實際有限預取，不把容量上限當成固定預載。
 - 不是同一批線上資料的舊／新 A/B，也不是聽覺、弱網注入或數小時連播驗收；不能保證所有網路與長時間情境完全不增長。
 
+### 一小時線上長測
+
+使用者後續回報舊版突破 140 MB 後，以同一份已回歸的修正後 binary 另跑 **3,600 秒真實 RFI 靜音播放**（`artifacts/rfi-memory-live-native-1h.jsonl`），獨立程序，播放中沒有手動 GC／dump。
+
+- 收到 360 筆播放中記憶體取樣；60 秒後 private **38.34–49.63 MiB**，後半小時 **45.66–49.63 MiB**，結尾 **47.88 MiB**。
+- 每 10 分鐘 private 約 **45.15、46.33、47.17、46.98、47.92、47.88 MiB**，沒有重現舊版持續攀升至 140–160 MiB 的情況。
+- 結尾 working set **119.39 MiB**、managed 11.36 MiB、最近 GC committed 16.61 MiB／pinned objects 1。這些都是停止前取樣，不拿結尾診斷 GC 的較低值證明正常播放時用量。
+- 交付 136,907 幀，queue payload 峰值 245,515 bytes、最後 237,874 bytes；仍受原有容量限制。
+- **零 Failed 事件**，但開播後有兩次 Buffering → Playing（狀態事件約 1.33 秒與 4.60 秒）。時鐘總前進 3,571.75 秒；約第 2,050–2,071 秒間兩個約 10 秒取樣區間沒有時鐘前進，不能只按 Buffering 事件時長宣稱全程連續或精確聽覺中斷時間。
+- 結束碼 0 只表示診斷完成、沒有 Failed 且時鐘有前進，並非「無卡頓」的驗收門檻。本次改善目標是記憶體，不宣稱網路／播放停頓問題也已修復。
+
+這一小時觀察及受控 A/B 支持移除跨原生生命週期的 managed payload pinning 能改善此次記憶體增長；仍不能保證所有來源、弱網條件或更長時間都無任何洩漏。
+
 ## 回歸與交付限制
 
 `./scripts/Test.ps1 -Profile Fast,Audio`：兩個專案建置及 **12/12 測試群組通過**。摘要位於本機 `artifacts/test-results/20261118-182436-17d12f8f9f934bad97631408462f5b86/summary.json`，不提交產物。
@@ -110,4 +123,4 @@ Heap snapshot 看見 `WindowsRuntimeBuffer` 包住每幀 managed byte array，�
 
 使用者 portable／設定／播放未修改。本次不打包或發布 Release；合併與發行仍需另行確認。
 
-使用者後續回報舊版突破 140 MB 後，另啟動 **3,600 秒真實 RFI 靜音長測**（`artifacts/rfi-memory-live-native-1h.jsonl`），使用同一份已回歸的修正後 binary。此項尚在執行，未計入上述通過項目；PR 先保留 draft，完成後再補實際結果，不預先宣稱一小時穩定。
+一小時長測完成後只補文件與 PR 驗證結果，未再更動產品／測試原始碼，因此未重跑相同 Fast＋Audio。PR 從 draft 改為可供審查，等待使用者確認合併；不以記憶體長測通過冒充聽覺或完整穩定度驗收。
