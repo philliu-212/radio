@@ -178,7 +178,7 @@ internal sealed class StationManagerDialog : Form
             // movement it is the right one. Its viewport aligns with the row arrow.
             var x = add ? list.ItemContentWidth - Dip(19) : Dip(7);
             batch.Location = new Point(add ? x : x - Dip(5), 0);
-            var point = list.PointToClient(Cursor.Position);
+            var point = list.PointToClient(list.PointerScreenPosition());
             var index = list.ClientRectangle.Contains(point) && point.X < list.ItemContentWidth ? list.IndexFromPoint(point) : -1;
             if (index >= 0 && list.GetItemRectangle(index).Bottom > list.ClientSize.Height) index = -1;
             var hoveredId = index >= 0 ? ((Station)list.Items[index]).Id : null;

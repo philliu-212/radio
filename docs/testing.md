@@ -44,7 +44,7 @@ powershell -NoProfile -File scripts/Test.ps1 -List                   # 列出 pr
 唯一編排定義為 `scripts/Test-Plan.ps1`：
 
 - **Fast**：Core、runner 參數契約、純播放策略、診斷、queue/parser、allocation、loopback transport。不操作真實焦點、不播放音訊、不連電台。
-- **UI**：shell、電台管理、外觀／模擬 DPI、啟動／指標／啟用焦點、跨程序單例；需可互動 Windows 桌面。焦點與 hover 仍可能受使用者操作干擾（[#64](https://github.com/philliu-212/radio/issues/64)）。
+- **UI**：shell、電台管理、外觀／模擬 DPI、啟動／指標／啟用焦點、跨程序單例；需 Windows 桌面環境。電台管理使用獨立、非輸入桌面與受控 pointer，不切換畫面或移動使用者游標；其餘焦點／啟用檢查仍需可互動桌面，不代表實體多螢幕驗收。
 - **Audio**：純策略、queue、transport、有界 RFI 緩衝的原生生命週期、受控 HLS／備援／穩定度、local WAV 系統音訊。全程離線、靜音，但需要可用 Windows 音訊環境。
 - **Updates**：離線 OTA fixtures、runtime 檔案驗證器、fake-gh 發行工具回歸、Framework updater 長路徑測試。
 - **Tooling**：runner 自測、runtime／發行工具／長路徑回歸；不封裝或發布 Release。
@@ -107,7 +107,21 @@ Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profi
 
 既有 `portable-draft.yml` 只在明確授權的 tag 工作流程中做真實 Lite／Full OTA 套件驗證與發行草稿，不混入 PR 快速檢查。
 
+## 電台管理輸入隔離（#128）
+
+- `SendMessage(hwnd, WM_LBUTTONDOWN/UP)` 只指定訊息接收者，不會建立使用者點擊時的視窗啟用／命中前提。.NET 8 `ListBox` 在 MouseUp 要求清單仍有 capture，且 `WindowFromPoint` 回傳同一 HWND，才觸發 `MouseClick`；被另一視窗遮住時，即使 MouseDown 成功 capture 也不會觸發轉移事件。參考 [WinForms ListBox 原始碼](https://github.com/dotnet/winforms/blob/v8.0.0/src/System.Windows.Forms/src/System/Windows/Forms/ListBox.cs)。
+- 單純對使用者桌面的測試視窗設 TopMost 仍不足以隔離外部視窗：中間版本完整回歸曾在第一個右鍵案例的命中前提失敗，因此不把第一次 22/22 當作修復證明。
+- `ui-stations` 由 `StationDesktop` 在全新 Windows desktop 啟動子 runner，仍執行原本的整組測試。沒有呼叫 `SwitchDesktop`，不切換使用者畫面，也不搶使用者的焦點；Windows 原生視窗、capture 與 `WindowFromPoint` 不做 mock。子程序沿用 stdout/stderr 與截圖選項，非零 exit code 會讓父群組失敗，結束後關閉 process/thread/desktop handles；建立桌面或清理失敗同樣回報失敗，不降級或 skip。
+- 群組開頭固定建立遮擋視窗，驗證「直接注入沒有 MouseClick」，再由原生點擊 fixture 建立命中前提並驗證恰好一次事件。fixture 在獨立桌面的一次 down/up 期間暫時提高測試視窗層級／啟用，檢查命中與 capture，最後釋放 capture、還原 TopMost；另驗證命中前提失敗仍會還原、不偽造 click。不依賴其他群組先執行，也不重試。這是原生訊息整合，不是假裝成實體滑鼠輸入。
+- 批次／列點擊檢查排在 hover 像素檢查之前，保留名稱、頻率、inline arrow 只轉移一次，以及右鍵、scrollbar gutter 不轉移的斷言；負向案例也建立相同原生前置條件，避免因訊息未送達而假通過。
+- hover 與 membership 使用清單實例的 `PointerScreenPosition` 輸入；產品預設仍讀 `Cursor.Position`，只有測試指定座標，不移動、鎖定或反覆搶回使用者游標。兩側清單共用該 fixture 的座標，並額外注入不同位置的 MouseMove，確認 hover 仍由受控 pointer 決定；18 DIP、選取、淡出、timer 與原生繪圖像素斷言保留。
+- [#64](https://github.com/philliu-212/radio/issues/64) 的真實游標干擾與本次共用 pointer 隔離，但不能倒推歷史上每次原生點擊失敗都由 hover 引起。原生命中／capture 與受控 hover 分層驗證；本組不驗收使用者目前輸入桌面的焦點、真實硬體輸入或實體多螢幕，不能用此 fixture 取代那些驗收。
+- 2026-11-19 最終同份來源：單獨 `-Group ui-stations` 通過；`-Profile Offline` 建置與 22/22 群組通過（報告 `20261119-101306-6bb02945414b46e889a03d04d4128570`）；直接 `--suite ui-focus,ui-shell,ui-stations` 三組通過，確認前置 UI 群組不影響本組的原生點擊／轉移斷言。子 runner 的原生斷言與 desktop handle 清理均有 logs。
+- 額外 legacy `--ui` 實測未全綠：在較前面的 `ui-appearance`、`TrayToolTipChecks`「tooltip 不啟用視窗」斷言失敗，尚未執行 `ui-stations`。本次不修改該焦點檢查、不拿上面的 Offline 綠燈宣稱 legacy 全包通過；也不因此重跑沖淡該次失敗。未執行線上串流、實體多螢幕或 Release 封裝。
+
 ## 本次導入驗證限制（2026-11-18）
+
+以下保留導入當時的失敗紀錄，不代表後續修正結果；電台管理輸入隔離見前節。
 
 - Fast 多次通過；本機含增量建置約 30 秒，僅作本次環境基準，不宣稱與舊版等範圍的加速百分比。
 - Offline 已實際執行兩輪，非全綠：第一輪 21/22 組通過（`ui-stations` 點擊轉移失敗），第二輪 20/22 組通過（`ui-shell` 備選電台加入、`ui-stations` 真實游標 hover 失敗）。兩輪均回傳非零並繼續其他組；音訊、更新、工具與其餘組通過。
