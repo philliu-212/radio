@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Channels;
 using Windows.Media.Core;
 using Windows.Media.MediaProperties;
+using Windows.Security.Cryptography;
 
 namespace Radio.Windows;
 
@@ -57,7 +57,7 @@ internal sealed class RfiMediaStreamSource : IDisposable
             _token.ThrowIfCancellationRequested();
             var start = TimeSpan.FromSeconds((double)_samples / frame.SampleRate);
             _samples += frame.Samples;
-            var sample = MediaStreamSample.CreateFromBuffer(frame.Data.AsBuffer(), start);
+            var sample = CreateSample(frame.Data, start);
             sample.Duration = TimeSpan.FromSeconds((double)_samples / frame.SampleRate) - start;
             args.Request.Sample = sample;
             Interlocked.Increment(ref _deliveredFrames);
@@ -72,6 +72,14 @@ internal sealed class RfiMediaStreamSource : IDisposable
             try { deferral?.Complete(); }
             catch (Exception error) when (error is COMException or ObjectDisposedException) { }
         }
+    }
+
+    // Give the decoder its own native storage instead of keeping the parser's
+    // small managed array pinned across the sample/projection lifetime.
+    internal static MediaStreamSample CreateSample(byte[] data, TimeSpan start)
+    {
+        var buffer = CryptographicBuffer.CreateFromByteArray(data);
+        return MediaStreamSample.CreateFromBuffer(buffer, start);
     }
 
     private void ReportFailure(Exception error)

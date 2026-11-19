@@ -43,6 +43,7 @@ internal sealed record TestCommand(string Name, Func<Task> Run, bool StartupFocu
             await HlsRecoveryChecks.RunLiveAsync();
         }),
         ["--rfi"] = new(RfiPlaybackChecks.RunAsync, "--seconds --output"),
+        ["--rfi-memory"] = new(RfiMemoryChecks.RunAsync, "--seconds --output --mode"),
         ["--rfi-buffered-ui-live"] = new(RfiBufferedChecks.RunLiveUiAsync, "--seconds --output"),
         ["--rfi-transport"] = new(RfiTransportChecks.RunAsync, "--seconds --output", "--same-data --frames --buffered"),
         ["--rfi-edge"] = new(RfiEdgeChecks.RunAsync, "--seconds --output", "--edge-same-data --edge-headless --plain-audio"),
