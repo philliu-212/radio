@@ -352,10 +352,16 @@ internal static class UiChecks
 
     internal static async Task RunStationsAsync()
     {
+        if (!StationDesktop.IsIsolated)
+        {
+            await StationDesktop.RunAsync();
+            return;
+        }
+        CheckNativeStationClickPreconditions();
+        await CheckBatchStationManagementAsync();
         await CheckStationInputAsync();
         await CheckStationHoverAnimationAsync();
         await CheckStationManagementAsync();
-        await CheckBatchStationManagementAsync();
         await CheckLanguageFiltersAsync();
         await CheckStartupAutoplayAsync();
         await CheckCardVolumeAndTipsAsync();
@@ -498,8 +504,77 @@ internal static class UiChecks
         }
     }
     private static T Find<T>(Control root, string name) where T : Control => (T)root.Controls.Find(name, true).Single();
-    private static void SendMouse(Control control, int message, int x, int y) =>
-        SendMessage(control.Handle, message, message == 0x0202 ? IntPtr.Zero : new IntPtr(1), new IntPtr((x & 0xffff) | (y << 16)));
+    private static void SendMouse(Control control, int message, int x, int y)
+    {
+        // wParam describes buttons currently held, not the button generating the message.
+        var buttons = message switch { 0x0201 or 0x0203 => 1, 0x0204 or 0x0206 => 2, _ => 0 };
+        SendMessage(control.Handle, message, new IntPtr(buttons), new IntPtr((x & 0xffff) | (y << 16)));
+    }
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+
+    private static void NativeStationClick(Control control, Point point, MouseButtons button = MouseButtons.Left)
+    {
+        var form = control.FindForm() ?? throw new InvalidOperationException("Native click requires a visible form.");
+        // SendMessage does not activate or hit-test its target. ListBox's MouseUp does:
+        // Capture must still belong to the list, and WindowFromPoint must return its HWND.
+        // Establish those desktop preconditions instead of depending on prior UI groups.
+        var wasTopMost = form.TopMost;
+        try
+        {
+            form.TopMost = true;
+            form.BringToFront();
+            form.Activate();
+            var screen = control.PointToScreen(point);
+            var hit = WindowFromPoint(screen);
+            var hitControl = Control.FromHandle(hit);
+            Check(hit == control.Handle,
+                $"Native click hits {control.Name} before MouseDown (expected={control.Handle}, hit={hit}, control={hitControl?.Name}, type={hitControl?.GetType().Name}, screen={screen}, bounds={form.Bounds}, client={control.ClientRectangle}, visible={control.Visible}, enabled={control.Enabled}, topmost={form.TopMost})");
+            SendMouse(control, button == MouseButtons.Right ? 0x0204 : 0x0201, point.X, point.Y);
+            Check(control.Capture && WindowFromPoint(screen) == control.Handle,
+                $"Native click prerequisites: {control.Name}, capture={control.Capture}, hit={WindowFromPoint(screen)}, expected={control.Handle}, active={Form.ActiveForm?.Name}");
+            SendMouse(control, button == MouseButtons.Right ? 0x0205 : 0x0202, point.X, point.Y);
+        }
+        finally
+        {
+            if (!control.IsDisposed && control.Capture) control.Capture = false;
+            if (!form.IsDisposed) form.TopMost = wasTopMost;
+        }
+    }
+
+    private static void CheckNativeStationClickPreconditions()
+    {
+        using var host = new Form { Name = "NativeClickHost", StartPosition = FormStartPosition.Manual,
+            Bounds = new Rectangle(40, 40, 280, 160), ShowInTaskbar = false };
+        using var list = new StationListBox { Name = "NativeClickList", Dock = DockStyle.Fill, SelectionMode = SelectionMode.MultiSimple };
+        list.Items.AddRange(new object[] { "First", "Second" });
+        host.Controls.Add(list);
+        host.Show();
+        var point = new Point(50, list.ItemHeight / 2);
+        var clicks = 0;
+        list.MouseClick += (_, _) => clicks++;
+        using (var cover = new Form { Name = "NativeClickCover", FormBorderStyle = FormBorderStyle.None,
+            StartPosition = FormStartPosition.Manual, Bounds = host.Bounds, TopMost = true, ShowInTaskbar = false })
+        {
+            cover.Show();
+            Check(WindowFromPoint(list.PointToScreen(point)) == cover.Handle,
+                "Native click regression deliberately covers the list");
+            SendMouse(list, 0x0201, point.X, point.Y);
+            Check(list.Capture, "Synthetic MouseDown alone can capture an obscured list");
+            SendMouse(list, 0x0202, point.X, point.Y);
+            Check(clicks == 0, "An obscured native list suppresses MouseClick despite SendMessage");
+            NativeStationClick(list, point);
+            Check(clicks == 1, "The native fixture restores hit-testing and emits exactly one MouseClick despite a covering window");
+        }
+        Check(!list.Capture && !host.TopMost, "Native click fixture releases capture and restores window level");
+        list.Enabled = false;
+        var rejected = false;
+        try { NativeStationClick(list, point); }
+        catch (Exception error) when (error.Message.StartsWith("Native click hits", StringComparison.Ordinal)) { rejected = true; }
+        finally { list.Enabled = true; }
+        Check(rejected && clicks == 1 && !list.Capture && !host.TopMost,
+            "Failed native hit-test is reported, not skipped, and still restores capture/window level");
+        host.Close();
+    }
     private static int HitTest(Form form, Point screenPoint) => (int)SendMessage(form.Handle, 0x0084, IntPtr.Zero,
         new IntPtr((screenPoint.X & 0xffff) | ((screenPoint.Y & 0xffff) << 16)));
     private static void CheckNoStationFocusFrame(StationListBox list, Control other)
@@ -551,7 +626,7 @@ internal static class UiChecks
         var index = Math.Max(list.TopIndex, list.SelectedIndex);
         if (index >= list.TopIndex + list.VisibleRows) index = list.TopIndex;
         var row = list.GetItemRectangle(index);
-        Cursor.Position = list.PointToScreen(new Point(30, row.Top + row.Height / 2));
+        MoveStationPointer(list, new Point(30, row.Top + row.Height / 2));
         SendMouse(list, 0x0200, 30, row.Top + row.Height / 2);
     }
 
@@ -559,6 +634,15 @@ internal static class UiChecks
     {
         HoverTransfer(button);
         button.PerformClick();
+    }
+
+    private static void MoveStationPointer(Control control, Point point)
+    {
+        var screen = control.PointToScreen(point);
+        if (control.FindForm() is not StationManagerDialog dialog)
+            throw new InvalidOperationException("Controlled station input requires a station manager.");
+        foreach (var name in new[] { "AvailableStations", "MyStations" })
+            Find<StationListBox>(dialog, name).PointerScreenPosition = () => screen;
     }
 
     private static async Task CheckStationHoverAnimationAsync()
@@ -589,7 +673,7 @@ internal static class UiChecks
             "Hover background interpolates between the existing theme colors");
 
         using var dialog = new StationManagerDialog(new StationLibrary(new ThemeSettings { MyStationIds = ["best-989"] }), PlayerTheme.Dark, SystemFonts.MessageBoxFont!);
-        Cursor.Position = new Point(0, 0);
+        MoveStationPointer(dialog, new Point(-1000, -1000));
         dialog.Show(); await Task.Delay(180);
         foreach (var isLeft in new[] { true, false })
         {
@@ -601,6 +685,8 @@ internal static class UiChecks
             list.DrawToBitmap(resting, list.ClientRectangle);
             HoverTransfer(button);
             var arrowBounds = button.Bounds;
+            // An unrelated native move must not replace the fixture's pointer.
+            SendMouse(list, 0x0200, 70, list.ItemHeight * 3 + list.ItemHeight / 2);
             await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             using var hovered = new Bitmap(list.Width, list.Height);
             list.DrawToBitmap(hovered, list.ClientRectangle);
@@ -614,7 +700,7 @@ internal static class UiChecks
                 throw new Exception("Station text pixels not found");
             }
             Check(InkLeft(hovered) - InkLeft(resting) == (isLeft ? -18 : 18),
-                $"{list.Name}: frequency/name smoothly makes 18 DIP of room for its arrow (rest={InkLeft(resting)}, hover={InkLeft(hovered)}, visible={button.Visible}, selected={list.SelectedIndex}, pointer={list.PointToClient(Cursor.Position)})");
+                $"{list.Name}: frequency/name smoothly makes 18 DIP of room for its arrow (rest={InkLeft(resting)}, hover={InkLeft(hovered)}, visible={button.Visible}, selected={list.SelectedIndex}, pointer={list.PointToClient(list.PointerScreenPosition())})");
             Check(hovered.GetPixel(2, list.ItemHeight / 2).ToArgb() == PlayerTheme.Dark.Hover.ToArgb() && button.Visible,
                 $"{list.Name}: row background and arrow reach the hover endpoint");
             Check(!Find<Button>(dialog, isLeft ? "RemoveStation" : "AddStation").Visible,
@@ -642,7 +728,7 @@ internal static class UiChecks
             Check(list.Bounds == listBounds && list.GetItemRectangle(0) == rowBounds && button.Bounds == arrowBounds &&
                 batch.Bounds == batchBounds && batch.PaintSurface is null && list.SelectedIndex == 0 && button.Enabled,
                 $"{list.Name}: hover selects its row and enables the arrow without changing geometry or batch arrows");
-            Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+            MoveStationPointer(dialog, new Point(290, 270));
             SendMouse(list, 0x02A3, 0, 0);
             await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             using var restored = new Bitmap(list.Width, list.Height);
@@ -657,7 +743,6 @@ internal static class UiChecks
         HoverTransfer(Find<Button>(dialog, "AddStation"));
         dialog.Close();
         Check(!timer.Enabled, "Closing during an animation disposes the hover timer");
-        Cursor.Position = new Point(0, 0);
     }
 
     internal static async Task CheckWindowActivationAsync()
@@ -766,7 +851,7 @@ internal static class UiChecks
         var library = new StationLibrary(settings);
         using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
         {
-            Cursor.Position = new Point(0, 0);
+            MoveStationPointer(dialog, new Point(-1000, -1000));
             dialog.Show(); await Task.Delay(30);
             var available = Find<ListBox>(dialog, "AvailableStations");
             var mine = Find<ListBox>(dialog, "MyStations");
@@ -799,14 +884,14 @@ internal static class UiChecks
                 "Station manager uses themed tooltips");
             Check(new[] { "AddStation", "RemoveStation", "AddAllStations", "RemoveAllStations" }
                 .All(name => string.IsNullOrEmpty(tips.GetToolTip(Find<Button>(dialog, name)))), "All transfer arrows have no tooltip");
-            Cursor.Position = addButton.PointToScreen(new Point(6, 7)); await Task.Delay(30);
+            MoveStationPointer(addButton, new Point(6, 7)); await Task.Delay(30);
             Check(addButton.Visible && ((StationListBox)available).ScrollbarVisible && available.SelectedIndex == 0,
                 "Hovering an inline arrow preserves list hover, scrollbar and its active selection");
             var footerPosition = batchButton.PointToScreen(Point.Empty);
             available.TopIndex = 2; available.Refresh();
             Check(batchButton.PointToScreen(Point.Empty) == footerPosition, "Footer arrows do not move when the list scrolls");
             available.TopIndex = 0;
-            Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+            MoveStationPointer(dialog, new Point(290, 270));
             SendMouse(available, 0x02A3, 0, 0);
             await Task.Delay((int)StationHoverAnimation.DurationMilliseconds + 120);
             Check(!addButton.Visible, "Inline arrow hides when the pointer leaves the station");
@@ -930,7 +1015,7 @@ internal static class UiChecks
         var library = new StationLibrary(settings);
         using (var dialog = new StationManagerDialog(library, PlayerTheme.Dark, SystemFonts.MessageBoxFont!))
         {
-            Cursor.Position = new Point(0, 0);
+            MoveStationPointer(dialog, new Point(-1000, -1000));
             dialog.Show(); await Task.Delay(30);
             var available = Find<StationListBox>(dialog, "AvailableStations");
             var mine = Find<StationListBox>(dialog, "MyStations");
@@ -941,9 +1026,9 @@ internal static class UiChecks
             void ClickRow(StationListBox list, int index, int x = 50)
             {
                 var y = list.GetItemRectangle(index).Top + list.ItemHeight / 2;
-                Cursor.Position = list.PointToScreen(new Point(x, y));
+                MoveStationPointer(list, new Point(x, y));
                 SendMouse(list, 0x0200, x, y);
-                SendMouse(list, 0x0201, x, y); SendMouse(list, 0x0202, x, y);
+                NativeStationClick(list, new Point(x, y));
             }
             Check(!add.Enabled && !remove.Enabled && addAll.Enabled && !removeAll.Enabled,
                 "Selected and all-result actions have independent empty-state availability");
@@ -951,19 +1036,19 @@ internal static class UiChecks
             HoverTransfer(add);
             Check(add.Enabled && available.SelectedIndex == 0 && library.Mine.Count == 0 && notifications == 0,
                 "Hover alone selects and enables the green arrow without moving any station");
-            SendMouse(available, 0x0204, 50, 18); SendMouse(available, 0x0205, 50, 18);
-            SendMouse(available, 0x0201, available.Width - 4, 20); SendMouse(available, 0x0202, available.Width - 4, 20);
+            NativeStationClick(available, new Point(50, 18), MouseButtons.Right);
+            NativeStationClick(available, new Point(available.Width - 4, 20));
             Check(library.Mine.Count == 0 && notifications == 0, "Right-click and scrollbar gutter clicks never transfer stations");
             available.TopIndex = 0;
             ClickRow(available, 0);
             Check(library.Mine.Count == 1 && library.Mine[0].Id == "pop-917" && notifications == 1,
-                $"One click on a station name immediately transfers exactly that row once (mine={string.Join(',', library.Mine.Select(station => station.Id))}, notifications={notifications}, selected={available.SelectedIndex}, top={available.TopIndex}, pointer={available.PointToClient(Cursor.Position)}, capture={available.Capture})");
+                $"One click on a station name immediately transfers exactly that row once (mine={string.Join(',', library.Mine.Select(station => station.Id))}, notifications={notifications}, selected={available.SelectedIndex}, top={available.TopIndex}, pointer={available.PointToClient(available.PointerScreenPosition())}, capture={available.Capture})");
             ClickRow(available, 0, available.ItemContentWidth - 35);
             Check(library.Mine.Count == 2 && library.Mine.Any(station => station.Id == "ufo-921") && notifications == 2,
                 "One click on the frequency immediately transfers that row once");
             HoverTransfer(add);
-            Cursor.Position = add.PointToScreen(new Point(6, 7));
-            SendMouse(add, 0x0201, 6, 7); SendMouse(add, 0x0202, 6, 7);
+            MoveStationPointer(add, new Point(6, 7));
+            NativeStationClick(add, new Point(6, 7));
             Check(library.Mine.Count == 3 && library.Available.Count == 5 && notifications == 3,
                 "The inline arrow still transfers its hovered row exactly once");
             ClickRow(mine, 0); ClickRow(mine, 0, mine.ItemContentWidth - 35);
@@ -1185,7 +1270,7 @@ internal static class UiChecks
         Check(dialog.AvailableStationsLanguageFilter == "en" && left.Query == "BBC" && available.Items.Count == 1,
             "Compatible destination language and text filters remain unchanged after transfer");
         Choose(false, ""); right.Query = "";
-        Cursor.Position = dialog.PointToScreen(new Point(290, 270));
+        MoveStationPointer(dialog, new Point(290, 270));
         SendMouse(mine, 0x02A3, 0, 0);
         mine.SelectedItem = catalog[0]; library.RecordSuccess("multi");
         Check(((Station)mine.Items[0]).Id == "multi" && ((Station)mine.SelectedItem!).Id == "pop",

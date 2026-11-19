@@ -264,6 +264,8 @@ internal sealed class VolumeSlider : TrackBar
 
 internal sealed class StationListBox : ListBox
 {
+    // Keep desktop input as the production default; each fixture can supply its own pointer.
+    internal Func<Point> PointerScreenPosition { get; set; } = () => Cursor.Position;
     public event Action? SelectedStationClicked;
     public int HoverIndex { get; private set; } = -1;
     public Color ScrollbarColor { get; set; } = PlayerTheme.Dark.Track;
@@ -327,7 +329,7 @@ internal sealed class StationListBox : ListBox
     protected override void OnMouseEnter(EventArgs e) { UpdateHover(HoverIndex, true); base.OnMouseEnter(e); }
     internal void RefreshPointerHover()
     {
-        var point = PointToClient(Cursor.Position);
+        var point = PointToClient(PointerScreenPosition());
         var inside = ClientRectangle.Contains(point);
         UpdateHover(inside && point.X < ItemContentWidth ? IndexFromPoint(point) : -1, inside);
     }
