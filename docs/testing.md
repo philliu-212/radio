@@ -107,6 +107,12 @@ Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profi
 
 既有 `portable-draft.yml` 只在明確授權的 tag 工作流程中做真實 Lite／Full OTA 套件驗證與發行草稿，不混入 PR 快速檢查。
 
+## Metadata 更新與到期（#132）
+
+- `ui-shell` 的受控時鐘 fixture 驗證：90 秒有效資料在第 60 秒啟動查詢時不隱藏或增加 presentation 更新；有效新資料直接替換，舊到期等待不得清除新資料。
+- 空回應／網路錯誤不清除尚有效資料，也不延長原始期限；即使查詢仍未完成，到期仍清空兩行。已到期回應與停止後的遲到回應不恢復顯示，停止時取消等待。
+- fixture 不連電台、不等待真實 60／90 秒，不代表線上 metadata 來源驗收；切台、tray／最小化的取消行為仍由既有 shell 檢查涵蓋。
+
 ## 電台管理輸入隔離（#128）
 
 - `SendMessage(hwnd, WM_LBUTTONDOWN/UP)` 只指定訊息接收者，不會建立使用者點擊時的視窗啟用／命中前提。.NET 8 `ListBox` 在 MouseUp 要求清單仍有 capture，且 `WindowFromPoint` 回傳同一 HWND，才觸發 `MouseClick`；被另一視窗遮住時，即使 MouseDown 成功 capture 也不會觸發轉移事件。參考 [WinForms ListBox 原始碼](https://github.com/dotnet/winforms/blob/v8.0.0/src/System.Windows.Forms/src/System/Windows/Forms/ListBox.cs)。

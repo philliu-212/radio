@@ -63,6 +63,9 @@ internal sealed class MainForm : Form
     private Font _frequencyFont;
     private CancellationTokenSource? _playRequest;
     private CancellationTokenSource? _metadataRequest;
+    private CancellationTokenSource? _metadataExpiryRequest;
+    private readonly Func<DateTimeOffset> _metadataNow;
+    private readonly Func<TimeSpan, CancellationToken, Task> _metadataDelay;
     private TaskCompletionSource? _started;
     private readonly System.Windows.Forms.Timer _sourceWatch = new() { Interval = 1000 };
     private readonly PlaybackStability _stability = new();
@@ -118,11 +121,14 @@ internal sealed class MainForm : Form
     public MainForm(IAudioPlayer player, bool persistPreferences = true, bool? darkOverride = null,
         IStreamResolver? resolver = null, IStationMetadataProvider? metadataProvider = null, ThemeSettings? settings = null,
         bool autoPlayOnStartup = true, bool checkUpdates = true, PlaybackDiagnostics? diagnostics = null,
-        Func<TimeSpan>? playbackNow = null, Action<Action>? postReconnect = null)
+        Func<TimeSpan>? playbackNow = null, Action<Action>? postReconnect = null,
+        Func<DateTimeOffset>? metadataNow = null, Func<TimeSpan, CancellationToken, Task>? metadataDelay = null)
     {
         _player = player;
         _diagnostics = diagnostics;
         _playbackNow = playbackNow ?? (() => Stopwatch.GetElapsedTime(0));
+        _metadataNow = metadataNow ?? (() => DateTimeOffset.UtcNow);
+        _metadataDelay = metadataDelay ?? ((delay, token) => Task.Delay(delay, token));
         _postReconnect = postReconnect ?? PostReconnect;
         _sourceWatch.Tick += (_, _) => CheckPlaybackProgress();
         _resolver = resolver ?? new OfficialStreamResolver();
@@ -868,7 +874,7 @@ internal sealed class MainForm : Form
         _transport.Glyph = stop ? PlayerGlyph.Stop : PlayerGlyph.Play;
         _transport.AccessibleName = stop ? "停止" : "播放";
         _transport.Invalidate();
-        var data = _metadata?.ExpiresAt > DateTimeOffset.UtcNow ? _metadata : null;
+        var data = _metadata?.ExpiresAt > _metadataNow() ? _metadata : null;
         SetMetadataLabel(_metadataTitle, data?.FirstLine);
         SetMetadataLabel(_metadataPerson, data?.SecondLine);
         _stations.Invalidate();
@@ -897,12 +903,24 @@ internal sealed class MainForm : Form
                 try { data = await _metadataProvider.GetAsync(stationId, request.Token); }
                 catch (Exception error) when (error is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException or System.Text.RegularExpressions.RegexMatchTimeoutException) { }
                 if (request.IsCancellationRequested || _metadataRequest != request || _playingStation?.Id != stationId || _closing || _uiSuspended) return;
-                _metadata = data?.ExpiresAt > DateTimeOffset.UtcNow ? data : null;
-                RefreshPresentation();
-                // Wake at expiry (not just poll time) to avoid showing stale data between refreshes.
-                var delay = _metadata is null ? TimeSpan.FromSeconds(60) : _metadata.ExpiresAt - DateTimeOffset.UtcNow;
-                await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(delay.TotalSeconds, 1, 60)), request.Token);
-                _metadata = null; RefreshPresentation();
+                var now = _metadataNow();
+                if (data?.ExpiresAt > now)
+                {
+                    _metadataExpiryRequest?.Cancel();
+                    _metadata = data;
+                    var expiryRequest = CancellationTokenSource.CreateLinkedTokenSource(request.Token);
+                    _metadataExpiryRequest = expiryRequest;
+                    _ = ExpireMetadataAsync(data, expiryRequest);
+                    RefreshPresentation();
+                }
+                else if (_metadata is { } previous && previous.ExpiresAt <= now)
+                {
+                    _metadata = null;
+                    RefreshPresentation();
+                }
+                // Poll independently: a pending/failed refresh must not hide still-valid data.
+                var delay = _metadata is null ? TimeSpan.FromSeconds(60) : _metadata.ExpiresAt - _metadataNow();
+                await _metadataDelay(TimeSpan.FromSeconds(Math.Clamp(delay.TotalSeconds, 1, 60)), request.Token);
             }
         }
         catch (OperationCanceledException) when (request.IsCancellationRequested) { }
@@ -912,8 +930,28 @@ internal sealed class MainForm : Form
             request.Dispose();
         }
     }
+    private async Task ExpireMetadataAsync(StationMetadata data, CancellationTokenSource request)
+    {
+        try
+        {
+            // Recheck the deadline after waking (including a wall-clock adjustment).
+            while (data.ExpiresAt > _metadataNow())
+                await _metadataDelay(data.ExpiresAt - _metadataNow(), request.Token);
+            if (request.IsCancellationRequested || _metadataExpiryRequest != request || _metadata != data || _closing || _uiSuspended) return;
+            _metadata = null;
+            RefreshPresentation();
+        }
+        catch (OperationCanceledException) when (request.IsCancellationRequested) { }
+        finally
+        {
+            if (_metadataExpiryRequest == request) _metadataExpiryRequest = null;
+            request.Dispose();
+        }
+    }
     private void CancelMetadata()
     {
+        var expiryRequest = _metadataExpiryRequest; _metadataExpiryRequest = null;
+        expiryRequest?.Cancel();
         var request = _metadataRequest; _metadataRequest = null; _metadata = null;
         request?.Cancel();
     }
