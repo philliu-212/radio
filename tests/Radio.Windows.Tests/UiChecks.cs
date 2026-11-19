@@ -25,6 +25,7 @@ internal static class UiChecks
 
     internal static async Task RunShellAsync()
     {
+        await CheckMetadataRefreshAsync();
         await CheckStationCardLocationAsync();
         await CheckEsRadioAsync();
         Check(MediaEngineAudioPlayer.PlaybackStateForEvent(1005) is null && MediaEngineAudioPlayer.PlaybackStateForEvent(1006) is null &&
@@ -1975,6 +1976,110 @@ internal static class UiChecks
         }
         public void Dispose() { Disposed = true; Stop(); }
     }
+    private static async Task CheckMetadataRefreshAsync()
+    {
+        var clock = new MetadataClock();
+        var player = new FixturePlayer();
+        var metadata = new FixtureMetadata();
+        using var form = new MainForm(player, false, true, new FixtureResolver(), metadata, CatalogSettings(),
+            autoPlayOnStartup: false, checkUpdates: false, postReconnect: _ => { },
+            metadataNow: () => clock.Now, metadataDelay: clock.DelayAsync);
+        form.Show();
+        var play = form.PlayForProbeAsync("bcc-ilike");
+        player.Emit(AudioState.Playing);
+        await play;
+        var title = Find<Label>(form, "MetadataTitle");
+        var person = Find<Label>(form, "MetadataPerson");
+        var hidden = 0;
+        title.VisibleChanged += (_, _) => { if (!title.Visible) hidden++; };
+        person.VisibleChanged += (_, _) => { if (!person.Visible) hidden++; };
+        StationMetadata Data(string text, int seconds = 90) =>
+            new(MetadataKind.Program, text, "Fixture presenter", clock.Now.AddSeconds(seconds));
+        async Task Until(Func<bool> condition)
+        {
+            var timeout = System.Diagnostics.Stopwatch.StartNew();
+            while (!condition())
+            {
+                if (timeout.Elapsed > TimeSpan.FromSeconds(3)) throw new InvalidOperationException("Metadata fixture timed out.");
+                await Task.Delay(10);
+            }
+        }
+        metadata.Pending[0].SetResult(Data("First"));
+        await Until(() => title.Text == "節目：First");
+        var updates = form.PresentationUpdates;
+        clock.Advance(60);
+        await Until(() => metadata.Calls == 2);
+        Check(title.Visible && person.Visible && hidden == 0 && form.PresentationUpdates == updates,
+            "60-second refresh keeps 90-second metadata visible without an extra presentation update");
+        clock.Advance(10);
+        metadata.Pending[1].SetResult(Data("Replacement"));
+        await Until(() => title.Text == "節目：Replacement");
+        Check(hidden == 0, "Valid replacement updates metadata directly without hiding either label");
+        clock.Advance(20);
+        await Task.Delay(20);
+        Check(title.Text == "節目：Replacement" && title.Visible, "Cancelled old expiry cannot clear replacement metadata");
+        clock.Advance(40);
+        await Until(() => metadata.Calls == 3);
+        updates = form.PresentationUpdates;
+        metadata.Pending[2].SetResult(null);
+        await Until(() => clock.PendingDelays == 2);
+        Check(title.Visible && title.Text == "節目：Replacement" && form.PresentationUpdates == updates,
+            "Empty refresh preserves valid metadata without redrawing");
+        clock.Advance(30);
+        await Until(() => metadata.Calls == 4 && !title.Visible && !person.Visible);
+        Check(title.Text == "" && person.Text == "", "Original deadline clears both fields even while the next query is pending");
+        metadata.Pending[3].SetResult(Data("Expired", -1));
+        await Until(() => clock.PendingDelays == 1);
+        Check(!title.Visible && !person.Visible, "Already-expired response cannot restore cleared metadata");
+        clock.Advance(60);
+        await Until(() => metadata.Calls == 5);
+        metadata.Pending[4].SetResult(Data("After expiry"));
+        await Until(() => title.Visible);
+        clock.Advance(60);
+        await Until(() => metadata.Calls == 6);
+        metadata.Pending[5].SetException(new HttpRequestException("Fixture network failure"));
+        await Until(() => clock.PendingDelays == 2);
+        Check(title.Visible && title.Text == "節目：After expiry", "Failed refresh does not erase unexpired data");
+        clock.Advance(30);
+        await Until(() => metadata.Calls == 7 && !title.Visible);
+        Check(!person.Visible, "Failed refresh never extends the original expiration");
+        metadata.Pending[6].SetResult(Data("Slow refresh"));
+        await Until(() => title.Visible);
+        clock.Advance(60);
+        await Until(() => metadata.Calls == 8);
+        Check(title.Visible, "Slow query starts while previous metadata is still valid");
+        clock.Advance(30);
+        await Until(() => !title.Visible && !person.Visible);
+        Check(!metadata.Pending[7].Task.IsCompleted, "Metadata expires independently of an already-pending network query");
+        Find<Button>(form, "PlayButton").PerformClick();
+        metadata.Pending[7].SetResult(Data("Late stopped response"));
+        await Task.Delay(20);
+        Check(!form.MetadataRunning && !title.Visible && clock.PendingDelays == 0,
+            "Stop cancels metadata waits and rejects late responses");
+        form.ExitPlayer();
+    }
+
+    private sealed class MetadataClock
+    {
+        internal DateTimeOffset Now { get; private set; } = new(2026, 11, 19, 0, 0, 0, TimeSpan.Zero);
+        private readonly List<(DateTimeOffset Due, TaskCompletionSource Completion)> _delays = [];
+        internal int PendingDelays => _delays.Count(item => !item.Completion.Task.IsCompleted);
+        internal async Task DelayAsync(TimeSpan delay, CancellationToken token)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _delays.Add((Now + delay, completion));
+            using var registration = token.Register(() => completion.TrySetCanceled(token));
+            try { await completion.Task; }
+            finally { _delays.RemoveAll(item => item.Completion == completion); }
+        }
+        internal void Advance(int seconds)
+        {
+            Now = Now.AddSeconds(seconds);
+            foreach (var item in _delays.ToArray())
+                if (item.Due <= Now) item.Completion.TrySetResult();
+        }
+    }
+
     private sealed class FixtureMetadata : IStationMetadataProvider
     {
         public List<TaskCompletionSource<StationMetadata?>> Pending { get; } = [];
