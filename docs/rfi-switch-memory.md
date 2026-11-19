@@ -126,10 +126,29 @@ dotnet run --project tests/Radio.Windows.Tests -c Release --no-build --no-restor
 
 新增來源已執行 `Fast,Audio`：兩專案建置與 **12/12 群組通過**，報告 `artifacts/test-results/20261119-130434-1c53591fbf7f4b0a8af9f12e8a6625be/summary.json`。含新增 CLI 參數契約；未在這一輪重跑完整 Offline。
 
-### 一小時切回等待：執行中，尚非通過
+### 一小時切回等待：已完成
 
 ```powershell
 dotnet run --project tests/Radio.Windows.Tests -c Release --no-build --no-restore -- --rfi-memory --mode switch-ui-live --seconds 10 --cycles 3 --recovery-seconds 3600 --output artifacts/rfi-switch-ui-138-hour.jsonl
 ```
 
-此程序完成三輪切台後繼續播 BEST 一小時，自然觀察期間不做 dump、手動 GC 或工作集裁切；結束自然取樣後才執行既有診斷 GC。結果完成前不列為通過，也不拿上述 130 秒只播對照冒充等長一小時對照。原生 allocation stack 仍未取得；目前沒有足以支持產品修正或關閉 #138 的證據。PR 維持 draft。
+此程序完成三輪切台後繼續播 BEST 一小時，自然觀察期間不做 dump、手動 GC 或工作集裁切；結束自然取樣後才執行既有診斷 GC。總長約 3,721 秒，complete 記錄零 Failed。
+
+恢復段共 361 筆取樣，實際跨度 3,608.07 秒，播放時鐘前進 3,608.07 秒；相鄰取樣沒有時鐘不前進或倒退，全部為 BEST、reconnect pending 為 false。這是約十秒間隔的時鐘觀察，不保證取樣間沒有短暫停頓，也不是可聽音質驗收。
+
+| 切回 BEST 後恢復段 | private MiB | managed MiB | 最近 GC committed MiB | Gen2 累計 |
+| --- | ---: | ---: | ---: | ---: |
+| 起點 | 42.95 | 5.03 | 9.97 | 1 |
+| 約 10 分鐘 | 41.92 | 3.08 | 8.46 | 3 |
+| 約 20 分鐘 | 38.47 | 2.25 | 5.84 | 4 |
+| 約 30 分鐘 | 37.73 | 2.25 | 4.16 | 7 |
+| 約 40 分鐘 | 38.02 | 2.25 | 4.73 | 8 |
+| 約 50 分鐘 | 39.84 | 4.15 | 6.48 | 8 |
+| 自然結尾 | 41.61 | 2.34 | 7.41 | 10 |
+| 自然觀察結束後的診斷 GC | 40.38 | 2.21 | 6.15 | 12 |
+
+恢復段 private 範圍 **36.97–47.59 MiB**，不是持續單調下降；自然結尾 working set 68.51 MiB。三個 retired receivers 均結束，約十分鐘取樣時 24/24 弱參考已死亡，直到自然結尾仍全部死亡。這支持舊 RFI graph 在沒有產品強制 GC 下可以自然回收，且 committed／private 可以部分下降；不保證回到歷史 33.6 MiB，也不把停止後的 36.31 MiB 當作 BEST 仍播放時的數字。
+
+**本輪限制：**整個恢復段 `MetadataRunning=false`，所以不能把此輪當成 metadata 持續輪詢一小時的驗收，亦未由此欄位推測停用原因。既有 MainForm 播放監控運行，但沒有故障注入或恢復段重連的證據。沒有等長一小時 BEST-only 獨立程序對照，上述 130 秒只播結果不能冒充等長對照。原生 allocation stack 仍未取得；未修改產品程式，也沒有足以關閉 #138 的完整歸屬證據。PR 維持 draft。
+
+此輪使用已通過 Fast＋Audio 的 7ff3f3a 測試來源，完成後僅更新文件，未重跑相同音訊回歸。
