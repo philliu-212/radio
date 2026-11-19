@@ -53,7 +53,7 @@ Full 封裝在產生 portable／ZIP 前執行 `scripts/Assert-FullRuntime.ps1`�
 
 ## 一鍵更新
 
-啟動及每 6 小時檢查 GitHub 最新穩定 Release。背景下載完整同模式 ZIP，核對 API 提供的 SHA-256／大小，在 `data/ota/staging/隨機值/` 解壓、驗證全部清單檔案，再將 hash 資源目錄搬至 portable 根目錄、原子記錄 Pending。這些工作都在使用者仍可收聽時完成。
+啟動及每小時檢查 GitHub 最新穩定 Release。背景下載完整同模式 ZIP，核對 API 提供的 SHA-256／大小，在 `data/ota/staging/隨機值/` 解壓、驗證全部清單檔案，再將 hash 資源目錄搬至 portable 根目錄、原子記錄 Pending。這些工作都在使用者仍可收聽時完成。
 
 右上角沿用原箭頭，懸浮顯示背景下載百分比／準備中／已備妥／失敗重試；沒有大型更新視窗，不強制退出。Ready 時才提供「重新啟動並更新」。若仍在準備更高版本而已有較舊 Ready，可取消新任務並先套用已備妥者。失敗從約 15 秒開始指數退避，最高 15 分鐘；UI 輪詢每 30 秒，實際重試可能晚於計算時間。可點失敗箭頭手動重試。
 

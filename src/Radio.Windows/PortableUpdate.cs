@@ -64,7 +64,7 @@ internal sealed class PortableUpdate : IDisposable
             var state = _store.Load();
             _pending = state.Pending is null ? null : Version.Parse(state.Pending.Version);
             var release = ParseRelease(json, _current, state.Current.Mode);
-            Interlocked.Exchange(ref _nextCheckTicks, _clock().AddHours(6).UtcTicks);
+            Interlocked.Exchange(ref _nextCheckTicks, _clock().AddHours(1).UtcTicks);
             if (release is null)
             {
                 if (_task.IsCompleted) Publish(state.Pending is null ? UpdatePhase.Idle : UpdatePhase.Ready, 100, state.Pending is null ? "" : "更新已備妥，重新啟動並更新");

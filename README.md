@@ -49,7 +49,7 @@ dotnet run --project src/Radio.Windows
 - 全部電台共用穩定度判斷：持續8秒無進度或30秒內累積損失12秒進度，以及開播／播放失敗時，依序切下一備援；單一來源或全部用盡就停止並提示重試，每輪不無限重連。手動再次播放從主來源重新輪。掃描結果、同供應商限制及當次失敗見[備援與穩定度說明](docs/backup-sources.md)；不繞過地區／播放時限／存取限制。
 - 播放診斷自動寫入設定檔旁的 `logs`，含時間戳記、完整串流網址（含 token／簽章）、Referrer 及錯誤細節；Twitch 來源特別遮蔽簽章 path/query、只留 CDN host。每檔 256 KiB、最多 4 檔並自動輪替，狀態去重、限流及每 5 分鐘記憶體快照。僅存本機，分享前請檢閱，詳見 [診斷紀錄](docs/diagnostics.md)。
 - 音量、深／淺色偏好、我的電台及播放次數：開發版在程式同目錄的 `radio.settings.json`，新 Portable 在 `data/radio.settings.json`；舊版設定保留音量與主題，沒有選台資料則進入首次管理流程。尚未加入 Windows 開機自啟、錄音或時移。
-- Portable 採 VS Code 式**完整 ZIP 背景 OTA**：啟動／每 6 小時檢查正式新版，背景下載、驗證及準備 hash 資源目錄，不打斷播放；箭頭提示「重新啟動並更新」後才切換。只維護目前版、最新待更新版與必要回復版。Release 只有兩個 ZIP 與 SHA256SUMS，不逐檔發布。開發／probe 不檢查 OTA；首次從平面舊包需手動安全遷移，詳見 [portable](docs/portable.md) 與 [OTA 實作](docs/ota.md)。
+- Portable 採 VS Code 式**完整 ZIP 背景 OTA**：啟動／每小時檢查正式新版，背景下載、驗證及準備 hash 資源目錄，不打斷播放；箭頭提示「重新啟動並更新」後才切換。只維護目前版、最新待更新版與必要回復版。Release 只有兩個 ZIP 與 SHA256SUMS，不逐檔發布。開發／probe 不檢查 OTA；首次從平面舊包需手動安全遷移，詳見 [portable](docs/portable.md) 與 [OTA 實作](docs/ota.md)。
 
 ## 測試與量測
 

@@ -35,9 +35,17 @@ internal static class UpdateChecks
                 var clock = DateTimeOffset.UtcNow;
                 using var updater = new PortableUpdate(fixture, store, new Version(1, 0, 0), () => clock);
                 var before = DiskBytes(store.Root); var watch = Stopwatch.StartNew();
-                await updater.CheckNowAsync(); await updater.Preparation;
+                await updater.TickAsync(); await updater.Preparation;
                 var preparedMs = watch.Elapsed.TotalMilliseconds;
                 Check(updater.View.Phase == UpdatePhase.Ready && store.Load().Current.Version == "1.0.0" && store.Load().Pending.Version == "1.1.0", mode + ": 1.0 -> 1.1 prepared without switching running version");
+                Check(fixture.Checks == 1 && updater.NextCheck == clock.AddHours(1), mode + ": startup check schedules next check in one hour");
+                var scheduledCheck = updater.NextCheck;
+                clock = scheduledCheck.AddTicks(-1);
+                await updater.TickAsync();
+                Check(fixture.Checks == 1 && updater.NextCheck == scheduledCheck, mode + ": no periodic check before one hour");
+                clock = scheduledCheck;
+                await updater.TickAsync(); await updater.Preparation;
+                Check(fixture.Checks == 2 && updater.NextCheck == clock.AddHours(1), mode + ": periodic check runs at one hour and schedules the next hour");
                 Check(File.ReadAllText(store.Settings) == settings && Store.Hash(Path.Combine(store.PackagePath(first), "RadioMini.dll")) == first.Files.Single(f => f.Path == "RadioMini.dll").Sha256, mode + ": settings/running files unchanged while preparing");
                 store.VerifyInstalledEntries(first);
                 Check(true, mode + ": background preparation never replaces root apphost or installed updater");
