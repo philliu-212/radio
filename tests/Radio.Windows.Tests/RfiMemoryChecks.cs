@@ -12,13 +12,13 @@ internal static class RfiMemoryChecks
     internal static async Task RunAsync(string[] args)
     {
         var mode = PlayerBackend.Option(args, "--mode", "synthetic");
-        if (mode is "best-only" or "switch-live" or "switch-synthetic")
+        if (mode is "best-only" or "switch-live" or "switch-synthetic" or "switch-ui-live" or "best-ui-only")
         {
             await RfiSwitchMemoryChecks.RunAsync(args);
             return;
         }
         if (mode is not ("synthetic" or "queue" or "live" or "direct" or "managed-samples" or "native-samples"))
-            throw new ArgumentException("Memory mode must be synthetic, queue, live, direct, managed-samples, native-samples, best-only, switch-live or switch-synthetic.");
+            throw new ArgumentException("Memory mode must be synthetic, queue, live, direct, managed-samples, native-samples, best-only, switch-live, switch-synthetic, switch-ui-live or best-ui-only.");
         var seconds = Math.Clamp(int.Parse(PlayerBackend.Option(args, "--seconds", "300")), 30, 7200);
         var output = Path.GetFullPath(PlayerBackend.Option(args, "--output", $"artifacts/rfi-memory-{mode}.jsonl"));
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);

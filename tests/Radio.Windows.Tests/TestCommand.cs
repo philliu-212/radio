@@ -43,7 +43,7 @@ internal sealed record TestCommand(string Name, Func<Task> Run, bool StartupFocu
             await HlsRecoveryChecks.RunLiveAsync();
         }),
         ["--rfi"] = new(RfiPlaybackChecks.RunAsync, "--seconds --output"),
-        ["--rfi-memory"] = new(RfiMemoryChecks.RunAsync, "--seconds --output --mode --cycles"),
+        ["--rfi-memory"] = new(RfiMemoryChecks.RunAsync, "--seconds --output --mode --cycles --recovery-seconds"),
         ["--rfi-buffered-ui-live"] = new(RfiBufferedChecks.RunLiveUiAsync, "--seconds --output"),
         ["--rfi-transport"] = new(RfiTransportChecks.RunAsync, "--seconds --output", "--same-data --frames --buffered"),
         ["--rfi-edge"] = new(RfiEdgeChecks.RunAsync, "--seconds --output", "--edge-same-data --edge-headless --plain-audio"),
@@ -92,7 +92,7 @@ internal sealed record TestCommand(string Name, Func<Task> Run, bool StartupFocu
                 Require(i + 1 < args.Length && !args[i + 1].StartsWith("--"), $"Missing value for '{option}'.");
                 var value = args[++i];
                 Require(!string.IsNullOrWhiteSpace(value), $"Empty value for '{option}'.");
-                if (option is "--seconds" or "--cycles")
+                if (option is "--seconds" or "--cycles" or "--recovery-seconds")
                     Require(int.TryParse(value, out var seconds) && seconds > 0, $"{option} must be a positive integer.");
             }
             else Require(legacy.Flags.Split(' ').Contains(option), $"Unknown/conflicting option '{option}' for {name}.");

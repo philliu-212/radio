@@ -22,6 +22,8 @@ dotnet run --project tests/Radio.Windows.Tests -c Release --no-build --no-restor
 - `switch-live`：BEST 基準一段，再 `cycles` 輪 RFI → BEST，各一段，最後 BEST 再等待 `seconds × 5`；總觀測時間與只播模式相同，另加解析／開啟時間。
 - `--cycles` 預設 3、範圍 1–50；切台診斷的 `--seconds` 範圍 10–600。短段多輪是生命週期壓力測試，不取代單台長播或切回後等待一小時。
 - `switch-synthetic`：相同系統路由，RFI 的網路輸入替換為無限靜音 MP3，BEST 仍是線上來源；不是全離線測試或真實 RFI 接收驗收。
+- `switch-ui-live`／`best-ui-only`：相同切台／只播對照，但透過真正 MainForm 開啟電台，保留 metadata 與既有 source-watch／recovery policy；額外記錄目前電台、狀態、reconnect pending 與監控是否運行。不注入故障，不能僅因使用 MainForm 就聲稱曾完成自動重連。
+- `--recovery-seconds` 可獨立指定切回 BEST 後的等待時間（10–7200 秒），預設仍為 `seconds × 5`。兩種只播模式總觀察時間改為 `seconds × (2 × cycles + 1) + recovery-seconds`，因此對照仍等長。UI 模式使用獨立設定物件、不保存偏好、不檢查更新；會顯示測試視窗與自己的 tray icon，不操作既有 portable 視窗。
 - 每十秒輸出 private／working set／managed／GC committed、fragmentation、GC 次數、handles、threads、播放時鐘與 retired graph 的弱參考狀態。開啟失敗、Failed、觀察期間時鐘未前進或 receiver 未結束都會失敗。
 - 切台前只保留 RFI adapter、MediaPlayer／MediaSource 投影、MediaStreamSource、buffer、HTTP client 與取消來源的弱參考；切台後等 receiving task 結束並清掉強參考，再量測自然回收。
 - 所有自然取樣結束後，才在 BEST 仍播放時做一次診斷 GC／finalizer／GC。這不是產品修正，也不把 GC 後的低值冒充自然穩態。
@@ -101,3 +103,33 @@ GC 後的 GC committed 差 **10.95 MiB**，而 managed 存活量只差約 0.71 M
 ### 最終離線回歸
 
 因新增 CLI 的 `--cycles` 解析，補跑完整 `-Profile Offline`：兩專案建置與 **22/22 群組通過**，報告 `artifacts/test-results/20261119-124404-8bd74488931641a185f1fe4b329b6401/summary.json`。後續只補本文件結果，未修改原始碼。未做 native heap tracing、一小時切回等待、MainForm 線上 recovery、多小時／可聽音質、實體多螢幕或 Release。
+
+## 後續：實際 MainForm 切台對照
+
+2026-11-19 接續 #138，補上 `switch-ui-live`／`best-ui-only` 與可獨立指定的恢復等待時間。產品播放程式碼仍未修改，沒有加入手動 GC 或工作集裁切。
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release --no-build --no-restore -- --rfi-memory --mode switch-ui-live --seconds 10 --cycles 3 --recovery-seconds 60 --output artifacts/rfi-switch-ui-138-short.jsonl
+dotnet run --project tests/Radio.Windows.Tests -c Release --no-build --no-restore -- --rfi-memory --mode best-ui-only --seconds 10 --cycles 3 --recovery-seconds 60 --output artifacts/rfi-switch-ui-baseline-138-short.jsonl
+```
+
+兩個獨立程序依序執行；兩者觀察時間都是 130 秒，另加開台、診斷 GC 與停止時間，總長分別約 146／137 秒。兩者零 Failed，各觀察段時鐘有前進；這不是每個取樣區間無停頓或聽覺驗收。
+
+| MainForm，BEST 仍播放時 | 只播 BEST private | 三輪 RFI 後 private | 只播 BEST managed | 三輪 RFI 後 managed | 只播 BEST 最近 GC committed | 三輪 RFI 後最近 GC committed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 自然結尾 | 32.88 | 46.87 | 4.84 | 4.21 | 0.00 | 14.85 |
+| 結尾診斷 GC 後 | 34.48 | 40.17 | 1.64 | 2.22 | 7.67 | 8.11 |
+
+單位 MiB。只播程序自然結尾的 GC committed 為零，表示尚無 GC 統計，**不是沒有 committed heap**；不可把該列相減作為精確 heap 成本。結尾診斷 GC 後的 committed 差約 0.44 MiB，private 差約 5.69 MiB；和先前無 MainForm 的隔離程序差額不同，不能將其當作產品改善 A/B，或把先前約 21 MiB 差額視為跨情境固定成本。
+
+三個 retired receivers 均結束；自然結尾 24 個弱參考中僅最後一個 adapter 仍存活，診斷 GC 後 **24/24 全部死亡**。自然結尾與 GC 後的 UI 均為 BEST／Playing，metadata 與 playback watch 運行，reconnect pending 為 false。本次沒有故障注入，也沒有證明自動重連分支曾執行。
+
+新增來源已執行 `Fast,Audio`：兩專案建置與 **12/12 群組通過**，報告 `artifacts/test-results/20261119-130434-1c53591fbf7f4b0a8af9f12e8a6625be/summary.json`。含新增 CLI 參數契約；未在這一輪重跑完整 Offline。
+
+### 一小時切回等待：執行中，尚非通過
+
+```powershell
+dotnet run --project tests/Radio.Windows.Tests -c Release --no-build --no-restore -- --rfi-memory --mode switch-ui-live --seconds 10 --cycles 3 --recovery-seconds 3600 --output artifacts/rfi-switch-ui-138-hour.jsonl
+```
+
+此程序完成三輪切台後繼續播 BEST 一小時，自然觀察期間不做 dump、手動 GC 或工作集裁切；結束自然取樣後才執行既有診斷 GC。結果完成前不列為通過，也不拿上述 130 秒只播對照冒充等長一小時對照。原生 allocation stack 仍未取得；目前沒有足以支持產品修正或關閉 #138 的證據。PR 維持 draft。

@@ -29,6 +29,8 @@ internal static class TestCommandChecks
             new[] { "--rfi-memory", "--seconds", "-1" },
             new[] { "--rfi-memory", "--cycles", "0" },
             new[] { "--rfi-memory", "--cycles", "oops" },
+            new[] { "--rfi-memory", "--recovery-seconds", "0" },
+            new[] { "--rfi-memory", "--recovery-seconds", "oops" },
             new[] { "--rfi-memory", "--same-data" },
             new[] { "--rfi-transport", "--frames", "--buffered" },
             new[] { "--rfi", "--output", "a", "--output", "b" },
@@ -51,6 +53,8 @@ internal static class TestCommandChecks
             new[] { "--rfi-memory", "--mode", "switch-live", "--seconds", "60" },
             new[] { "--rfi-memory", "--mode", "switch-live", "--seconds", "10", "--cycles", "12" },
             new[] { "--rfi-memory", "--mode", "switch-synthetic", "--seconds", "30" },
+            new[] { "--rfi-memory", "--mode", "switch-ui-live", "--seconds", "10", "--recovery-seconds", "3600" },
+            new[] { "--rfi-memory", "--mode", "best-ui-only", "--recovery-seconds", "3600" },
             new[] { "--rfi-memory", "--mode", "best-only", "--seconds", "60" },
             new[] { "--ota-stage", "--root", "r", "--zip", "z", "--report", "p" },
             new[] { "--instance-client", "pipe" }, new[] { "--instance-host", "pipe", "--no-listen" }

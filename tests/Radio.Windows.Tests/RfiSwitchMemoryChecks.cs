@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Radio.Core;
+using Radio.Windows.UI;
 
 namespace Radio.Windows.Tests;
 
@@ -16,6 +17,9 @@ internal static class RfiSwitchMemoryChecks
         var mode = PlayerBackend.Option(args, "--mode", "switch-live");
         var seconds = Math.Clamp(int.Parse(PlayerBackend.Option(args, "--seconds", "60")), 10, 600);
         var cycles = Math.Clamp(int.Parse(PlayerBackend.Option(args, "--cycles", "3")), 1, 50);
+        var recoverySeconds = Math.Clamp(int.Parse(PlayerBackend.Option(args, "--recovery-seconds", (seconds * 5).ToString())), 10, 7200);
+        var useUi = mode is "switch-ui-live" or "best-ui-only";
+        var bestOnly = mode is "best-only" or "best-ui-only";
         var output = Path.GetFullPath(PlayerBackend.Option(args, "--output", $"artifacts/rfi-memory-{mode}.jsonl"));
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         using var writer = new StreamWriter(output) { AutoFlush = true };
@@ -33,6 +37,9 @@ internal static class RfiSwitchMemoryChecks
                 : RfiBufferedStream.OpenAsync
         }, mediaFactory: () => new MediaEngineAudioPlayer(), nativeFactory: () => new WindowsAudioPlayer())
         { IsMuted = true };
+        using var form = useUi ? new MainForm(player, persistPreferences: false,
+            autoPlayOnStartup: false, checkUpdates: false,
+            settings: new ThemeSettings { MyStationIds = ["best-989", "rfi-monde"], StationSetupCompleted = true }) : null;
         void Write(string kind, object data)
         {
             var line = JsonSerializer.Serialize(new { seconds = clock.Elapsed.TotalSeconds, kind, data });
@@ -57,6 +64,8 @@ internal static class RfiSwitchMemoryChecks
                 handles = process.HandleCount, threads = process.Threads.Count,
                 gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2),
                 detail = player.Describe(),
+                ui = form is null ? null : new { form.PlayingStationId, form.ReconnectPending,
+                    form.PlaybackWatchRunning, form.MetadataRunning, state = form.LatestStatus.State.ToString() },
                 retired = retired.Select(r => new { r.Cycle, r.Kind, alive = r.Reference.IsAlive }).ToArray(),
                 completedReceivers,
                 virtualMemory = NativeMemory(),
@@ -77,18 +86,27 @@ internal static class RfiSwitchMemoryChecks
         async Task Play(string station)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            if (form is not null)
+            {
+                await form.PlayForProbeAsync(station).WaitAsync(timeout.Token);
+                if (form.PlayingStationId != station || form.ReconnectPending)
+                    throw new Exception($"MainForm did not start requested station {station}.");
+                return;
+            }
             var entry = StationCatalog.Load().Single(s => s.Id == station);
             var stream = await new OfficialStreamResolver().ResolveAsync(entry, timeout.Token);
             await player.PlayAsync(stream, timeout.Token);
         }
-        Write("configuration", new { mode, seconds, cycles, recoverySeconds = seconds * 5,
+        Write("configuration", new { mode, seconds, cycles, recoverySeconds,
+            useUi, settingsPersisted = false, updatesEnabled = false,
             muted = true, version = typeof(WindowsAudioPlayer).Assembly.GetName().Version?.ToString() });
         Snapshot("before");
         try
         {
+            form?.Show();
             await Play("best-989");
-            if (mode == "best-only")
-                await Observe("best-only", seconds * (2 * cycles + 6));
+            if (bestOnly)
+                await Observe("best-only", seconds * (2 * cycles + 1) + recoverySeconds);
             else
             {
                 await Observe("baseline-best", seconds);
@@ -103,7 +121,7 @@ internal static class RfiSwitchMemoryChecks
                     completions.Clear(); // Do not retain receiver tasks/state machines while probing reachability.
                     await Observe($"best-after-{cycle}", seconds);
                 }
-                await Observe("best-recovery", seconds * 5);
+                await Observe("best-recovery", recoverySeconds);
             }
             Snapshot("natural-end");
             // Diagnostic only, AFTER every natural recovery sample.
@@ -115,13 +133,14 @@ internal static class RfiSwitchMemoryChecks
         }
         finally
         {
+            form?.ExitPlayer();
             player.Stop();
         }
         await Task.WhenAll(completions).WaitAsync(TimeSpan.FromSeconds(10));
         await Task.Delay(2000);
         Snapshot("stopped");
         Write("complete", new { failures, limitations =
-            "Same-version isolated SystemAudioPlayer; no MainForm metadata/recovery. Weak refs prove managed reachability only, not native allocator release. End-only GC is diagnostic, not a product fix. No audible/one-hour acceptance." });
+            "Isolated muted process. UI modes include MainForm metadata/recovery policy but do not inject failures or guarantee a recovery occurred. Weak refs prove managed reachability only, not native allocator release. End-only GC is diagnostic, not a product fix. No audible acceptance." });
         if (failures != 0) throw new Exception("Playback failure during switch memory diagnostic.");
     }
 
