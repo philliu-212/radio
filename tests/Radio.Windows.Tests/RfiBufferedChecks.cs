@@ -167,6 +167,36 @@ internal static class RfiBufferedChecks
 
         await CheckRoutingAsync(official);
         await CheckNativeAsync(official);
+        var retired = await RetireNativeGraphAsync(official);
+        await Task.Delay(300); // Let already-posted native callbacks leave the STA queue.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Check(retired.All(r => !r.Reference.IsAlive),
+            "Switching away releases the RFI adapter, native projections, source, buffer and cancellation graph after diagnostic GC");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<List<(int Cycle, string Kind, WeakReference Reference)>> RetireNativeGraphAsync(Uri uri)
+    {
+        var retired = new List<(int Cycle, string Kind, WeakReference Reference)>();
+        var completions = new List<Task>();
+        using var system = new SystemAudioPlayer(() => new RoutePlayer("media", []),
+            () => new RoutePlayer("native", []), () => new WindowsAudioPlayer
+            {
+                UseBufferedRfiSource = true, IsMuted = true,
+                BufferedRfiFactory = (_, token) => RfiBufferedStream.OpenFixtureAsync(new SyntheticStream(), token)
+            }) { IsMuted = true };
+        for (var cycle = 1; cycle <= 3; cycle++)
+        {
+            await system.PlayAsync(new(uri, new("https://www.rfi.fr/fr/direct-monde"), "audio/mpeg"), default);
+            await UntilAsync(() => system.Position > TimeSpan.Zero);
+            RfiSwitchMemoryChecks.TrackRetiring(system, cycle, retired, completions);
+            await system.PlayAsync(new(new("https://example.invalid/other.mp3"), new("https://example.invalid/"), "audio/mpeg"), default);
+            await Task.WhenAll(completions).WaitAsync(TimeSpan.FromSeconds(2));
+            completions.Clear();
+        }
+        return retired;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

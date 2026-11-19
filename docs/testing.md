@@ -94,6 +94,8 @@ Live、Edge 探測、`--ota-stage` 等明確命令保留，不進入離線 profi
 
 `--rfi-memory --mode synthetic|queue|live|direct|managed-samples|native-samples --seconds 300 --output artifacts/memory.jsonl` 是額外 opt-in 的記憶體診斷；各模式與量測限制見 [RFI 長播調查](rfi-memory.md)。不同條件用獨立程序依序比較，不把結尾診斷用 GC 當正式改善或正常播放數字。
 
+切台回收另有 `best-only|switch-live|switch-synthetic` 模式，見 [RFI 切台記憶體調查](rfi-switch-memory.md)；不納入自動長測，不與其他音訊／配置量測平行執行。
+
 ### 測項收斂原則
 
 - 移除獨立四箭頭預覽流程，將「只有 hover 的清單顯示對應箭頭」斷言合併至既有左右清單的 hover 端點檢查；不再額外建立預覽視窗、等待兩輪動畫或保存三張預覽。
